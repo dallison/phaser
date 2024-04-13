@@ -1,0 +1,32 @@
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "phaser_lib",
+    srcs = [
+        "gen.cc",
+        "message_gen.cc",
+    ],
+    hdrs = [
+        "gen.h",
+        "message_gen.h",
+    ],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_protobuf//:protoc_lib",
+    ],
+)
+
+cc_binary(
+    name = "phaser",
+    srcs = [
+        "main.cc",
+    ],
+    deps = [
+        ":phaser_lib",
+        "@com_google_protobuf//:protoc_lib",
+    ],
+)
+

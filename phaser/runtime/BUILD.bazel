@@ -1,0 +1,40 @@
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "phaser_runtime",
+    srcs = [
+        "message.cc",
+        "payload_buffer.cc",
+    ],
+    hdrs = [
+        "fields.h",
+        "iterators.h",
+        "message.h",
+        "proto_buffer.h",
+        "runtime.h",
+        "union.h",
+        "vectors.h",
+        "payload_buffer.h",
+    ],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@toolbelt//toolbelt",
+    ],
+)
+
+cc_test(
+    name = "message_test",
+    srcs = [
+        "message_test.cc",
+    ],
+    deps = [
+        ":phaser_runtime",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
+        "@toolbelt//toolbelt",
+    ],
+)

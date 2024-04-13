@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package foo.bar;
+
+message TestMessage {
+  int32 a = 1;
+  string b = 2;
+
+  repeated int64 c = 3;
+}
