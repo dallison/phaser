@@ -53,6 +53,8 @@ protected:
                std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) { \
       return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);       \
     }                                                                          \
+    void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) { \
+    }                                                                          \
   };
 
 DEFINE_PRIMITIVE_UNION_FIELD(Int32, int32_t)
@@ -104,6 +106,9 @@ public:
                    uint32_t abs_offset) const {
     return GetBuffer(runtime)->StringData(abs_offset);
   }
+  void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
+    phaser::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
+  }
 };
 
 template <typename Enum> class UnionEnumField : public UnionMemberField {
@@ -141,6 +146,7 @@ public:
              std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
     return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);
   }
+  void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {}
 };
 
 template <typename MessageType>
@@ -181,7 +187,7 @@ public:
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
     msg_.template InstallMetadata<MessageType>();
-    
+
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(runtime, abs_offset);
     *addr = msg_offset; // Put message field offset into message.
@@ -194,6 +200,15 @@ public:
 
   absl::Status DeserializeFromBuffer(ProtoBuffer &buffer) {
     return msg_.DeserializeFromBuffer(buffer);
+  }
+
+  void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
+    phaser::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (*addr != 0) {
+      msg_.Clear();
+      GetBuffer(runtime)->Free(GetBuffer(runtime)->ToAddress(*addr));
+      *addr = 0;
+    }
   }
 
 private:
@@ -270,9 +285,40 @@ public:
   }
 
   int32_t Discriminator() const {
+    // The offset of all the fields is the offset to the discriminator but we
+    // don't know which field is actually present in the message.  We need to
+    // search until we find one that is present and use the offset of that
+    // field.  It is very likely that the first one we look at will be
+    // present as they will only be absent if the message definition has been
+    // changed and the field removed. In the worst case, the complete union
+    // has been removed and none of the fields are present.
+    const Message *msg = Message::GetMessage(this, source_offset_);
+    int32_t relative_offset = -1;
+    for (auto &field_number : field_numbers_) {
+      relative_offset = msg->FindFieldOffset(field_number);
+      if (relative_offset >= 0) {
+        break;
+      }
+    }
+    if (relative_offset < 0) {
+      return 0; // No field present in message (all fields have been removed).
+    }
+    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+        GetMessageBinaryStart() + relative_offset);
+    return *discrim;
+  }
+
+  template <int Id> void Clear() {
     int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    return *discrim;
+    int field_number = field_numbers_[Id];
+    if (*discrim != field_number) {
+      return;
+    }
+    auto &t = std::get<Id>(value_);
+    t.Clear(GetRuntime(),
+            GetMessageBinaryStart() + relative_binary_offset_ + 4);
+    *discrim = 0;
   }
 
 private:

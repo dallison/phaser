@@ -85,6 +85,9 @@ protected:
       GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, v);  \
       SetPresence(GetBuffer(), GetPresenceMaskStart());                        \
     }                                                                          \
+    void Clear() {                                                             \
+       ClearPresence(GetBuffer(), GetPresenceMaskStart());                     \
+    }                                                                          \
     void SetLocation(uint32_t soff, uint32_t boff) {                           \
       source_offset_ = soff;                                                   \
       relative_binary_offset_ = boff;                                          \
@@ -155,6 +158,12 @@ public:
         GetBufferAddr(), s, GetMessageBinaryStart() + relative_binary_offset_);
   }
 
+  void Clear() {
+    phaser::PayloadBuffer::ClearString(GetBufferAddr(),
+                                       GetMessageBinaryStart() +
+                                           relative_binary_offset_);
+  }
+
   phaser::BufferOffset BinaryEndOffset() const {
     return relative_binary_offset_ + sizeof(phaser::BufferOffset);
   }
@@ -202,8 +211,7 @@ class NonEmbeddedStringField {
 public:
   NonEmbeddedStringField() = default;
   explicit NonEmbeddedStringField(Message *msg, uint32_t absolute_binary_offset)
-      : msg_(msg),
-        absolute_binary_offset_(absolute_binary_offset) {}
+      : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
 
   phaser::BufferOffset BinaryEndOffset() const {
     return absolute_binary_offset_ + sizeof(phaser::BufferOffset);
@@ -217,6 +225,15 @@ public:
   void Set(const std::string &s) {
     phaser::PayloadBuffer::SetString(GetBufferAddr(), s,
                                      absolute_binary_offset_);
+  }
+
+  void Set(std::string_view s) {
+    phaser::PayloadBuffer::SetString(GetBufferAddr(), s,
+                                     absolute_binary_offset_);
+  }
+
+  void Clear() {
+    phaser::PayloadBuffer::ClearString(GetBufferAddr(), absolute_binary_offset_);
   }
 
   bool operator==(const NonEmbeddedStringField &other) const {
@@ -234,6 +251,8 @@ public:
     return GetBuffer()->StringData(absolute_binary_offset_);
   }
   bool empty() const { return size() == 0; }
+
+  bool IsPlaceholder() const { return msg_ == nullptr; }
 
 private:
   phaser::PayloadBuffer *GetBuffer() const { return msg_->runtime->pb; }
@@ -287,6 +306,10 @@ public:
   void Set(T e) {
     GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, e);
     SetPresence(GetBuffer(), GetMessageBinaryStart());
+  }
+
+  void Clear() {
+    ClearPresence(GetBuffer(), GetMessageBinaryStart());
   }
 
   phaser::BufferOffset BinaryEndOffset() const {
@@ -379,6 +402,19 @@ public:
     return &msg_;
   }
 
+  void Clear() {
+    phaser::BufferOffset *addr = GetIndirectAddress(relative_binary_offset_);
+    if (*addr == 0) {
+      return;
+    }
+    // Clear the message.
+    msg_.Clear();
+    // Delete the memory in the payload buffer.
+    GetBuffer()->Free(GetBuffer()->ToAddress(*addr));
+    // Zero out the offset to the message.
+    *addr = 0;
+  }
+
   phaser::BufferOffset BinaryEndOffset() const {
     return relative_binary_offset_ + sizeof(phaser::BufferOffset);
   }
@@ -456,7 +492,16 @@ public:
   bool empty() const { return msg_.runtime == nullptr; }
 
   void InstallMetadata() { msg_.template InstallMetadata<MessageType>(); }
-  
+
+  bool IsPlaceholder() const { return msg_.runtime == nullptr; }
+
+  void Clear() {
+    if (msg_.runtime == nullptr) {
+      return;
+    }
+    msg_.Clear();
+  }
+
 private:
   MessageType msg_;
 };

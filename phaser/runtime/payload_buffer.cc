@@ -44,6 +44,15 @@ char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
   return reinterpret_cast<char *>(str);
 }
 
+void PayloadBuffer::ClearString(PayloadBuffer **self, BufferOffset header_offset) {
+  BufferOffset *hdr = (*self)->ToAddress<BufferOffset>(header_offset);
+  if (*hdr != 0) {
+    (*self)->Free((*self)->ToAddress(*hdr));
+    // Free doesn't move the buffer so the address is still valid.
+    *hdr = 0;
+  }
+}
+
 // 'addr' is the address of the pointer to the string data.
 std::string PayloadBuffer::GetString(const StringHeader *addr) const {
   const uint32_t *p = reinterpret_cast<const uint32_t *>(ToAddress(*addr));

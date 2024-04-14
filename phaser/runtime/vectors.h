@@ -111,15 +111,19 @@ public:
       : Field(id, number), source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
 
-  T &operator[](int index) {
-    T *base =
-        GetBuffer()->template ToAddress<T>(BaseOffset(relative_binary_offset_));
+  const T &operator[](int index) {
+    T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return T();
+    }
     return base[index];
   }
 
   T operator[](int index) const {
-    T *base = GetBuffer()->template ToAddress<T>(
-        BaseOffset(FindFieldOffset(source_offset_)));
+    T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return T();
+    }
     return base[index];
   }
 
@@ -127,6 +131,16 @@ public:
   const T front() const { return (*this)[0]; }
   T back() { return (*this)[size() - 1]; }
   const T back() const { return (*this)[size() - 1]; }
+
+  T Get(size_t index) const { return (*this)[index]; }
+
+  void Set(size_t index, T v) {
+    T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return;
+    }
+    base[index] = v;
+  }
 
   std::vector<T> Get() const {
     std::vector<T> v;
@@ -160,17 +174,19 @@ public:
                                            Header(relative_binary_offset_), n);
   }
 
-  void clear() { Header()->num_elements = 0; }
+  void Clear() {
+    phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
+                                          Header(relative_binary_offset_));
+  }
+  void clear() { Clear(); } // STL compatibility.
 
-  size_t size() const { return Header()->num_elements; }
+  size_t size() const { return NumElements(); }
   T *data() const { return GetBuffer()->template ToAddress<T>(BaseOffset()); }
 
   bool empty() const { return size() == 0; }
 
   size_t capacity() const {
-    phaser::VectorHeader *hdr = Header();
-    phaser::BufferOffset *addr =
-        GetBuffer()->template ToAddress<phaser::BufferOffset>(hdr->data);
+    phaser::BufferOffset *addr = BaseOffset();
     if (addr == nullptr) {
       return 0;
     }
@@ -249,13 +265,19 @@ public:
 
   using T = typename std::underlying_type<Enum>::type;
 
-  Enum &operator[](int index) {
+  Enum operator[](int index) {
     T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return *reinterpret_cast<Enum *>(0);
+    }
     return *reinterpret_cast<Enum *>(&base[index]);
   }
 
-  const Enum &operator[](int index) const {
+  const Enum operator[](int index) const {
     const T *base = GetBuffer()->template ToAddress<const T>(BaseOffset());
+    if (base == nullptr) {
+      return *reinterpret_cast<const Enum *>(0);
+    }
     return *reinterpret_cast<const Enum *>(&base[index]);
   }
 
@@ -273,6 +295,15 @@ public:
     return r;
   }
 
+  Enum Get(size_t index) const { return (*this)[index]; }
+
+  void Set(size_t index, Enum v) {
+    Enum *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return;
+    }
+    base[index] = v;
+  }
 #define ITYPE EnumFieldIterator<EnumVectorField, value_type>
 #define CTYPE EnumFieldIterator<EnumVectorField, const value_type>
   DECLARE_ZERO_COPY_VECTOR_BITS(Enum, ITYPE, CTYPE, T)
@@ -292,9 +323,13 @@ public:
     phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(), n);
   }
 
-  void clear() { Header()->num_elements = 0; }
+  void Clear() {
+    phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
+                                          Header(relative_binary_offset_));
+  }
+  void clear() { Clear(); } // STL compatibility.
 
-  size_t size() const { return Header()->num_elements; }
+  size_t size() const { return NumElements(); }
   Enum *data() const { GetBuffer()->template ToAddress<Enum>(BaseOffset()); }
   bool empty() const { return size() == 0; }
 
@@ -330,15 +365,26 @@ public:
 private:
   friend EnumFieldIterator<EnumVectorField, Enum>;
   friend EnumFieldIterator<EnumVectorField, const Enum>;
-  phaser::VectorHeader *Header() const {
+  phaser::VectorHeader *Header(BufferOffset offset) const {
     return GetBuffer()->template ToAddress<phaser::VectorHeader>(
-        Message::GetMessageBinaryStart(this, source_offset_) +
-        relative_binary_offset_);
+        Message::GetMessageBinaryStart(this, source_offset_) + offset);
   }
 
-  phaser::BufferOffset BaseOffset() const { return Header()->data; }
+  phaser::BufferOffset BaseOffset() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return Header(offset)->data;
+  }
 
-  size_t NumElements() const { return Header()->num_elements; }
+  size_t NumElements() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return Header(offset)->num_elements;
+  }
 
   phaser::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
@@ -366,7 +412,7 @@ public:
       : Field(id, number), source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
 
-  MessageObject<T> &operator[](int index) {
+  const MessageObject<T> &operator[](int index) {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset == -1) {
       return empty_;
@@ -431,15 +477,40 @@ public:
 
   const T &Get(size_t index) { return (*this)[index].Get(); }
 
+  T *Mutable(int index) {
+    if (index >= msgs_.size()) {
+      phaser::PayloadBuffer::VectorResize<phaser::BufferOffset>(
+          GetBufferAddr(), Header(), index + 1);
+      msgs_.resize(index + 1);
+    }
+
+    if (msgs_[index].IsPlaceholder()) {
+      void *binary = phaser::PayloadBuffer::Allocate(GetBufferAddr(),
+                                                     T::BinarySize(), 8, true);
+      phaser::BufferOffset absolute_binary_offset =
+          GetBuffer()->ToOffset(binary);
+
+      auto hdr = Header();
+      BufferOffset *data =
+          GetBuffer()->template ToAddress<BufferOffset>(hdr->data);
+      data[index] = absolute_binary_offset;
+
+      auto obj = MessageObject<T>(GetRuntime(), absolute_binary_offset);
+      obj.InstallMetadata();
+      msgs_[index] = std::move(obj);
+    }
+    return msgs_[index].Mutable();
+  }
+
   size_t capacity() const {
-    phaser::VectorHeader *hdr = Header();
-    phaser::BufferOffset *addr =
-        GetBuffer()->template ToAddress<phaser::BufferOffset>(hdr->data);
-    if (addr == nullptr) {
+    phaser::BufferOffset *base =
+        GetBuffer()->template ToAddress<phaser::BufferOffset>(BaseOffset());
+
+    if (base == nullptr) {
       return 0;
     }
     // Word before memory is size of memory in bytes.
-    return addr[-1] / sizeof(phaser::BufferOffset);
+    return base[-1] / sizeof(phaser::BufferOffset);
   }
 
   void reserve(size_t n) {
@@ -455,10 +526,26 @@ public:
     msgs_.resize(n);
   }
 
-  void clear() { Header()->num_elements = 0; }
+  void Clear() {
+    auto hdr = Header();
+    auto data =
+        GetBuffer()->template ToAddress<phaser::BufferOffset>(hdr->data);
+    for (uint32_t i = 0; i < hdr->num_elements; i++) {
+      if (msgs_[i].empty()) {
+        continue;
+      }
+      msgs_[i].Clear();
+      if (data[i] == 0) {
+        continue;
+      }
+      GetBuffer()->Free(GetBuffer()->ToAddress(data[i]));
+    }
+    phaser::PayloadBuffer::VectorClear<phaser::BufferOffset>(GetBufferAddr(),
+                                                             Header());
+    msgs_.clear();
+  }
 
-  size_t size() const { return Header()->num_elements; }
-  T *data() { GetBuffer()->template ToAddress<T>(BaseOffset()); }
+  size_t size() const { return NumElements(); }
   bool empty() const { return size() == 0; }
 
   phaser::BufferOffset BinaryEndOffset() const {
@@ -508,9 +595,21 @@ private:
         GetMessageBinaryStart() + relative_offset);
   }
 
-  phaser::BufferOffset BaseOffset() const { return Header()->data; }
+  phaser::BufferOffset BaseOffset() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return Header(offset)->data;
+  }
 
-  size_t NumElements() const { return Header()->num_elements; }
+  size_t NumElements() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return Header(offset)->num_elements;
+  }
 
   phaser::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
@@ -574,7 +673,7 @@ public:
     if (index >= strings_.size()) {
       strings_.resize(index + 1);
     }
-    if (strings_[index].empty()) {
+    if (strings_[index].IsPlaceholder()) {
       strings_[index] = NonEmbeddedStringField(
           Message::GetMessage(this, source_offset_), data[index]);
     }
@@ -585,8 +684,11 @@ public:
   DECLARE_RELAY_VECTOR_BITS(NonEmbeddedStringField, RTYPE, strings_)
 #undef RTYPE
 
-  size_t size() const { return strings_.size(); }
-  NonEmbeddedStringField *data() { return strings_.data(); }
+  size_t size() const { return NumElements(); }
+  NonEmbeddedStringField *data() {
+    Populate();
+    return strings_.data();
+  }
   bool empty() const { return size() == 0; }
 
   NonEmbeddedStringField &front() { return strings_.front(); }
@@ -617,17 +719,43 @@ public:
   void Add(const char *s, size_t len) { push_back(std::string(s, len)); }
   void Add(std::string_view s) { push_back(s); }
 
-  std::string_view Get(int index) const { return strings_[index].Get(); }
+  std::string_view Get(int index) { return (*this)[index].Get(); }
+
+  void Set(int index, std::string_view s) {
+    if (index >= strings_.size()) {
+      phaser::PayloadBuffer::VectorResize<phaser::BufferOffset>(
+          GetBufferAddr(), Header(), index + 1);
+      strings_.resize(index + 1);
+    }
+
+    if (strings_[index].IsPlaceholder()) {
+      // Allocate string header in buffer.
+      void *str_hdr = phaser::PayloadBuffer::Allocate(
+          GetBufferAddr(), sizeof(phaser::StringHeader), 4);
+      phaser::BufferOffset hdr_offset = GetBuffer()->ToOffset(str_hdr);
+
+      auto hdr = Header();
+      BufferOffset *data =
+          GetBuffer()->template ToAddress<BufferOffset>(hdr->data);
+      data[index] = hdr_offset;
+
+      // Add a source string field.
+      NonEmbeddedStringField field(Message::GetMessage(this, source_offset_),
+                                   hdr_offset);
+      strings_[index] = std::move(field);
+    }
+    strings_[index].Set(s);
+  }
 
   size_t capacity() const {
-    phaser::VectorHeader *hdr = Header();
-    phaser::BufferOffset *addr =
-        GetBuffer()->template ToAddress<phaser::BufferOffset>(hdr->data);
-    if (addr == nullptr) {
+    phaser::BufferOffset *base =
+        GetBuffer()->template ToAddress<phaser::BufferOffset>(BaseOffset());
+
+    if (base == nullptr) {
       return 0;
     }
     // Word before memory is size of memory in bytes.
-    return addr[-1] / sizeof(phaser::BufferOffset);
+    return base[-1] / sizeof(phaser::BufferOffset);
   }
 
   void reserve(size_t n) {
@@ -643,7 +771,16 @@ public:
     strings_.resize(n);
   }
 
-  void clear() { Header()->num_elements = 0; }
+  void Clear() {
+    for (auto &s : strings_) {
+      s.Clear();
+    }
+    strings_.clear();
+    phaser::PayloadBuffer::VectorClear<phaser::BufferOffset>(GetBufferAddr(),
+                                                             Header());
+  }
+
+  void clear() { Clear(); } // STL compatibility.
 
   phaser::BufferOffset BinaryEndOffset() const {
     return relative_binary_offset_ + sizeof(phaser::VectorHeader);
@@ -685,6 +822,23 @@ private:
     return GetBuffer()->template ToAddress<phaser::VectorHeader>(
         GetMessageBinaryStart() + relative_offset);
   }
+
+  phaser::BufferOffset BaseOffset() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return Header(offset)->data;
+  }
+
+  size_t NumElements() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return Header(offset)->num_elements;
+  }
+
   phaser::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }

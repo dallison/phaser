@@ -55,6 +55,10 @@ struct InnerMessage : public Message {
       }};
   static std::string GetName() { return "InnerMessage"; }
 
+  void Clear() {
+    str.Clear();
+    f.Clear();
+  }
   phaser::StringField str;
   phaser::Uint64Field f;
 };
@@ -119,6 +123,21 @@ struct TestMessage : public Message {
       }};
   static std::string GetName() { return "TestMessage"; }
 
+  void Clear() {
+    x.Clear();
+    y.Clear();
+    s.Clear();
+    m.Clear();
+    vi32.Clear();
+    vstr.Clear();
+    vm.Clear();
+    u1.Clear<0>();
+    u1.Clear<1>();
+    u2.Clear<0>();
+    u2.Clear<1>();
+    u3.Clear<0>();
+    u3.Clear<1>();
+  }
   phaser::Uint32Field x;
   phaser::Uint64Field y;
   phaser::StringField s;
@@ -214,6 +233,9 @@ TEST(MessageTest, RepeatedPrimitive) {
     ASSERT_EQ(i, v);
     i++;
   }
+  ASSERT_EQ(1, msg.vi32.Get(0));
+  ASSERT_EQ(2, msg.vi32.Get(1));
+
   // Copy message to test reading.
   {
     char *buffer2 = (char *)malloc(4096);
@@ -225,6 +247,8 @@ TEST(MessageTest, RepeatedPrimitive) {
       ASSERT_EQ(i, v);
       i++;
     }
+    ASSERT_EQ(1, msg.vi32.Get(0));
+    ASSERT_EQ(2, msg.vi32.Get(1));
   }
 }
 
@@ -239,11 +263,35 @@ TEST(MessageTest, RepeatedString) {
 
   msg.DebugDump();
 
-  const char *strings[] = {"one", "two"};
+  const char *strings[] = {"one", "two", "three", "four"};
   int i = 0;
   for (auto &v : msg.vstr) {
     ASSERT_EQ(strings[i], v.Get());
     i++;
+  }
+
+  ASSERT_EQ("one", msg.vstr.Get(0));
+  ASSERT_EQ("two", msg.vstr.Get(1));
+
+  msg.vstr.resize(4);
+  msg.vstr.Set(2, "three");
+  msg.vstr.Set(3, "four");
+
+  // Copy message to test reading.
+  {
+    char *buffer2 = (char *)malloc(4096);
+    memcpy(buffer2, buffer, 4096);
+    TestMessage msg = TestMessage::CreateReadonly(buffer2);
+
+    int i = 0;
+    for (auto &v : msg.vstr) {
+      ASSERT_EQ(strings[i], v.Get());
+      i++;
+    }
+    ASSERT_EQ("one", msg.vstr.Get(0));
+    ASSERT_EQ("two", msg.vstr.Get(1));
+    ASSERT_EQ("three", msg.vstr.Get(2));
+    ASSERT_EQ("four", msg.vstr.Get(3));
   }
 }
 
@@ -251,15 +299,40 @@ TEST(MessageTest, RepeatedMessage) {
   char *buffer = (char *)malloc(4096);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
-  InnerMessage *inner = msg.vm.Add();
-  inner->str.Set("one");
-  inner->f.Set(0xdeadbeef);
+  InnerMessage *inner1 = msg.vm.Add();
+  inner1->str.Set("one");
+  inner1->f.Set(0xdeadbeef);
+
+  InnerMessage *inner2 = msg.vm.Mutable(2);
+  inner2->str.Set("two");
+  inner2->f.Set(0x1234);
 
   msg.DebugDump();
 
-  auto &inner2 = msg.vm.Get(0);
-  ASSERT_EQ("one", inner2.str.Get());
-  ASSERT_EQ(0xdeadbeef, inner2.f.Get());
+  {
+    auto &inner1 = msg.vm.Get(0);
+    ASSERT_EQ("one", inner1.str.Get());
+    ASSERT_EQ(0xdeadbeef, inner1.f.Get());
+
+    auto &inner2 = msg.vm.Get(2);
+    ASSERT_EQ("two", inner2.str.Get());
+    ASSERT_EQ(0x1234, inner2.f.Get());
+  }
+
+    // Copy message to test reading.
+  {
+    char *buffer2 = (char *)malloc(4096);
+    memcpy(buffer2, buffer, 4096);
+    TestMessage msg = TestMessage::CreateReadonly(buffer2);
+
+    auto &inner1 = msg.vm.Get(0);
+    ASSERT_EQ("one", inner1.str.Get());
+    ASSERT_EQ(0xdeadbeef, inner1.f.Get());
+
+    auto &inner2 = msg.vm.Get(2);
+    ASSERT_EQ("two", inner2.str.Get());
+    ASSERT_EQ(0x1234, inner2.f.Get());
+  }
 }
 
 TEST(MessageTest, UnionField) {
@@ -282,6 +355,84 @@ TEST(MessageTest, UnionField) {
   auto inner2 = msg.u3.GetReference<1, InnerMessage>();
   ASSERT_EQ("Inner message", inner2.str.Get());
   ASSERT_EQ(0xdeadbeef, inner2.f.Get());
+}
+
+TEST(MessageTest, ClearBasic) {
+  char *buffer = (char *)malloc(4096);
+  TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
+
+  msg.x.Set(1234);
+  msg.y.Set(0xffff);
+  msg.s.Set("Hello, world!");
+  auto inner = msg.m.Mutable();
+  inner->str.Set("Inner message");
+  inner->f.Set(0xdeadbeef);
+
+  ASSERT_TRUE(msg.x.IsPresent());
+  ASSERT_TRUE(msg.y.IsPresent());
+  ASSERT_TRUE(msg.s.IsPresent());
+  ASSERT_TRUE(msg.m.IsPresent());
+
+  msg.DebugDump();
+  msg.Clear();
+  msg.DebugDump();
+  ASSERT_FALSE(msg.x.IsPresent());
+  ASSERT_FALSE(msg.y.IsPresent());
+  ASSERT_FALSE(msg.s.IsPresent());
+  ASSERT_FALSE(msg.m.IsPresent());
+}
+
+TEST(MessageTest, ClearRepeated) {
+  char *buffer = (char *)malloc(4096);
+  TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
+
+  msg.vi32.Add(1);
+  msg.vi32.Add(2);
+  msg.vi32.Add(3);
+  
+  msg.vstr.Add("one");
+  msg.vstr.Add("two");
+
+  auto* inner1 = msg.vm.Add();
+  inner1->str.Set("one");
+  inner1->f.Set(0xdeadbeef);
+
+  auto* inner2 = msg.vm.Add();
+  inner2->str.Set("two");
+  inner2->f.Set(0x1234);
+
+  msg.DebugDump();
+
+  msg.Clear();
+  msg.DebugDump();
+
+  ASSERT_EQ(0, msg.vi32.size());
+  ASSERT_TRUE(msg.vi32.empty());
+
+  ASSERT_EQ(0, msg.vstr.size());
+  ASSERT_TRUE(msg.vstr.empty());
+
+  ASSERT_EQ(0, msg.vm.size());
+  ASSERT_TRUE(msg.vm.empty());
+}
+
+TEST(MessageTest, ClearUnion) {
+  char *buffer = (char *)malloc(4096);
+  TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
+
+  msg.u1.Set<0>(1234);
+  msg.u2.Set<1>("Hello, world!");
+  InnerMessage *inner = msg.u3.Mutable<1, InnerMessage>();
+  inner->str.Set("Inner message");
+  inner->f.Set(0xdeadbeef);
+
+  msg.DebugDump();
+  msg.Clear();
+  msg.DebugDump();
+
+  ASSERT_EQ(0, msg.u1.Discriminator());
+  ASSERT_EQ(0, msg.u2.Discriminator());
+  ASSERT_EQ(0, msg.u3.Discriminator());
 }
 
 int main(int argc, char **argv) {
