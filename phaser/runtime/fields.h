@@ -210,7 +210,7 @@ private:
 class NonEmbeddedStringField {
 public:
   NonEmbeddedStringField() = default;
-  explicit NonEmbeddedStringField(Message *msg, uint32_t absolute_binary_offset)
+  explicit NonEmbeddedStringField(const Message *msg, uint32_t absolute_binary_offset)
       : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
 
   phaser::BufferOffset BinaryEndOffset() const {
@@ -259,7 +259,7 @@ private:
 
   phaser::PayloadBuffer **GetBufferAddr() const { return &msg_->runtime->pb; }
 
-  Message *msg_;
+  const Message *msg_;
   phaser::BufferOffset absolute_binary_offset_; // Offset into
                                                 // phaser::PayloadBuffer of
                                                 // phaser::StringHeader
@@ -356,7 +356,7 @@ public:
       : Field(id, number), source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
 
-  const MessageType &Get() {
+  const MessageType &Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
       return msg_;
@@ -460,7 +460,7 @@ private:
 
   uint32_t source_offset_;
   phaser::BufferOffset relative_binary_offset_;
-  MessageType msg_;
+  mutable MessageType msg_;
 };
 
 template <typename MessageType> class MessageObject {
@@ -503,7 +503,7 @@ public:
   }
 
 private:
-  MessageType msg_;
+  mutable MessageType msg_;
 };
 
 } // namespace phaser

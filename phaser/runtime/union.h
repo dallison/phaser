@@ -239,7 +239,7 @@ public:
         relative_binary_offset_(relative_binary_offset),
         field_numbers_(field_numbers) {}
 
-  template <int Id, typename F> const F &GetReference() {
+  template <int Id, typename F> const F &GetReference() const {
     int32_t relative_offset = Message::GetMessage(this, source_offset_)
                                   ->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {
@@ -249,7 +249,7 @@ public:
                                                       relative_offset + 4);
   }
 
-  template <int Id, typename F> F GetValue() {
+  template <int Id, typename F> F GetValue() const {
     int32_t relative_offset = Message::GetMessage(this, source_offset_)
                                   ->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {
@@ -333,13 +333,13 @@ private:
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
-  std::shared_ptr<MessageRuntime> GetRuntime() {
+  std::shared_ptr<MessageRuntime> GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
   uint32_t source_offset_;
   phaser::BufferOffset relative_binary_offset_;
   std::vector<int> field_numbers_; // field number for each tuple type
-  std::tuple<T...> value_;
+  mutable std::tuple<T...> value_;
 };
 } // namespace phaser

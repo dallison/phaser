@@ -412,7 +412,7 @@ public:
       : Field(id, number), source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
 
-  const MessageObject<T> &operator[](int index) {
+  const MessageObject<T> &operator[](int index) const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset == -1) {
       return empty_;
@@ -475,7 +475,7 @@ public:
     return msgs_.back().Mutable();
   }
 
-  const T &Get(size_t index) { return (*this)[index].Get(); }
+  const T &Get(size_t index) const { return (*this)[index].Get(); }
 
   T *Mutable(int index) {
     if (index >= msgs_.size()) {
@@ -622,13 +622,13 @@ private:
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
-  std::shared_ptr<MessageRuntime> GetRuntime() {
+  std::shared_ptr<MessageRuntime> GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
   uint32_t source_offset_;
   phaser::BufferOffset relative_binary_offset_;
-  std::vector<MessageObject<T>> msgs_;
+  mutable std::vector<MessageObject<T>> msgs_;
   MessageObject<T> empty_;
 };
 
@@ -656,7 +656,7 @@ public:
       : Field(id, number), source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
 
-  const NonEmbeddedStringField &operator[](int index) {
+  const NonEmbeddedStringField &operator[](int index) const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset == -1) {
       return empty_;
@@ -696,9 +696,6 @@ public:
   NonEmbeddedStringField &back() { return strings_.back(); }
   const NonEmbeddedStringField &back() const { return strings_.back(); }
 
-  std::vector<NonEmbeddedStringField> &Get() { return strings_; }
-  const std::vector<NonEmbeddedStringField> &Get() const { return strings_; }
-
   void push_back(std::string_view s) {
     // Allocate string header in buffer.
     void *str_hdr = phaser::PayloadBuffer::Allocate(
@@ -719,7 +716,7 @@ public:
   void Add(const char *s, size_t len) { push_back(std::string(s, len)); }
   void Add(std::string_view s) { push_back(s); }
 
-  std::string_view Get(int index) { return (*this)[index].Get(); }
+  std::string_view Get(int index) const { return (*this)[index].Get(); }
 
   void Set(int index, std::string_view s) {
     if (index >= strings_.size()) {
@@ -814,6 +811,14 @@ public:
     }
   }
 
+  std::vector<std::string_view> Get() const {
+    std::vector<std::string_view> r;
+    for (const auto &s : strings_) {
+      r.push_back(s.Get());
+    }
+    return r;
+  }
+
 private:
   phaser::VectorHeader *Header(BufferOffset relative_offset = 0) const {
     if (relative_offset == 0) {
@@ -851,7 +856,7 @@ private:
   }
   uint32_t source_offset_;
   phaser::BufferOffset relative_binary_offset_;
-  std::vector<NonEmbeddedStringField> strings_;
+  mutable std::vector<NonEmbeddedStringField> strings_;
   NonEmbeddedStringField empty_;
 };
 
