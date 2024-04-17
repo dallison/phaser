@@ -1,6 +1,7 @@
 #include "phaser/compiler/message_gen.h"
-
+#include "absl/strings/str_format.h"
 #include <algorithm>
+#include <ctype.h>
 
 namespace phaser {
 
@@ -140,7 +141,7 @@ FieldCFieldType(const google::protobuf::FieldDescriptor *field) {
     return "FloatField";
   case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
     return "BoolField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_ENUM: 
+  case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
     return "EnumField<" + EnumName(field->enum_type()) + ">";
   case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
     return "StringField";
@@ -168,7 +169,7 @@ static std::string FieldCType(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
     return "bool";
   case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
-    return  EnumName(field->enum_type());
+    return EnumName(field->enum_type());
   case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
     return "std::string_view";
   case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
@@ -281,14 +282,15 @@ void MessageGenerator::CompileUnions() {
     std::string field_type = FieldUnionCType(field);
     // Append union type to the end of the the union member type
     if (union_info->member_type == "UnionField") {
-      union_info->member_type += "<phaser::" + field_type;
+      union_info->member_type += "<";
     } else {
-      union_info->member_type += ",phaser::" + field_type;
+      union_info->member_type += ", ";
     }
+    union_info->member_type += "phaser::" + field_type;
     uint32_t field_size = FieldBinarySize(field);
-    union_info->members.push_back(
-        std::make_shared<FieldInfo>(field, 4, union_info->id, "", field_type,
-                                    FieldCType(field), field_size));
+    union_info->members.push_back(std::make_shared<FieldInfo>(
+        field, 4, union_info->id, field->name() + "_", field_type,
+        FieldCType(field), field_size));
     union_info->binary_size = std::max(union_info->binary_size, 4 + field_size);
     union_info->id++;
   }
@@ -370,7 +372,7 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
 
 void MessageGenerator::GenerateHeader(std::ostream &os) {
   for (const auto &nested : nested_message_gens_) {
-     nested->GenerateHeader(os);
+    nested->GenerateHeader(os);
   }
   CompileFields();
   CompileUnions();
@@ -381,9 +383,9 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   // Generate constructors.
   GenerateConstructors(os);
   // Generate size functions.
-  GenerateSizeFunctions(os); 
+  GenerateSizeFunctions(os);
   // Generate creators.
-  GenerateCreators(os); 
+  GenerateCreators(os);
   // Generate clear function.
   GenerateClear(os);
   // Generate field metadata.
@@ -391,6 +393,9 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
 
   os << "  static std::string GetName() { return \"" << message_->full_name()
      << "\"; }\n\n";
+
+  GenerateNestedTypes(os);
+  GenerateFieldNumbers(os);
 
   // Generate protobuf accessors.
   GenerateProtobufAccessors(os);
@@ -417,7 +422,7 @@ void MessageGenerator::GenerateFieldDeclarations(std::ostream &os) {
 
 void MessageGenerator::GenerateEnums(std::ostream &os) {
   // Nested enums.
-  for (auto& msg : nested_message_gens_) {
+  for (auto &msg : nested_message_gens_) {
     msg->GenerateEnums(os);
   }
   for (auto &enum_gen : enum_gens_) {
@@ -427,7 +432,7 @@ void MessageGenerator::GenerateEnums(std::ostream &os) {
 
 void MessageGenerator::GenerateConstructors(std::ostream &os) {
   // Generate default constructor.
-  GenerateDefaultConstructor(os); 
+  GenerateDefaultConstructor(os);
   // Generate main constructor.
   GenerateMainConstructor(os);
 }
@@ -435,7 +440,7 @@ void MessageGenerator::GenerateConstructors(std::ostream &os) {
 void MessageGenerator::GenerateDefaultConstructor(std::ostream &os) {
   os << "  " << MessageName(message_) << "()\n";
   // Generate field initializers.
-  GenerateFieldInitializers(os); 
+  GenerateFieldInitializers(os);
   os << "  {}\n";
 }
 
@@ -446,19 +451,18 @@ void MessageGenerator::GenerateMainConstructor(std::ostream &os) {
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
   os << "  {}\n";
-
 }
 
 void MessageGenerator::GenerateFieldInitializers(std::ostream &os,
-                                                         const char *sep) {
+                                                 const char *sep) {
   if (fields_.empty() && unions_.empty()) {
     return;
   }
 
   for (auto &field : fields_) {
-    os << sep << field->member_name << "(offsetof(" << MessageName(message_) << ", "
-       << field->member_name << "), " << field->offset << ", " << field->id
-       << ", " << field->field->number() << ")\n";
+    os << sep << field->member_name << "(offsetof(" << MessageName(message_)
+       << ", " << field->member_name << "), " << field->offset << ", "
+       << field->id << ", " << field->field->number() << ")\n";
     sep = ", ";
   }
   for (auto & [ oneof, u ] : unions_) {
@@ -570,150 +574,232 @@ void MessageGenerator::GenerateClear(std::ostream &os) {
 
 void MessageGenerator::GenerateProtobufAccessors(std::ostream &os) {
   // Generate field accessors.
-   GenerateFieldProtobufAccessors(os); 
+  GenerateFieldProtobufAccessors(os);
+  // Union accessors.
+  GenerateUnionProtobufAccessors(os);
 }
 
 void MessageGenerator::GenerateFieldProtobufAccessors(std::ostream &os) {
   for (auto &field : fields_) {
-    std::string field_name = field->field->name();
-    std::string sanitized_field_name =
-        field_name + +(IsCppReservedWord(field_name) ? "_" : "");
+    GenerateFieldProtobufAccessors(field, -1, os);
+  }
+}
 
-    os << "\n  // Field " << field_name << "\n";
-    if (field->field->is_repeated()) {
-      // Generate repeated accessor.
-      switch (field->field->cpp_type()) {
-      case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
-      case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
-      case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
-      case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
-      case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
-      case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
-      case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
-      case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
-      case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
-        os << "  " << field->c_type << " " << sanitized_field_name
-           << "(size_t index) const {\n";
-        os << "    return " << field->member_name << ".Get(index);\n";
-        os << "  }\n";
-        os << "  size_t " << field_name << "_size() const {\n";
-        os << "    return " << field->member_name << ".Size();\n";
-        os << "  }\n";
-        os << "  void clear_" << field_name << "() {\n";
-        os << "    " << field->member_name << ".Clear();\n";
-        os << "  }\n";
+void MessageGenerator::GenerateFieldProtobufAccessors(
+    std::shared_ptr<FieldInfo> field, int union_index, std::ostream &os) {
+  std::string field_name = field->field->name();
+  std::string sanitized_field_name =
+      field_name + +(IsCppReservedWord(field_name) ? "_" : "");
 
-        // Strings have different accessors from primitive fields.
-        if (field->field->cpp_type() ==
-            google::protobuf::FieldDescriptor::CPPTYPE_STRING) {
-          os << "  void add_" << field_name << "(const std::string& value) {\n";
-          os << "    " << field->member_name << ".Add(value);\n";
-          os << "  }\n";
-          os << "  void set_" << field_name
-             << "(size_t index, const std::string& value) {\n";
-          os << "    " << field->member_name << ".Set(index, value);\n";
-          os << "  }\n";
-          os << "  phaser::StringVectorField& " << sanitized_field_name
-             << "() {\n";
-          os << "    return " << field->member_name << ";\n";
-          os << "  }\n";
-        } else {
-          os << "  void add_" << field_name << "(" << field->c_type
-             << " value) {\n";
-          os << "    " << field->member_name << ".Add(value);\n";
-          os << "  }\n";
-          os << "  void set_" << field_name << "(size_t index, "
-             << field->c_type << " value) {\n";
-          os << "    " << field->member_name << ".Set(index, value);\n";
-          os << "  }\n";
-          os << "  phaser::PrimitiveVectorField<" << field->c_type << ">& "
-             << sanitized_field_name << "() {\n";
-          os << "    return " << field->member_name << ";\n";
-          os << "  }\n";
-        }
-        break;
-      case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
-        os << "  size_t " << field_name << "_size() const {\n";
-        os << "    return " << field->member_name << ".Size();\n";
+  std::string member_name = field->member_name;
+  std::string suffix = "";
+  if (union_index != -1) {
+    suffix += "<" + std::to_string(union_index) + ">";
+  }
+  os << "\n  // Field " << field_name << "\n";
+  if (field->field->is_repeated()) {
+    // Generate repeated accessor.
+    switch (field->field->cpp_type()) {
+    case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+    case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+    case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+    case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+    case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+    case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+    case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+    case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+    case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+      os << "  " << field->c_type << " " << sanitized_field_name
+         << "(size_t index) const {\n";
+      os << "    return " << member_name << ".Get(index);\n";
+      os << "  }\n";
+      os << "  size_t " << field_name << "_size() const {\n";
+      os << "    return " << member_name << ".Size();\n";
+      os << "  }\n";
+      os << "  void clear_" << field_name << "() {\n";
+      os << "    " << member_name << ".Clear();\n";
+      os << "  }\n";
+
+      // Strings have different accessors from primitive fields.
+      if (field->field->cpp_type() ==
+          google::protobuf::FieldDescriptor::CPPTYPE_STRING) {
+        os << "  void add_" << field_name << "(const std::string& value) {\n";
+        os << "    " << member_name << ".Add(value);\n";
         os << "  }\n";
-        os << "  void clear_" << field_name << "() {\n";
-        os << "    " << field->member_name << ".Clear();\n";
+        os << "  void set_" << field_name
+           << "(size_t index, const std::string& value) {\n";
+        os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
-        os << "  " << field->c_type << " " << sanitized_field_name
-           << "(size_t index) const {\n";
-        os << "    return " << field->member_name << ".Get(index);\n";
+        os << "  phaser::StringVectorField& " << sanitized_field_name
+           << "() {\n";
+        os << "    return " << member_name << ";\n";
         os << "  }\n";
-        os << "  " << field->c_type << "* mutable_" << field_name
-           << "(size_t index) {\n";
-        os << "    return " << field->member_name << ".Mutable(index);\n";
+      } else {
+        os << "  void add_" << field_name << "(" << field->c_type
+           << " value) {\n";
+        os << "    " << member_name << ".Add(value);\n";
         os << "  }\n";
-        os << "  add_" << field_name << "(" << field->c_type << " value) {\n";
-        os << "    " << field->member_name << ".Add(value);\n";
+        os << "  void set_" << field_name << "(size_t index, " << field->c_type
+           << " value) {\n";
+        os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
-        os << "  phaser::MessageVectorField<" << field->c_type << ">& "
+        os << "  phaser::PrimitiveVectorField<" << field->c_type << ">& "
            << sanitized_field_name << "() {\n";
-        os << "    return " << field->member_name << ";\n";
+        os << "    return " << member_name << ";\n";
         os << "  }\n";
-        break;
       }
-    } else {
-      // Look at the field type and generate the appropriate accessor.
-      switch (field->field->cpp_type()) {
-      case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
-      case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
-      case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
-      case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
-      case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
-      case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
-      case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
-      case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
-      case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
-        os << "  " << field->c_type << " " << sanitized_field_name
-           << "() const {\n";
-        os << "    return " << field->member_name << ".Get();\n";
-        os << "  }\n";
+      break;
+    case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+      os << "  size_t " << field_name << "_size() const {\n";
+      os << "    return " << member_name << ".Size();\n";
+      os << "  }\n";
+      os << "  void clear_" << field_name << "() {\n";
+      os << "    " << member_name << ".Clear();\n";
+      os << "  }\n";
+      os << "  " << field->c_type << " " << sanitized_field_name
+         << "(size_t index) const {\n";
+      os << "    return " << member_name << ".Get(index);\n";
+      os << "  }\n";
+      os << "  " << field->c_type << "* mutable_" << field_name
+         << "(size_t index) {\n";
+      os << "    return " << member_name << ".Mutable(index);\n";
+      os << "  }\n";
+      os << "  add_" << field_name << "(" << field->c_type << " value) {\n";
+      os << "    " << member_name << ".Add(value);\n";
+      os << "  }\n";
+      os << "  phaser::MessageVectorField<" << field->c_type << ">& "
+         << sanitized_field_name << "() {\n";
+      os << "    return " << member_name << ";\n";
+      os << "  }\n";
+      break;
+    }
+  } else {
+    // Look at the field type and generate the appropriate accessor.
+    switch (field->field->cpp_type()) {
+    case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+    case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+    case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+    case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+    case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+    case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+    case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+    case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+    case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+      os << "  " << field->c_type << " " << sanitized_field_name
+         << "() const {\n";
+      if (union_index == -1) {
+        os << "    return " << member_name << ".Get();\n";
+      } else {
+        os << "    return " << member_name << ".GetValue<"
+           << std::to_string(union_index) << ", " << field->c_type << ">();\n";
+      }
+      os << "  }\n";
+      if (union_index == -1) {
         os << "  bool has_" << field_name << "() const {\n";
-        os << "    return " << field->member_name << ".IsPresent();\n";
+        os << "    return " << member_name << ".IsPresent();\n";
         os << "  }\n";
-        os << "  void clear_" << field_name << "() {\n";
-        os << "    " << field->member_name << ".Clear();\n";
+      }
+      os << "  void clear_" << field_name << "() {\n";
+      os << "    " << member_name << ".Clear" << suffix << "();\n";
+      os << "  }\n";
+      if (field->field->cpp_type() ==
+          google::protobuf::FieldDescriptor::CPPTYPE_STRING) {
+        os << "  void set_" << field_name << "(const std::string& value) {\n";
+        os << "    " << member_name << ".Set" << suffix << "(value);\n";
         os << "  }\n";
-        if (field->field->cpp_type() ==
-            google::protobuf::FieldDescriptor::CPPTYPE_STRING) {
-          os << "  void set_" << field_name << "(const std::string& value) {\n";
-          os << "    " << field->member_name << ".Set(value);\n";
-          os << "  }\n";
-        } else {
-          os << "  void set_" << field_name << "(" << field->c_type
-             << " value) {\n";
-          os << "    " << field->member_name << ".Set(value);\n";
-          os << "  }\n";
-        }
-        break;
+      } else {
+        os << "  void set_" << field_name << "(" << field->c_type
+           << " value) {\n";
+        os << "    " << member_name << ".Set" << suffix << "(value);\n";
+        os << "  }\n";
+      }
+      break;
 
-      case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
-        os << "  bool has_" << field_name << "() const {\n";
-        os << "    return " << field->member_name << ".IsPresent();\n";
-        os << "  }\n";
-        os << "  void clear_" << field_name << "() {\n";
-        os << "    " << field->member_name << ".Clear();\n";
-        os << "  }\n";
+    case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+
+      os << "  void clear_" << field_name << "() {\n";
+      os << "    " << member_name << ".Clear" << suffix << "();\n";
+      os << "  }\n";
+
+      if (union_index == -1) {
         os << "  const " << field->c_type << "& " << sanitized_field_name
            << "() const {\n";
-        os << "    return " << field->member_name << ".Get();\n";
+        os << "    return " << member_name << ".Get();\n";
+        os << "  }\n";
+        os << "  bool has_" << field_name << "() const {\n";
+        os << "    return " << member_name << ".IsPresent();\n";
         os << "  }\n";
         os << "  " << field->c_type << "* mutable_" << field_name << "() {\n";
-        os << "    return " << field->member_name << ".Mutable();\n";
+        os << "    return " << member_name << ".Mutable();\n";
         os << "  }\n";
-        break;
-      default:
-        break;
+      } else {
+        // Union members need to be accessed by index and type.
+        os << "  const " << field->c_type << "& " << sanitized_field_name
+           << "() const {\n";
+        os << "    return " << member_name << ".GetReference<"
+           << std::to_string(union_index) << ", "
+           << MessageName(field->field->message_type()) << ">();\n";
+        os << "  }\n";
+        os << "  " << field->c_type << "* mutable_" << field_name << "() {\n";
+        os << "    return " << member_name << ".Mutable<"
+           << std::to_string(union_index) << ", "
+           << MessageName(field->field->message_type()) << ">();\n";
+        os << "  }\n";
       }
+      break;
+    default:
+      break;
     }
   }
 }
 
 void MessageGenerator::GenerateUnionProtobufAccessors(std::ostream &os) {
+  for (auto & [ oneof, u ] : unions_) {
+    os << "\n  // Oneof " << oneof->name() << "\n";
+    os << "  int " << oneof->name() << "_case() const {\n";
+    os << "    return " << u->member_name << ".Discriminator();\n";
+    os << "  }\n";
+    for (size_t i = 0; i < u->members.size(); i++) {
+      auto &field = u->members[i];
+      GenerateFieldProtobufAccessors(field, int(i), os);
+    }
+  }
 }
+
+void MessageGenerator::GenerateNestedTypes(std::ostream &os) {
+  for (auto &msg : nested_message_gens_) {
+    os << "  using " << msg->message_->name() << " = "
+       << MessageName(msg->message_) << ";\n";
+  }
+
+  for (auto &enum_gen : enum_gens_) {
+    os << "  using " << enum_gen->enum_->name() << " = "
+       << EnumName(enum_gen->enum_) << ";\n";
+    // Generate enum constant aliases.
+    for (int i = 0; i < enum_gen->enum_->value_count(); i++) {
+      const google::protobuf::EnumValueDescriptor * value = enum_gen->enum_->value(i);
+      os << "  static constexpr " << enum_gen->enum_->name() << " " << value->name() << 
+      " = " << EnumName(enum_gen->enum_) << "_" << value->name() << ";\n";
+    }
+  }
+}
+
+  void MessageGenerator::GenerateFieldNumbers(std::ostream &os) {
+    for (auto &field : fields_) {
+      std::string name = field->field->camelcase_name();
+      name = absl::StrFormat("k%c%s", toupper(name[0]), name.substr(1));
+      os << "  static constexpr int " << name << "FieldNumber = "
+         << field->field->number() << ";\n";
+    }
+    for (auto& [oneof, u] : unions_) {
+      for (auto& field : u->members) {
+        std::string name = field->field->camelcase_name();
+        name = absl::StrFormat("k%c%s", toupper(name[0]), name.substr(1));
+        os << "  static constexpr int " << name << "FieldNumber = "
+           << field->field->number() << ";\n";
+      }
+    }
+  }
+
 
 } // namespace phaser

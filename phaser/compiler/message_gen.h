@@ -76,7 +76,10 @@ private:
 
   void GenerateProtobufAccessors(std::ostream &os);
   void GenerateFieldProtobufAccessors(std::ostream &os);
+  void GenerateFieldProtobufAccessors(std::shared_ptr<FieldInfo> field, int union_index, std::ostream &os);
   void GenerateUnionProtobufAccessors(std::ostream &os);
+  void GenerateNestedTypes(std::ostream &os);
+  void GenerateFieldNumbers(std::ostream &os);
 
   const google::protobuf::Descriptor *message_;
   std::vector<std::unique_ptr<MessageGenerator>> nested_message_gens_;

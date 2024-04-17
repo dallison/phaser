@@ -12,7 +12,11 @@ namespace phaser {
     os << "enum " << name << " : int {\n";
     for (int i = 0; i < enum_->value_count(); i++) {
       const google::protobuf::EnumValueDescriptor *value = enum_->value(i);
-      os << "  " << value->name() << " = " << value->number() << ",\n";
+      std::string const_name = value->name();
+      if (enum_->containing_type() != nullptr) {
+        const_name = name + "_" + const_name;
+      }
+      os << "  " << const_name << " = " << value->number() << ",\n";
     }
     os << "};\n";
   }

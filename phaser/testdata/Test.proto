@@ -29,6 +29,7 @@ message TestMessage {
   oneof d {
     string e = 4;
     int32 f = 5;
+    NestedMessage g = 6;
   }
   State state = 50;
   Status status = 51;

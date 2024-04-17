@@ -17,6 +17,7 @@ public:
   void GenerateHeader(std::ostream &os);
 
 private:
+  friend class MessageGenerator;
   const google::protobuf::EnumDescriptor *enum_;
   std::vector<std::unique_ptr<EnumGenerator>> nested_enum_gens_;
 };
