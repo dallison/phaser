@@ -20,17 +20,16 @@ struct InnerMessage : public Message {
   InnerMessage()
       : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {}
-  explicit InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime)
-      : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
-        f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {
+  // explicit InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime)
+  //     : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
+  //       f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {
+  //   this->runtime = runtime;
+  //   void *data = phaser::PayloadBuffer::Allocate(&runtime->pb, BinarySize(), 8);
+  //   this->absolute_binary_offset = runtime->pb->ToOffset(data);
 
-    this->runtime = runtime;
-    void *data = phaser::PayloadBuffer::Allocate(&runtime->pb, BinarySize(), 8);
-    this->absolute_binary_offset = runtime->pb->ToOffset(data);
-
-    std::cout << "InnerMessage start: " << std::hex
-              << this->absolute_binary_offset << std::dec << std::endl;
-  }
+  //   std::cout << "InnerMessage start: " << std::hex
+  //             << this->absolute_binary_offset << std::dec << std::endl;
+  // }
   InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
                phaser::BufferOffset offset)
       : Message(runtime, offset),
@@ -174,23 +173,24 @@ struct TestMessage : public Message {
   // Repeated accessors.
   size_t vi32_size() const { return vi32_.size(); }
   int32_t vi32(size_t i) const { return vi32_.Get(i); }
-  std::vector<int32_t> vi32() const { return vi32_.Get(); }
   void add_vi32(int32_t v) { vi32_.Add(v); }
   void set_vi32(size_t i, int32_t v) { vi32_.Set(i, v); }
   void clear_vi32() { vi32_.Clear(); }
+  phaser::PrimitiveVectorField<int32_t> &vi32() { return vi32_; }
 
   size_t vstr_size() const { return vstr_.size(); }
   std::string_view vstr(size_t i) const { return vstr_.Get(i); }
-  std::vector<std::string_view> vstr() const { return vstr_.Get(); }
   void add_vstr(const std::string &v) { vstr_.Add(v); }
   void set_vstr(size_t i, const std::string &v) { vstr_.Set(i, v); }
   void clear_vstr() { vstr_.Clear(); }
+  phaser::StringVectorField &vstr() { return vstr_; }
 
   size_t vm_size() const { return vm_.size(); }
   const InnerMessage &vm(size_t i) const { return vm_.Get(i); }
   InnerMessage *mutable_vm(size_t i) { return vm_.Mutable(i); }
   void add_vm() { vm_.Add(); }
   void clear_vm() { vm_.Clear(); }
+  phaser::MessageVectorField<InnerMessage> &vm() { return vm_; }
 
   // Union fields.
   int u1_case() const { return u1_.Discriminator(); }

@@ -3,14 +3,18 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "phaser_lib",
     srcs = [
+        "enum_gen.cc",
         "gen.cc",
         "message_gen.cc",
     ],
     hdrs = [
+        "enum_gen.h",
         "gen.h",
         "message_gen.h",
     ],
     deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -29,4 +33,3 @@ cc_binary(
         "@com_google_protobuf//:protoc_lib",
     ],
 )
-

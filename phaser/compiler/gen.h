@@ -6,6 +6,7 @@
 #include "absl/status/status.h"
 
 #include "phaser/compiler/message_gen.h"
+#include "phaser/compiler/enum_gen.h"
 
 #include <iostream>
 #include <vector>
@@ -25,12 +26,13 @@ public:
   }
 };
 
+
 class Generator {
 public:
   Generator(const google::protobuf::FileDescriptor *file);
 
-  absl::Status GenerateHeaders(std::ostream& os);
-  absl::Status GenerateSources(std::ostream& os);
+  void GenerateHeaders(std::ostream& os);
+  void GenerateSources(std::ostream& os);
 
 private:
   void OpenNamespace(std::ostream& os);
@@ -38,6 +40,7 @@ private:
 
   const google::protobuf::FileDescriptor *file_;
   std::vector<std::unique_ptr<MessageGenerator>> message_gens_;
+  std::vector<std::unique_ptr<EnumGenerator>> enum_gens_;
 };
 
 } // namespace phaser
