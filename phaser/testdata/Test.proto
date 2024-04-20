@@ -34,4 +34,5 @@ message TestMessage {
   State state = 50;
   Status status = 51;
   NestedMessage nested = 52;
+  bytes data = 153;
 }

@@ -126,139 +126,181 @@ static std::string MessageName(const google::protobuf::Descriptor *desc) {
 
 static std::string
 FieldCFieldType(const google::protobuf::FieldDescriptor *field) {
-  switch (field->cpp_type()) {
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+  switch (field->type()) {
+  case google::protobuf::FieldDescriptor::TYPE_INT32:
+  case google::protobuf::FieldDescriptor::TYPE_SINT32:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
     return "Int32Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_SINT64:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
     return "Int64Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED32:
     return "Uint32Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED64:
     return "Uint64Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+  case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
     return "DoubleField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+  case google::protobuf::FieldDescriptor::TYPE_FLOAT:
     return "FloatField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+  case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "BoolField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+  case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return "EnumField<" + EnumName(field->enum_type()) + ">";
-  case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+  case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
     return "IndirectMessageField<" + MessageName(field->message_type()) + ">";
-  default:
-    abort();
+
+  case google::protobuf::FieldDescriptor::TYPE_GROUP:
+    std::cerr << "Groups are not supported\n";
+    exit(1);
   }
 }
 
 static std::string FieldCType(const google::protobuf::FieldDescriptor *field) {
-  switch (field->cpp_type()) {
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+  switch (field->type()) {
+  case google::protobuf::FieldDescriptor::TYPE_INT32:
+  case google::protobuf::FieldDescriptor::TYPE_SINT32:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
     return "int32_t";
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_SINT64:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
     return "int64_t";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED32:
     return "uint32_t";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED64:
     return "uint64_t";
-  case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+  case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
     return "double";
-  case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+  case google::protobuf::FieldDescriptor::TYPE_FLOAT:
     return "float";
-  case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+  case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "bool";
-  case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+  case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return EnumName(field->enum_type());
-  case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "std::string_view";
-  case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+  case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
     return MessageName(field->message_type());
-  default:
-    abort();
+  case google::protobuf::FieldDescriptor::TYPE_GROUP:
+    std::cerr << "Groups are not supported\n";
+    exit(1);
   }
 }
+
 static std::string
 FieldRepeatedCType(const google::protobuf::FieldDescriptor *field) {
-  switch (field->cpp_type()) {
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+  switch (field->type()) {
+  case google::protobuf::FieldDescriptor::TYPE_INT32:
+  case google::protobuf::FieldDescriptor::TYPE_SINT32:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
     return "PrimitiveVectorField<int32_t>";
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_SINT64:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
     return "PrimitiveVectorField<int64_t>";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED32:
     return "PrimitiveVectorField<uint32_t>";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED64:
     return "PrimitiveVectorField<uint64_t>";
-  case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+  case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
     return "PrimitiveVectorField<double>";
-  case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+  case google::protobuf::FieldDescriptor::TYPE_FLOAT:
     return "PrimitiveVectorField<float>";
-  case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+  case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "PrimitiveVectorField<bool>";
-  case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+  case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return "EnumVectorField<" + EnumName(field->enum_type()) + ">";
-  case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringVectorField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+  case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
     return "MessageVectorField<" + MessageName(field->message_type()) + ">";
-  default:
-    abort();
+  case google::protobuf::FieldDescriptor::TYPE_GROUP:
+    std::cerr << "Groups are not supported\n";
+    exit(1);
   }
 }
 
 static std::string
 FieldUnionCType(const google::protobuf::FieldDescriptor *field) {
-  switch (field->cpp_type()) {
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+  switch (field->type()) {
+  case google::protobuf::FieldDescriptor::TYPE_INT32:
+  case google::protobuf::FieldDescriptor::TYPE_SINT32:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
     return "UnionInt32Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_SINT64:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
     return "UnionInt64Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED32:
     return "UnionUint32Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED64:
     return "UnionUint64Field";
-  case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+  case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
     return "UnionDoubleField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+  case google::protobuf::FieldDescriptor::TYPE_FLOAT:
     return "UnionFloatField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+  case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "UnionBoolField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+  case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return "UnionEnumField<" + EnumName(field->enum_type()) + ">";
-  case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "UnionStringField";
-  case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+  case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
     return "UnionMessageField<" + MessageName(field->message_type()) + ">";
-  default:
-    abort();
+  case google::protobuf::FieldDescriptor::TYPE_GROUP:
+    std::cerr << "Groups are not supported\n";
+    exit(1);
   }
 }
 
 static uint32_t
 FieldBinarySize(const google::protobuf::FieldDescriptor *field) {
-  switch (field->cpp_type()) {
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
+  switch (field->type()) {
+  case google::protobuf::FieldDescriptor::TYPE_INT32:
+  case google::protobuf::FieldDescriptor::TYPE_SINT32:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
     return 4;
-  case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_INT64:
+  case google::protobuf::FieldDescriptor::TYPE_SINT64:
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
     return 8;
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_UINT32:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED32:
     return 4;
-  case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_UINT64:
+  case google::protobuf::FieldDescriptor::TYPE_FIXED64:
     return 8;
-  case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
+  case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
     return 8;
-  case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
+  case google::protobuf::FieldDescriptor::TYPE_FLOAT:
     return 4;
-  case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
+  case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return 1;
-  case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
+  case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return 4;
-  case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_STRING:
+  case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return 4;
-  case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+  case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
     return 8;
-  default:
-    abort();
+  case google::protobuf::FieldDescriptor::TYPE_GROUP:
+    std::cerr << "Groups are not supported\n";
+    exit(1);
   }
 }
 
@@ -319,7 +361,8 @@ void MessageGenerator::CompileFields() {
       field_type = FieldCFieldType(field);
       field_size = FieldBinarySize(field);
       if (field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
-          field->type() != google::protobuf::FieldDescriptor::TYPE_STRING) {
+          field->type() != google::protobuf::FieldDescriptor::TYPE_STRING &&
+          field->type() != google::protobuf::FieldDescriptor::TYPE_BYTES) {
         // Strings and messages don't consume a presence bit.
         next_id++;
       } else {
@@ -458,7 +501,8 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream &os,
   if (fields_.empty() && unions_.empty()) {
     return;
   }
-
+  os << "#pragma clang diagnostic push\n";
+  os << "#pragma clang diagnostic ignored \"-Winvalid-offsetof\"\n";
   for (auto &field : fields_) {
     os << sep << field->member_name << "(offsetof(" << MessageName(message_)
        << ", " << field->member_name << "), " << field->offset << ", "
@@ -476,6 +520,7 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream &os,
     os << "})\n";
     sep = ", ";
   }
+  os << "#pragma clang diagnostic pop\n\n";
 }
 
 void MessageGenerator::GenerateCreators(std::ostream &os) {
@@ -556,6 +601,7 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream &os) {
     os << "      { .number = " << field->field->number()
        << ", .offset = " << field->offset << ", .id = " << field->id << " },\n";
   }
+  os << "    }\n";
   os << "  };\n";
 }
 
@@ -581,34 +627,47 @@ void MessageGenerator::GenerateProtobufAccessors(std::ostream &os) {
 
 void MessageGenerator::GenerateFieldProtobufAccessors(std::ostream &os) {
   for (auto &field : fields_) {
-    GenerateFieldProtobufAccessors(field, -1, os);
+    GenerateFieldProtobufAccessors(field, nullptr, -1, os);
   }
 }
 
 void MessageGenerator::GenerateFieldProtobufAccessors(
-    std::shared_ptr<FieldInfo> field, int union_index, std::ostream &os) {
+    std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
+    int union_index, std::ostream &os) {
   std::string field_name = field->field->name();
   std::string sanitized_field_name =
       field_name + +(IsCppReservedWord(field_name) ? "_" : "");
 
   std::string member_name = field->member_name;
+  if (union_field != nullptr) {
+    // For a union, all the accessors use the union field name.
+    member_name = union_field->member_name;
+  }
   std::string suffix = "";
   if (union_index != -1) {
     suffix += "<" + std::to_string(union_index) + ">";
   }
+
   os << "\n  // Field " << field_name << "\n";
   if (field->field->is_repeated()) {
     // Generate repeated accessor.
-    switch (field->field->cpp_type()) {
-    case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
-    case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
-    case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
-    case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
-    case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
-    case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
-    case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
-    case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
-    case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+    switch (field->field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
       os << "  " << field->c_type << " " << sanitized_field_name
          << "(size_t index) const {\n";
       os << "    return " << member_name << ".Get(index);\n";
@@ -621,8 +680,10 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "  }\n";
 
       // Strings have different accessors from primitive fields.
-      if (field->field->cpp_type() ==
-          google::protobuf::FieldDescriptor::CPPTYPE_STRING) {
+      if (field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_STRING ||
+          field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_BYTES) {
         os << "  void add_" << field_name << "(const std::string& value) {\n";
         os << "    " << member_name << ".Add(value);\n";
         os << "  }\n";
@@ -649,7 +710,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "  }\n";
       }
       break;
-    case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
       os << "  size_t " << field_name << "_size() const {\n";
       os << "    return " << member_name << ".Size();\n";
       os << "  }\n";
@@ -672,25 +733,35 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "    return " << member_name << ";\n";
       os << "  }\n";
       break;
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      std::cerr << "Groups are not supported\n";
+      exit(1);
     }
   } else {
     // Look at the field type and generate the appropriate accessor.
-    switch (field->field->cpp_type()) {
-    case google::protobuf::FieldDescriptor::CPPTYPE_INT32:
-    case google::protobuf::FieldDescriptor::CPPTYPE_INT64:
-    case google::protobuf::FieldDescriptor::CPPTYPE_UINT32:
-    case google::protobuf::FieldDescriptor::CPPTYPE_UINT64:
-    case google::protobuf::FieldDescriptor::CPPTYPE_DOUBLE:
-    case google::protobuf::FieldDescriptor::CPPTYPE_FLOAT:
-    case google::protobuf::FieldDescriptor::CPPTYPE_BOOL:
-    case google::protobuf::FieldDescriptor::CPPTYPE_ENUM:
-    case google::protobuf::FieldDescriptor::CPPTYPE_STRING:
+    switch (field->field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
       os << "  " << field->c_type << " " << sanitized_field_name
          << "() const {\n";
       if (union_index == -1) {
         os << "    return " << member_name << ".Get();\n";
       } else {
-        os << "    return " << member_name << ".GetValue<"
+        os << "    return " << member_name << ".template GetValue<"
            << std::to_string(union_index) << ", " << field->c_type << ">();\n";
       }
       os << "  }\n";
@@ -702,8 +773,10 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "  void clear_" << field_name << "() {\n";
       os << "    " << member_name << ".Clear" << suffix << "();\n";
       os << "  }\n";
-      if (field->field->cpp_type() ==
-          google::protobuf::FieldDescriptor::CPPTYPE_STRING) {
+      if (field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_STRING ||
+          field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_BYTES) {
         os << "  void set_" << field_name << "(const std::string& value) {\n";
         os << "    " << member_name << ".Set" << suffix << "(value);\n";
         os << "  }\n";
@@ -715,8 +788,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       }
       break;
 
-    case google::protobuf::FieldDescriptor::CPPTYPE_MESSAGE:
-
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
       os << "  void clear_" << field_name << "() {\n";
       os << "    " << member_name << ".Clear" << suffix << "();\n";
       os << "  }\n";
@@ -736,7 +808,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         // Union members need to be accessed by index and type.
         os << "  const " << field->c_type << "& " << sanitized_field_name
            << "() const {\n";
-        os << "    return " << member_name << ".GetReference<"
+        os << "    return " << member_name << ".template GetReference<"
            << std::to_string(union_index) << ", "
            << MessageName(field->field->message_type()) << ">();\n";
         os << "  }\n";
@@ -747,7 +819,9 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "  }\n";
       }
       break;
-    default:
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      std::cerr << "Groups are not supported\n";
+      exit(1);
       break;
     }
   }
@@ -761,7 +835,7 @@ void MessageGenerator::GenerateUnionProtobufAccessors(std::ostream &os) {
     os << "  }\n";
     for (size_t i = 0; i < u->members.size(); i++) {
       auto &field = u->members[i];
-      GenerateFieldProtobufAccessors(field, int(i), os);
+      GenerateFieldProtobufAccessors(field, u, int(i), os);
     }
   }
 }
@@ -777,29 +851,30 @@ void MessageGenerator::GenerateNestedTypes(std::ostream &os) {
        << EnumName(enum_gen->enum_) << ";\n";
     // Generate enum constant aliases.
     for (int i = 0; i < enum_gen->enum_->value_count(); i++) {
-      const google::protobuf::EnumValueDescriptor * value = enum_gen->enum_->value(i);
-      os << "  static constexpr " << enum_gen->enum_->name() << " " << value->name() << 
-      " = " << EnumName(enum_gen->enum_) << "_" << value->name() << ";\n";
+      const google::protobuf::EnumValueDescriptor *value =
+          enum_gen->enum_->value(i);
+      os << "  static constexpr " << enum_gen->enum_->name() << " "
+         << value->name() << " = " << EnumName(enum_gen->enum_) << "_"
+         << value->name() << ";\n";
     }
   }
 }
 
-  void MessageGenerator::GenerateFieldNumbers(std::ostream &os) {
-    for (auto &field : fields_) {
+void MessageGenerator::GenerateFieldNumbers(std::ostream &os) {
+  for (auto &field : fields_) {
+    std::string name = field->field->camelcase_name();
+    name = absl::StrFormat("k%c%s", toupper(name[0]), name.substr(1));
+    os << "  static constexpr int " << name
+       << "FieldNumber = " << field->field->number() << ";\n";
+  }
+  for (auto & [ oneof, u ] : unions_) {
+    for (auto &field : u->members) {
       std::string name = field->field->camelcase_name();
       name = absl::StrFormat("k%c%s", toupper(name[0]), name.substr(1));
-      os << "  static constexpr int " << name << "FieldNumber = "
-         << field->field->number() << ";\n";
-    }
-    for (auto& [oneof, u] : unions_) {
-      for (auto& field : u->members) {
-        std::string name = field->field->camelcase_name();
-        name = absl::StrFormat("k%c%s", toupper(name[0]), name.substr(1));
-        os << "  static constexpr int " << name << "FieldNumber = "
-           << field->field->number() << ";\n";
-      }
+      os << "  static constexpr int " << name
+         << "FieldNumber = " << field->field->number() << ";\n";
     }
   }
-
+}
 
 } // namespace phaser

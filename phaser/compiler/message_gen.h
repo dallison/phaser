@@ -76,7 +76,7 @@ private:
 
   void GenerateProtobufAccessors(std::ostream &os);
   void GenerateFieldProtobufAccessors(std::ostream &os);
-  void GenerateFieldProtobufAccessors(std::shared_ptr<FieldInfo> field, int union_index, std::ostream &os);
+  void GenerateFieldProtobufAccessors(std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field, int union_index, std::ostream &os);
   void GenerateUnionProtobufAccessors(std::ostream &os);
   void GenerateNestedTypes(std::ostream &os);
   void GenerateFieldNumbers(std::ostream &os);

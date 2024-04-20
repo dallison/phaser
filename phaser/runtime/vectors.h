@@ -182,6 +182,7 @@ public:
 
   size_t size() const { return NumElements(); }
   T *data() const { return GetBuffer()->template ToAddress<T>(BaseOffset()); }
+  size_t Size() const { return NumElements(); }
 
   bool empty() const { return size() == 0; }
 
@@ -332,6 +333,7 @@ public:
   size_t size() const { return NumElements(); }
   Enum *data() const { GetBuffer()->template ToAddress<Enum>(BaseOffset()); }
   bool empty() const { return size() == 0; }
+  size_t Size() const { return NumElements(); }
 
   size_t capacity() const {
     phaser::VectorHeader *hdr = Header();
@@ -547,6 +549,7 @@ public:
 
   size_t size() const { return NumElements(); }
   bool empty() const { return size() == 0; }
+  size_t Size() const { return NumElements(); }
 
   phaser::BufferOffset BinaryEndOffset() const {
     return relative_binary_offset_ + sizeof(phaser::VectorHeader);
@@ -690,6 +693,7 @@ public:
     return strings_.data();
   }
   bool empty() const { return size() == 0; }
+  size_t Size() const { return NumElements(); }
 
   NonEmbeddedStringField &front() { return strings_.front(); }
   const NonEmbeddedStringField &front() const { return strings_.front(); }
