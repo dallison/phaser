@@ -1,16 +1,16 @@
 #include "absl/strings/str_format.h"
-#include "phaser/runtime/payload_buffer.h"
+#include "toolbelt/payload_buffer.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "toolbelt/hexdump.h"
 #include <gtest/gtest.h>
 #include <sstream>
 
-using PayloadBuffer = phaser::PayloadBuffer;
-using BufferOffset = phaser::BufferOffset;
+using PayloadBuffer = toolbelt::PayloadBuffer;
+using BufferOffset = toolbelt::BufferOffset;
 using Message = phaser::Message;
-using VectorHeader = phaser::VectorHeader;
-using StringHeader = phaser::StringHeader;
+using VectorHeader = toolbelt::VectorHeader;
+using StringHeader = toolbelt::StringHeader;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
@@ -25,14 +25,14 @@ struct InnerMessage : public Message {
   //     : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
   //       f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {
   //   this->runtime = runtime;
-  //   void *data = phaser::PayloadBuffer::Allocate(&runtime->pb, BinarySize(),
+  //   void *data = toolbelt::PayloadBuffer::Allocate(&runtime->pb, BinarySize(),
   //   8); this->absolute_binary_offset = runtime->pb->ToOffset(data);
 
   //   std::cout << "InnerMessage start: " << std::hex
   //             << this->absolute_binary_offset << std::dec << std::endl;
   // }
   InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
-               phaser::BufferOffset offset)
+               toolbelt::BufferOffset offset)
       : Message(runtime, offset),
         str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {}
@@ -144,7 +144,7 @@ struct TestMessage : public Message {
         }
 
   TestMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
-              phaser::BufferOffset offset)
+              toolbelt::BufferOffset offset)
       : Message(runtime, offset),
         x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
         y_(offsetof(TestMessage, y_), HeaderSize() + 8, 1, 101),
@@ -158,8 +158,8 @@ struct TestMessage : public Message {
         u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0, {111, 112}) {}
 
   static TestMessage CreateMutable(void *addr, size_t size) {
-    phaser::PayloadBuffer *pb = new (addr) phaser::PayloadBuffer(size);
-    phaser::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
+    toolbelt::PayloadBuffer *pb = new (addr) toolbelt::PayloadBuffer(size);
+    toolbelt::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
@@ -167,14 +167,14 @@ struct TestMessage : public Message {
   }
 
   static TestMessage CreateReadonly(void *addr) {
-    phaser::PayloadBuffer *pb = reinterpret_cast<phaser::PayloadBuffer *>(addr);
+    toolbelt::PayloadBuffer *pb = reinterpret_cast<toolbelt::PayloadBuffer *>(addr);
     auto runtime = std::make_shared<phaser::MessageRuntime>(pb);
     return TestMessage(runtime, pb->message);
   }
 
   static TestMessage CreateDynamicMutable(size_t initial_size = 1024) {
-    phaser::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
-    phaser::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
+    toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
+    toolbelt::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
@@ -182,8 +182,8 @@ struct TestMessage : public Message {
   }
 
  void InitDynamicMutable(size_t initial_size = 1024) {
-    phaser::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
-    phaser::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
+    toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
+    toolbelt::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     this->runtime = runtime;
     this->absolute_binary_offset = pb->message;

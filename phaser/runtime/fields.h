@@ -7,7 +7,7 @@
 #include "absl/status/statusor.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
-#include "phaser/runtime/payload_buffer.h"
+#include "toolbelt/payload_buffer.h"
 #include "phaser/runtime/wireformat.h"
 #include <stdint.h>
 #include <stdlib.h>
@@ -29,15 +29,15 @@ public:
 
   // The presence bit is in a set of words immediately after
   // the metadata at the start of the message.
-  void SetPresence(phaser::PayloadBuffer *buffer, uint32_t binary_offset) {
+  void SetPresence(toolbelt::PayloadBuffer *buffer, uint32_t binary_offset) {
     buffer->SetPresenceBit(id_, binary_offset);
   }
 
-  void ClearPresence(phaser::PayloadBuffer *buffer, uint32_t binary_offset) {
+  void ClearPresence(toolbelt::PayloadBuffer *buffer, uint32_t binary_offset) {
     buffer->ClearPresenceBit(id_, binary_offset);
   }
 
-  bool IsPresent(uint32_t field_id, phaser::PayloadBuffer *buffer,
+  bool IsPresent(uint32_t field_id, toolbelt::PayloadBuffer *buffer,
                  uint32_t binary_offset) const {
     if (field_id == -1) {
       return false;
@@ -67,7 +67,7 @@ public:
 protected:
   int id_ = 0;
   int number_ = 0;
-  mutable phaser::BufferOffset cached_offset_ = 0xffffffff;
+  mutable toolbelt::BufferOffset cached_offset_ = 0xffffffff;
   mutable int32_t cached_field_id_ = -1;
 };
 
@@ -100,10 +100,10 @@ protected:
       source_offset_ = soff;                                                   \
       relative_binary_offset_ = boff;                                          \
     }                                                                          \
-    phaser::BufferOffset BinaryEndOffset() const {                             \
+    toolbelt::BufferOffset BinaryEndOffset() const {                             \
       return relative_binary_offset_ + sizeof(type);                           \
     }                                                                          \
-    phaser::BufferOffset BinaryOffset() const {                                \
+    toolbelt::BufferOffset BinaryOffset() const {                                \
       return relative_binary_offset_;                                          \
     }                                                                          \
     bool operator==(const cname##Field &other) const {                         \
@@ -145,17 +145,17 @@ protected:
     }                                                                          \
                                                                                \
   private:                                                                     \
-    phaser::PayloadBuffer *GetBuffer() const {                                 \
+    toolbelt::PayloadBuffer *GetBuffer() const {                                 \
       return Message::GetBuffer(this, source_offset_);                         \
     }                                                                          \
-    phaser::BufferOffset GetMessageBinaryStart() const {                       \
+    toolbelt::BufferOffset GetMessageBinaryStart() const {                       \
       return Message::GetMessageBinaryStart(this, source_offset_);             \
     }                                                                          \
-    phaser::BufferOffset GetPresenceMaskStart() const {                        \
+    toolbelt::BufferOffset GetPresenceMaskStart() const {                        \
       return Message::GetMessageBinaryStart(this, source_offset_) + 4;         \
     }                                                                          \
     uint32_t source_offset_;                                                   \
-    phaser::BufferOffset relative_binary_offset_;                              \
+    toolbelt::BufferOffset relative_binary_offset_;                              \
   };
 
 DEFINE_PRIMITIVE_FIELD(Int32, int32_t)
@@ -213,11 +213,11 @@ public:
 
   void Clear() { ClearPresence(GetBuffer(), GetMessageBinaryStart()); }
 
-  phaser::BufferOffset BinaryEndOffset() const {
+  toolbelt::BufferOffset BinaryEndOffset() const {
     return relative_binary_offset_ +
            sizeof(typename std::underlying_type<Enum>::type);
   }
-  phaser::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
+  toolbelt::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
 
   bool operator==(const EnumField &other) const {
     return static_cast<Enum>(*this) == static_cast<Enum>(other);
@@ -245,14 +245,14 @@ public:
   }
 
 private:
-  phaser::PayloadBuffer *GetBuffer() const {
+  toolbelt::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
-  phaser::BufferOffset GetMessageBinaryStart() const {
+  toolbelt::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
   uint32_t source_offset_;
-  phaser::BufferOffset relative_binary_offset_;
+  toolbelt::BufferOffset relative_binary_offset_;
 };
 
 // String field with an offset inline in the message.
@@ -277,27 +277,27 @@ public:
     if (offset < 0) {
       return false;
     }
-    const phaser::BufferOffset *addr =
-        GetBuffer()->ToAddress<const phaser::BufferOffset>(
+    const toolbelt::BufferOffset *addr =
+        GetBuffer()->ToAddress<const toolbelt::BufferOffset>(
             GetMessageBinaryStart() + offset);
     return *addr != 0;
   }
 
   void Set(const std::string &s) {
-    phaser::PayloadBuffer::SetString(
+    toolbelt::PayloadBuffer::SetString(
         GetBufferAddr(), s, GetMessageBinaryStart() + relative_binary_offset_);
   }
 
   void Clear() {
-    phaser::PayloadBuffer::ClearString(
+    toolbelt::PayloadBuffer::ClearString(
         GetBufferAddr(), GetMessageBinaryStart() + relative_binary_offset_);
   }
 
-  phaser::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(phaser::BufferOffset);
+  toolbelt::BufferOffset BinaryEndOffset() const {
+    return relative_binary_offset_ + sizeof(toolbelt::BufferOffset);
   }
 
-  phaser::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
+  toolbelt::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
 
   bool operator==(const StringField &other) const {
     return Get() == other.Get();
@@ -335,7 +335,7 @@ public:
     if (!s.ok()) {
       return s.status();
     }
-    phaser::PayloadBuffer::SetString(
+    toolbelt::PayloadBuffer::SetString(
         GetBufferAddr(), *s, GetMessageBinaryStart() + relative_binary_offset_);
     return absl::OkStatus();
   }
@@ -343,19 +343,19 @@ public:
 private:
   template <int N> friend class StringArrayField;
 
-  phaser::PayloadBuffer *GetBuffer() const {
+  toolbelt::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  phaser::PayloadBuffer **GetBufferAddr() const {
+  toolbelt::PayloadBuffer **GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
-  phaser::BufferOffset GetMessageBinaryStart() const {
+  toolbelt::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
   uint32_t source_offset_;
-  phaser::BufferOffset relative_binary_offset_;
+  toolbelt::BufferOffset relative_binary_offset_;
 };
 
 // This is a string field that is not embedded inside a message.  These will be
@@ -369,27 +369,27 @@ public:
                                   uint32_t absolute_binary_offset)
       : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
 
-  phaser::BufferOffset BinaryEndOffset() const {
-    return absolute_binary_offset_ + sizeof(phaser::BufferOffset);
+  toolbelt::BufferOffset BinaryEndOffset() const {
+    return absolute_binary_offset_ + sizeof(toolbelt::BufferOffset);
   }
-  phaser::BufferOffset BinaryOffset() const { return absolute_binary_offset_; }
+  toolbelt::BufferOffset BinaryOffset() const { return absolute_binary_offset_; }
 
   std::string_view Get() const {
     return GetBuffer()->GetStringView(absolute_binary_offset_);
   }
 
   void Set(const std::string &s) {
-    phaser::PayloadBuffer::SetString(GetBufferAddr(), s,
+    toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
                                      absolute_binary_offset_);
   }
 
   void Set(std::string_view s) {
-    phaser::PayloadBuffer::SetString(GetBufferAddr(), s,
+    toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
                                      absolute_binary_offset_);
   }
 
   void Clear() {
-    phaser::PayloadBuffer::ClearString(GetBufferAddr(),
+    toolbelt::PayloadBuffer::ClearString(GetBufferAddr(),
                                        absolute_binary_offset_);
   }
 
@@ -419,14 +419,14 @@ public:
   }
 
 private:
-  phaser::PayloadBuffer *GetBuffer() const { return msg_->runtime->pb; }
+  toolbelt::PayloadBuffer *GetBuffer() const { return msg_->runtime->pb; }
 
-  phaser::PayloadBuffer **GetBufferAddr() const { return &msg_->runtime->pb; }
+  toolbelt::PayloadBuffer **GetBufferAddr() const { return &msg_->runtime->pb; }
 
   const Message *msg_;
-  phaser::BufferOffset absolute_binary_offset_; // Offset into
-                                                // phaser::PayloadBuffer of
-                                                // phaser::StringHeader
+  toolbelt::BufferOffset absolute_binary_offset_; // Offset into
+                                                // toolbelt::PayloadBuffer of
+                                                // toolbelt::StringHeader
 };
 
 // This is a buffer offset containing the absolute offset of a message in the
@@ -456,7 +456,7 @@ public:
     if (offset < 0) {
       return msg_;
     }
-    phaser::BufferOffset *addr = GetIndirectAddress(offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -470,20 +470,20 @@ public:
     if (offset < 0) {
       return false;
     }
-    phaser::BufferOffset *addr = GetIndirectAddress(offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
     return *addr != 0;
   }
 
   MessageType *Mutable() {
-    phaser::BufferOffset *addr = GetIndirectAddress(relative_binary_offset_);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(relative_binary_offset_);
     if (*addr != 0) {
       // Already allocated.
       return &msg_;
     }
     // Allocate a new message.
-    void *msg_addr = phaser::PayloadBuffer::Allocate(
+    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize(), 8);
-    phaser::BufferOffset msg_offset = GetBuffer()->ToOffset(msg_addr);
+    toolbelt::BufferOffset msg_offset = GetBuffer()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
     msg_.absolute_binary_offset = msg_offset;
@@ -498,7 +498,7 @@ public:
   }
 
   void Clear() {
-    phaser::BufferOffset *addr = GetIndirectAddress(relative_binary_offset_);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(relative_binary_offset_);
     if (*addr == 0) {
       return;
     }
@@ -510,11 +510,11 @@ public:
     *addr = 0;
   }
 
-  phaser::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(phaser::BufferOffset);
+  toolbelt::BufferOffset BinaryEndOffset() const {
+    return relative_binary_offset_ + sizeof(toolbelt::BufferOffset);
   }
 
-  phaser::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
+  toolbelt::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
 
   bool operator==(const IndirectMessageField<MessageType> &other) const {
     return msg_ != other.msg_;
@@ -536,7 +536,7 @@ public:
     if (offset < 0) {
       return 0;
     }
-    phaser::BufferOffset *addr = GetIndirectAddress(offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -550,7 +550,7 @@ public:
     if (offset < 0) {
       return absl::OkStatus();
     }
-    phaser::BufferOffset *addr = GetIndirectAddress(offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -573,15 +573,15 @@ public:
       return s.status();
     }
     // Allocate a new message.
-    void *msg_addr = phaser::PayloadBuffer::Allocate(
+    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize(), 8);
-    phaser::BufferOffset msg_offset = GetBuffer()->ToOffset(msg_addr);
+    toolbelt::BufferOffset msg_offset = GetBuffer()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
     msg_.absolute_binary_offset = msg_offset;
 
     // Buffer might have moved, get address of indirect again.
-    phaser::BufferOffset* addr = GetIndirectAddress(relative_binary_offset_);
+    toolbelt::BufferOffset* addr = GetIndirectAddress(relative_binary_offset_);
     *addr = msg_offset; // Put message field offset into message.
 
     // Install the metadata into the binary message.
@@ -592,16 +592,16 @@ public:
   }
 
 private:
-  phaser::PayloadBuffer *GetBuffer() const {
+  toolbelt::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  phaser::BufferOffset *GetIndirectAddress(uint32_t offset) const {
-    return GetBuffer()->template ToAddress<phaser::BufferOffset>(
+  toolbelt::BufferOffset *GetIndirectAddress(uint32_t offset) const {
+    return GetBuffer()->template ToAddress<toolbelt::BufferOffset>(
         GetMessageBinaryStart() + offset);
   }
 
-  phaser::PayloadBuffer **GetBufferAddr() const {
+  toolbelt::PayloadBuffer **GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
 
@@ -609,12 +609,12 @@ private:
     return Message::GetRuntime(this, source_offset_);
   }
 
-  phaser::BufferOffset GetMessageBinaryStart() const {
+  toolbelt::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
   uint32_t source_offset_;
-  phaser::BufferOffset relative_binary_offset_;
+  toolbelt::BufferOffset relative_binary_offset_;
   mutable MessageType msg_;
 };
 

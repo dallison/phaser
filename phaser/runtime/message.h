@@ -1,7 +1,7 @@
 #pragma once
 
 #include "absl/container/flat_hash_map.h"
-#include "phaser/runtime/payload_buffer.h"
+#include "toolbelt/payload_buffer.h"
 #include <memory>
 #include <stdint.h>
 #include <string>
@@ -31,13 +31,13 @@ struct FieldData {
 // so that we know where the metadata for each message is stored.  The
 // metadata offset is held in the message header.
 struct MessageRuntime {
-  MessageRuntime(phaser::PayloadBuffer *p) : pb(p) {}
+  MessageRuntime(toolbelt::PayloadBuffer *p) : pb(p) {}
   virtual ~MessageRuntime() = default;
-  phaser::PayloadBuffer *pb;
+  toolbelt::PayloadBuffer *pb;
 
   virtual void AddMetadata(const std::string &name,
-                           phaser::BufferOffset offset) {}
-  virtual phaser::BufferOffset GetMetadata(const std::string &name) {
+                           toolbelt::BufferOffset offset) {}
+  virtual toolbelt::BufferOffset GetMetadata(const std::string &name) {
     return 0;
   }
 };
@@ -45,15 +45,15 @@ struct MessageRuntime {
 // This is a message runtime for a message that is mutable.  It holds a mapping
 // for each message name to the offset of the metadata in the payload buffer.
 struct MutableMessageRuntime : public MessageRuntime {
-  MutableMessageRuntime(phaser::PayloadBuffer *p) : MessageRuntime(p) {}
+  MutableMessageRuntime(toolbelt::PayloadBuffer *p) : MessageRuntime(p) {}
 
-  absl::flat_hash_map<std::string, phaser::BufferOffset> metadata_offsets;
+  absl::flat_hash_map<std::string, toolbelt::BufferOffset> metadata_offsets;
   void AddMetadata(const std::string &name,
-                   phaser::BufferOffset offset) override {
+                   toolbelt::BufferOffset offset) override {
     metadata_offsets[name] = offset;
   }
 
-  phaser::BufferOffset GetMetadata(const std::string &name) override {
+  toolbelt::BufferOffset GetMetadata(const std::string &name) override {
     auto it = metadata_offsets.find(name);
     if (it == metadata_offsets.end()) {
       return 0;
@@ -63,7 +63,7 @@ struct MutableMessageRuntime : public MessageRuntime {
 };
 
 struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
-  DynamicMutableMessageRuntime(phaser::PayloadBuffer *p)
+  DynamicMutableMessageRuntime(toolbelt::PayloadBuffer *p)
       : MutableMessageRuntime(p) {
     // Free the buffer when the runtime is destroyed.
     buffer_data =
@@ -87,7 +87,7 @@ struct InternalDefault {};
 //            V       |
 // +---------------+  |
 // |               |  |
-// | phaser::PayloadBuffer |  |
+// | toolbelt::PayloadBuffer |  |
 // |               |  |
 // +---------------+  |
 //                    |
@@ -111,22 +111,22 @@ struct InternalDefault {};
 
 struct Message {
   Message() = default;
-  Message(std::shared_ptr<MessageRuntime> rt, phaser::BufferOffset start)
+  Message(std::shared_ptr<MessageRuntime> rt, toolbelt::BufferOffset start)
       : runtime(rt), absolute_binary_offset(start) {}
   std::shared_ptr<MessageRuntime> runtime;
-  phaser::BufferOffset absolute_binary_offset;
+  toolbelt::BufferOffset absolute_binary_offset;
 
   // 'field' is the offset from the start of the message to the field (positive)
   // Subtract the field offset from the field to get the address of the
-  // std::shared_ptr to the pointer to the phaser::PayloadBuffer.
-  static phaser::PayloadBuffer *GetBuffer(const void *field, uint32_t offset) {
+  // std::shared_ptr to the pointer to the toolbelt::PayloadBuffer.
+  static toolbelt::PayloadBuffer *GetBuffer(const void *field, uint32_t offset) {
     const std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
             reinterpret_cast<const char *>(field) - offset);
     return (*rt)->pb;
   }
 
-  static phaser::PayloadBuffer **GetBufferAddr(const void *field,
+  static toolbelt::PayloadBuffer **GetBufferAddr(const void *field,
                                                uint32_t offset) {
     const std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
@@ -162,7 +162,7 @@ struct Message {
     return msg;
   }
 
-  static phaser::BufferOffset GetMessageBinaryStart(const void *field,
+  static toolbelt::BufferOffset GetMessageBinaryStart(const void *field,
                                                     uint32_t offset) {
     const Message *msg = reinterpret_cast<const Message *>(
         reinterpret_cast<const char *>(field) - offset);
@@ -172,18 +172,18 @@ struct Message {
   template <typename MessageType> void InstallMetadata() {
     auto metadata = runtime->GetMetadata(MessageType::GetName());
     if (metadata != 0) {
-      phaser::BufferOffset *header =
-          runtime->pb->ToAddress<phaser::BufferOffset>(absolute_binary_offset);
+      toolbelt::BufferOffset *header =
+          runtime->pb->ToAddress<toolbelt::BufferOffset>(absolute_binary_offset);
       *header = metadata;
       return;
     }
 
     // Allocate space for field data in the payload buffer and copy it in.
-    void *fields = phaser::PayloadBuffer::Allocate(
+    void *fields = toolbelt::PayloadBuffer::Allocate(
         &runtime->pb, sizeof(MessageType::field_data), 4, false);
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
-    phaser::BufferOffset *header =
-        runtime->pb->ToAddress<phaser::BufferOffset>(absolute_binary_offset);
+    toolbelt::BufferOffset *header =
+        runtime->pb->ToAddress<toolbelt::BufferOffset>(absolute_binary_offset);
     *header = runtime->pb->ToOffset(fields);
     runtime->AddMetadata(MessageType::GetName(), *header);
   }
@@ -196,6 +196,6 @@ struct Message {
   int32_t FindFieldId(uint32_t field_number) const;
 };
 
-phaser::PayloadBuffer *NewDynamicBuffer(size_t initial_size);
+toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size);
 
 } // namespace phaser

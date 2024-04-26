@@ -558,13 +558,13 @@ void MessageGenerator::GenerateMainConstructor(std::ostream &os, bool decl) {
   if (decl) {
     os << "  " << MessageName(message_)
        << "(std::shared_ptr<phaser::MessageRuntime> runtime, "
-          "phaser::BufferOffset "
+          "toolbelt::BufferOffset "
           "offset);\n";
     return;
   }
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
   os << "std::shared_ptr<phaser::MessageRuntime> runtime, "
-        "phaser::BufferOffset "
+        "toolbelt::BufferOffset "
         "offset) : Message(runtime, offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
@@ -611,9 +611,9 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
   }
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateMutable(void *addr, size_t size) {\n"
-        "  phaser::PayloadBuffer *pb = new (addr) "
-        "phaser::PayloadBuffer(size);\n"
-        "  phaser::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  toolbelt::PayloadBuffer *pb = new (addr) "
+        "toolbelt::PayloadBuffer(size);\n"
+        "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
@@ -629,8 +629,8 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "\n"
      << MessageName(message_) << " " << MessageName(message_)
      << "::CreateReadonly(void *addr) {\n"
-        "  phaser::PayloadBuffer *pb = "
-        "reinterpret_cast<phaser::PayloadBuffer "
+        "  toolbelt::PayloadBuffer *pb = "
+        "reinterpret_cast<toolbelt::PayloadBuffer "
         "*>(addr);\n"
         "  auto runtime = std::make_shared<phaser::MessageRuntime>(pb);\n"
         "  return "
@@ -639,9 +639,9 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "}\n";
   os << "  " << MessageName(message_) << " " << MessageName(message_)
      << "::CreateDynamicMutable(size_t initial_size = 1024) {\n"
-        "  phaser::PayloadBuffer *pb = "
+        "  toolbelt::PayloadBuffer *pb = "
         "phaser::NewDynamicBuffer(initial_size);\n"
-        "  phaser::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
@@ -656,9 +656,9 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "}\n";
 
   os << "void " << MessageName(message_) << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
-        "  phaser::PayloadBuffer *pb = "
+        "  toolbelt::PayloadBuffer *pb = "
         "phaser::NewDynamicBuffer(initial_size);\n"
-        "  phaser::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "

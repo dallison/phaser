@@ -6,7 +6,7 @@
 #include "absl/status/statusor.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
-#include "phaser/runtime/payload_buffer.h"
+#include "toolbelt/payload_buffer.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string>
@@ -18,12 +18,12 @@ namespace phaser {
 
 class UnionMemberField {
 protected:
-  phaser::PayloadBuffer *
+  toolbelt::PayloadBuffer *
   GetBuffer(std::shared_ptr<MessageRuntime> runtime) const {
     return runtime->pb;
   }
 
-  phaser::PayloadBuffer **
+  toolbelt::PayloadBuffer **
   GetBufferAddr(std::shared_ptr<MessageRuntime> runtime) const {
     return &runtime->pb;
   }
@@ -191,14 +191,14 @@ public:
 
   bool IsPresent(std::shared_ptr<MessageRuntime> runtime,
                  uint32_t abs_offset) const {
-    const phaser::BufferOffset *addr =
-        GetBuffer(runtime)->ToAddress<const phaser::BufferOffset>(abs_offset);
+    const toolbelt::BufferOffset *addr =
+        GetBuffer(runtime)->ToAddress<const toolbelt::BufferOffset>(abs_offset);
     return *addr != 0;
   }
 
   void Set(const std::string &s, std::shared_ptr<MessageRuntime> runtime,
            uint32_t abs_offset) {
-    phaser::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
+    toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
   }
 
   bool Equal(const UnionStringField &other,
@@ -216,7 +216,7 @@ public:
     return GetBuffer(runtime)->StringData(abs_offset);
   }
   void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
-    phaser::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
+    toolbelt::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
   }
 
   size_t SerializedSize(int number, std::shared_ptr<MessageRuntime> runtime,
@@ -240,7 +240,7 @@ public:
     if (!v.ok()) {
       return v.status();
     }
-    phaser::PayloadBuffer::SetString(GetBufferAddr(runtime), *v, abs_offset);
+    toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v, abs_offset);
     return absl::OkStatus();
   }
 
@@ -254,7 +254,7 @@ public:
 
   const MessageType &Get(std::shared_ptr<MessageRuntime> runtime,
                          uint32_t abs_offset) const {
-    phaser::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
     if (*addr == 0) {
       return msg_;
     }
@@ -266,21 +266,21 @@ public:
 
   bool IsPresent(std::shared_ptr<MessageRuntime> runtime,
                  uint32_t abs_offset) const {
-    phaser::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
     return *addr != 0;
   }
 
   MessageType *Mutable(std::shared_ptr<MessageRuntime> runtime,
                        uint32_t abs_offset) {
-    phaser::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
     if (*addr != 0) {
       // Already allocated.
       return &msg_;
     }
     // Allocate a new message.
-    void *msg_addr = phaser::PayloadBuffer::Allocate(
+    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    phaser::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
@@ -301,7 +301,7 @@ public:
   }
 
   void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
-    phaser::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
     if (*addr != 0) {
       msg_.Clear();
       GetBuffer(runtime)->Free(GetBuffer(runtime)->ToAddress(*addr));
@@ -335,26 +335,26 @@ public:
     if (!s.ok()) {
       return s.status();
     }
-    void *msg_addr = phaser::PayloadBuffer::Allocate(
+    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    phaser::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
     msg_.template InstallMetadata<MessageType>();
 
     // Buffer might have moved, get address of indirect again.
-    phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     *addr = msg_offset; // Put message field offset into message.
     ProtoBuffer sub_buffer(s.value());
     return msg_.Deserialize(sub_buffer);
   }
 
 private:
-  phaser::BufferOffset *
+  toolbelt::BufferOffset *
   GetIndirectAddress(std::shared_ptr<MessageRuntime> runtime,
                      uint32_t abs_offset) const {
-    return GetBuffer(runtime)->template ToAddress<phaser::BufferOffset>(
+    return GetBuffer(runtime)->template ToAddress<toolbelt::BufferOffset>(
         abs_offset);
   }
 
@@ -504,14 +504,14 @@ public:
   }
 
 private:
-  phaser::PayloadBuffer *GetBuffer() const {
+  toolbelt::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  phaser::PayloadBuffer **GetBufferAddr() const {
+  toolbelt::PayloadBuffer **GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
-  phaser::BufferOffset GetMessageBinaryStart() const {
+  toolbelt::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
@@ -520,7 +520,7 @@ private:
   }
 
   uint32_t source_offset_;
-  phaser::BufferOffset relative_binary_offset_;
+  toolbelt::BufferOffset relative_binary_offset_;
   std::vector<int> field_numbers_; // field number for each tuple type
   mutable std::tuple<T...> value_;
 };
