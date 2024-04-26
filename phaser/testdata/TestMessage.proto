@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+// These messages must match the hand-coded ones in message_test.cc
+package foo.bar;
+
+message InnerMessage {
+  string str = 10;
+  sfixed64 f = 20;
+}
+
+message TestMessage {
+  int32 x = 100;
+  int64 y = 101;
+  string s = 102;
+  InnerMessage m = 103;
+
+  // Repeated fields.
+  repeated int32 vi32 = 104;
+  repeated string vstr = 105;
+  repeated InnerMessage vm = 106;
+
+  // Oneof fields.
+  oneof u1 {
+    uint32 u1a = 107;
+    fixed64 u1b = 108;
+  }
+
+  oneof u2 {
+    int64 u2a = 109;
+    string u2b = 110;
+  }
+
+  oneof u3 {
+    int64 u3a = 111;
+    InnerMessage u3b = 112;
+  }
+}

@@ -5,16 +5,17 @@ cc_library(
     srcs = [
         "message.cc",
         "payload_buffer.cc",
+        "wireformat.cc",
     ],
     hdrs = [
         "fields.h",
         "iterators.h",
         "message.h",
-        "proto_buffer.h",
+        "payload_buffer.h",
         "runtime.h",
         "union.h",
         "vectors.h",
-        "payload_buffer.h",
+        "wireformat.h",
     ],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
@@ -36,5 +37,20 @@ cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
         "@toolbelt//toolbelt",
+        "//phaser/testdata:test_message_cc_proto",
     ],
 )
+
+cc_test(
+    name = "wireformat_test",
+    srcs = [
+        "wireformat_test.cc",
+    ],
+    deps = [
+        ":phaser_runtime",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
+        "@toolbelt//toolbelt",
+    ],
+)
+

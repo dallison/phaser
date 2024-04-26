@@ -6,9 +6,11 @@
 
 namespace phaser {
 
-static void WriteToZeroCopyStream(const std::string& data, google::protobuf::io::ZeroCopyOutputStream* stream) {
+static void
+WriteToZeroCopyStream(const std::string &data,
+                      google::protobuf::io::ZeroCopyOutputStream *stream) {
   // Write to the stream that protobuf wants
-  void* data_buffer;
+  void *data_buffer;
   int size;
   size_t offset = 0;
   while (offset < data.size()) {
@@ -26,21 +28,31 @@ bool CodeGenerator::Generate(
     std::string *error) const {
   Generator gen(file, added_namespace_);
 
-  std::filesystem::path p(file->name());
-  std::ofstream header(p.replace_extension(".phaser.h"));
+  std::filesystem::path hp(file->name());
+  hp.replace_extension(".phaser.h");
 
-  // There appears to be no way to get anything other than a ZeorCopyOutputStream
-  // from the GeneratorContext.  We want to use std::ofstream to write the file,
-  // so we'll write to a stringstream and then copy the data to the file.
+  // There appears to be no way to get anything other than a
+  // ZeorCopyOutputStream from the GeneratorContext.  We want to use
+  // std::ofstream to write the file, so we'll write to a stringstream and then
+  // copy the data to the file.
   std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> header_output(
-      generator_context->Open(p.filename()));
+      generator_context->Open(hp.filename()));
 
   std::stringstream header_stream;
   gen.GenerateHeaders(header_stream);
-  gen.GenerateSources(std::cerr);
 
-  // Write to the stream that protobuf wants
+  std::filesystem::path cp(file->name());
+  cp.replace_extension(".phaser.cc");
+
+  std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> source_output(
+      generator_context->Open(cp.filename()));
+
+  std::stringstream source_stream;
+  gen.GenerateSources(source_stream);
+
+  // Write to the streams that protobuf wants
   WriteToZeroCopyStream(header_stream.str(), header_output.get());
+  WriteToZeroCopyStream(source_stream.str(), source_output.get());
   return true;
 }
 
@@ -64,7 +76,8 @@ void Generator::CloseNamespace(std::ostream &os) {
   }
 }
 
-Generator::Generator(const google::protobuf::FileDescriptor *file, const std::string& ns)
+Generator::Generator(const google::protobuf::FileDescriptor *file,
+                     const std::string &ns)
     : file_(file), added_namespace_(ns) {
   for (int i = 0; i < file->message_type_count(); i++) {
     message_gens_.push_back(
@@ -72,8 +85,7 @@ Generator::Generator(const google::protobuf::FileDescriptor *file, const std::st
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {
-    enum_gens_.push_back(
-        std::make_unique<EnumGenerator>(file->enum_type(i)));
+    enum_gens_.push_back(std::make_unique<EnumGenerator>(file->enum_type(i)));
   }
 }
 
@@ -93,7 +105,7 @@ void Generator::GenerateHeaders(std::ostream &os) {
     enum_gen->GenerateHeader(os);
   }
 
-   for (auto &msg_gen : message_gens_) {
+  for (auto &msg_gen : message_gens_) {
     msg_gen->GenerateEnums(os);
   }
 
@@ -105,6 +117,10 @@ void Generator::GenerateHeaders(std::ostream &os) {
 }
 
 void Generator::GenerateSources(std::ostream &os) {
+  std::filesystem::path p(file_->name());
+  p.replace_extension(".phaser.h");
+  os << "#include \"" << p.string() << "\"\n";
+
   OpenNamespace(os);
 
   for (auto &msg_gen : message_gens_) {

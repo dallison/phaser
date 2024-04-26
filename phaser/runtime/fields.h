@@ -8,6 +8,7 @@
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/payload_buffer.h"
+#include "phaser/runtime/wireformat.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string>
@@ -15,8 +16,6 @@
 #include <vector>
 
 namespace phaser {
-
-class ProtoBuffer;
 
 template <typename T> constexpr size_t AlignedOffset(size_t offset) {
   return (offset + sizeof(T) - 1) & ~(sizeof(T) - 1);
@@ -50,20 +49,30 @@ public:
   int Number() const { return number_; }
 
   int32_t FindFieldOffset(uint32_t source_offset) const {
-    return Message::GetMessage(this, source_offset)->FindFieldOffset(number_);
+    if (cached_offset_ == 0xffffffff) {
+      cached_offset_ =
+          Message::GetMessage(this, source_offset)->FindFieldOffset(number_);
+    }
+    return cached_offset_;
   }
 
   int32_t FindFieldId(uint32_t source_offset) const {
-    return Message::GetMessage(this, source_offset)->FindFieldId(number_);
+    if (cached_field_id_ == -1) {
+      cached_field_id_ =
+          Message::GetMessage(this, source_offset)->FindFieldId(number_);
+    }
+    return cached_field_id_;
   }
 
 protected:
   int id_ = 0;
   int number_ = 0;
+  mutable phaser::BufferOffset cached_offset_ = 0xffffffff;
+  mutable int32_t cached_field_id_ = -1;
 };
 
 #define DEFINE_PRIMITIVE_FIELD(cname, type)                                    \
-  class cname##Field : public Field {                                          \
+  template <bool FixedSize, bool Signed> class cname##Field : public Field {   \
   public:                                                                      \
     cname##Field() = default;                                                  \
     explicit cname##Field(uint32_t boff, uint32_t offset, int id, int number)  \
@@ -74,7 +83,8 @@ protected:
       if (offset < 0) {                                                        \
         return type();                                                         \
       }                                                                        \
-      return GetBuffer()->Get<type>(GetMessageBinaryStart() + offset);         \
+      return GetBuffer()->template Get<type>(GetMessageBinaryStart() +         \
+                                             offset);                          \
     }                                                                          \
     bool IsPresent() const {                                                   \
       return Field::IsPresent(FindFieldId(source_offset_), GetBuffer(),        \
@@ -85,9 +95,7 @@ protected:
       GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, v);  \
       SetPresence(GetBuffer(), GetPresenceMaskStart());                        \
     }                                                                          \
-    void Clear() {                                                             \
-       ClearPresence(GetBuffer(), GetPresenceMaskStart());                     \
-    }                                                                          \
+    void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }       \
     void SetLocation(uint32_t soff, uint32_t boff) {                           \
       source_offset_ = soff;                                                   \
       relative_binary_offset_ = boff;                                          \
@@ -103,6 +111,37 @@ protected:
     }                                                                          \
     bool operator!=(const cname##Field &other) const {                         \
       return !(*this == other);                                                \
+    }                                                                          \
+    size_t SerializedSize() const {                                            \
+      if (FixedSize) {                                                         \
+        return ProtoBuffer::TagSize(Number(),                                  \
+                                    ProtoBuffer::FixedWireType<type>()) +      \
+               sizeof(type);                                                   \
+      } else {                                                                 \
+        return ProtoBuffer::TagSize(Number(), WireType::kVarint) +             \
+               ProtoBuffer::VarintSize<type, Signed>(Get());                   \
+      }                                                                        \
+    }                                                                          \
+    absl::Status Serialize(ProtoBuffer &buffer) const {                        \
+      if (FixedSize) {                                                         \
+        return buffer.SerializeFixed<type>(Number(), Get());                   \
+      } else {                                                                 \
+        return buffer.SerializeVarint<type, Signed>(Number(), Get());          \
+      }                                                                        \
+    }                                                                          \
+                                                                               \
+    absl::Status Deserialize(ProtoBuffer &buffer) {                            \
+      absl::StatusOr<type> v;                                                  \
+      if (FixedSize) {                                                         \
+        v = buffer.DeserializeFixed<type>();                                   \
+      } else {                                                                 \
+        v = buffer.DeserializeVarint<type, Signed>();                          \
+      }                                                                        \
+      if (!v.ok()) {                                                           \
+        return v.status();                                                     \
+      }                                                                        \
+      Set(*v);                                                                  \
+      return absl::OkStatus();                                                 \
     }                                                                          \
                                                                                \
   private:                                                                     \
@@ -129,6 +168,93 @@ DEFINE_PRIMITIVE_FIELD(Bool, bool)
 
 #undef DEFINE_PRIMITIVE_FIELD
 
+template <typename Enum> class EnumField : public Field {
+public:
+  using T = typename std::underlying_type<Enum>::type;
+  EnumField() = default;
+  explicit EnumField(uint32_t boff, uint32_t offset, int id, int number)
+      : Field(id, number), source_offset_(boff),
+        relative_binary_offset_(offset) {}
+
+  Enum Get() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return static_cast<Enum>(0);
+    }
+    return static_cast<Enum>(
+        GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
+            GetMessageBinaryStart() + offset));
+  }
+
+  bool IsPresent() const {
+    return Field::IsPresent(FindFieldId(source_offset_), GetBuffer(),
+                     GetMessageBinaryStart());
+  }
+
+  T GetUnderlying() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
+        GetMessageBinaryStart() + offset);
+  }
+
+  void Set(Enum e) {
+    GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_,
+                     static_cast<typename std::underlying_type<Enum>::type>(e));
+    SetPresence(GetBuffer(), GetMessageBinaryStart());
+  }
+
+  void Set(T e) {
+    GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, e);
+    SetPresence(GetBuffer(), GetMessageBinaryStart());
+  }
+
+  void Clear() { ClearPresence(GetBuffer(), GetMessageBinaryStart()); }
+
+  phaser::BufferOffset BinaryEndOffset() const {
+    return relative_binary_offset_ +
+           sizeof(typename std::underlying_type<Enum>::type);
+  }
+  phaser::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
+
+  bool operator==(const EnumField &other) const {
+    return static_cast<Enum>(*this) == static_cast<Enum>(other);
+  }
+  bool operator!=(const EnumField &other) const { return !(*this == other); }
+
+  size_t SerializedSize() const {
+    return ProtoBuffer::TagSize(Number(), WireType::kVarint) +
+           ProtoBuffer::VarintSize<int32_t, false>(
+               static_cast<int32_t>(GetUnderlying()));
+  }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    return buffer.SerializeVarint<int32_t, false>(
+        Number(), static_cast<int32_t>(GetUnderlying()));
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    absl::StatusOr<T> v = buffer.DeserializeVarint<T, false>();
+    if (!v.ok()) {
+      return v.status();
+    }
+    Set(*v);
+    return absl::OkStatus();
+  }
+
+private:
+  phaser::PayloadBuffer *GetBuffer() const {
+    return Message::GetBuffer(this, source_offset_);
+  }
+  phaser::BufferOffset GetMessageBinaryStart() const {
+    return Message::GetMessageBinaryStart(this, source_offset_);
+  }
+  uint32_t source_offset_;
+  phaser::BufferOffset relative_binary_offset_;
+};
+
 // String field with an offset inline in the message.
 class StringField : public Field {
 public:
@@ -147,9 +273,13 @@ public:
   }
 
   bool IsPresent() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return false;
+    }
     const phaser::BufferOffset *addr =
         GetBuffer()->ToAddress<const phaser::BufferOffset>(
-            GetMessageBinaryStart() + relative_binary_offset_);
+            GetMessageBinaryStart() + offset);
     return *addr != 0;
   }
 
@@ -159,9 +289,8 @@ public:
   }
 
   void Clear() {
-    phaser::PayloadBuffer::ClearString(GetBufferAddr(),
-                                       GetMessageBinaryStart() +
-                                           relative_binary_offset_);
+    phaser::PayloadBuffer::ClearString(
+        GetBufferAddr(), GetMessageBinaryStart() + relative_binary_offset_);
   }
 
   phaser::BufferOffset BinaryEndOffset() const {
@@ -176,13 +305,39 @@ public:
   bool operator!=(const StringField &other) const { return !(*this == other); }
 
   size_t size() const {
-    return GetBuffer()->StringSize(GetMessageBinaryStart() +
-                                   relative_binary_offset_);
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    return GetBuffer()->StringSize(GetMessageBinaryStart() + offset);
   }
 
   const char *data() const {
-    return GetBuffer()->StringData(GetMessageBinaryStart() +
-                                   relative_binary_offset_);
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return nullptr;
+    }
+    return GetBuffer()->StringData(GetMessageBinaryStart() + offset);
+  }
+
+  size_t SerializedSize() const {
+    size_t s = size();
+    return ProtoBuffer::LengthDelimitedSize(Number(), s);
+  }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    size_t s = size();
+    return buffer.ProtoBuffer::SerializeLengthDelimited(Number(), data(), s);
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    absl::StatusOr<std::string_view> s = buffer.DeserializeString();
+    if (!s.ok()) {
+      return s.status();
+    }
+    phaser::PayloadBuffer::SetString(
+        GetBufferAddr(), *s, GetMessageBinaryStart() + relative_binary_offset_);
+    return absl::OkStatus();
   }
 
 private:
@@ -210,7 +365,8 @@ private:
 class NonEmbeddedStringField {
 public:
   NonEmbeddedStringField() = default;
-  explicit NonEmbeddedStringField(const Message *msg, uint32_t absolute_binary_offset)
+  explicit NonEmbeddedStringField(const Message *msg,
+                                  uint32_t absolute_binary_offset)
       : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
 
   phaser::BufferOffset BinaryEndOffset() const {
@@ -233,7 +389,8 @@ public:
   }
 
   void Clear() {
-    phaser::PayloadBuffer::ClearString(GetBufferAddr(), absolute_binary_offset_);
+    phaser::PayloadBuffer::ClearString(GetBufferAddr(),
+                                       absolute_binary_offset_);
   }
 
   bool operator==(const NonEmbeddedStringField &other) const {
@@ -254,6 +411,13 @@ public:
 
   bool IsPlaceholder() const { return msg_ == nullptr; }
 
+  size_t SerializedSize() const { return size(); }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    // TODO:
+    return absl::OkStatus();
+  }
+
 private:
   phaser::PayloadBuffer *GetBuffer() const { return msg_->runtime->pb; }
 
@@ -263,75 +427,6 @@ private:
   phaser::BufferOffset absolute_binary_offset_; // Offset into
                                                 // phaser::PayloadBuffer of
                                                 // phaser::StringHeader
-};
-
-template <typename Enum> class EnumField : public Field {
-public:
-  using T = typename std::underlying_type<Enum>::type;
-  EnumField() = default;
-  explicit EnumField(uint32_t boff, uint32_t offset, int id, int number)
-      : Field(id, number), source_offset_(boff),
-        relative_binary_offset_(offset) {}
-
-  Enum Get() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      return static_cast<Enum>(0);
-    }
-    return static_cast<Enum>(
-        GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-            GetMessageBinaryStart() + offset));
-  }
-
-  bool IsPresent() const {
-    return IsPresent(FindFieldId(source_offset_), GetBuffer(),
-                     GetMessageBinaryStart());
-  }
-
-  T GetUnderlying() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      return 0;
-    }
-    return GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-        GetMessageBinaryStart() + offset);
-  }
-
-  void Set(Enum e) {
-    GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_,
-                     static_cast<typename std::underlying_type<Enum>::type>(e));
-    SetPresence(GetBuffer(), GetMessageBinaryStart());
-  }
-
-  void Set(T e) {
-    GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, e);
-    SetPresence(GetBuffer(), GetMessageBinaryStart());
-  }
-
-  void Clear() {
-    ClearPresence(GetBuffer(), GetMessageBinaryStart());
-  }
-
-  phaser::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ +
-           sizeof(typename std::underlying_type<Enum>::type);
-  }
-  phaser::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
-
-  bool operator==(const EnumField &other) const {
-    return static_cast<Enum>(*this) == static_cast<Enum>(other);
-  }
-  bool operator!=(const EnumField &other) const { return !(*this == other); }
-
-private:
-  phaser::PayloadBuffer *GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-  phaser::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-  uint32_t source_offset_;
-  phaser::BufferOffset relative_binary_offset_;
 };
 
 // This is a buffer offset containing the absolute offset of a message in the
@@ -354,7 +449,7 @@ public:
                                 uint32_t relative_binary_offset, int id,
                                 int number)
       : Field(id, number), source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
+        relative_binary_offset_(relative_binary_offset), msg_(InternalDefault{}) {}
 
   const MessageType &Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
@@ -436,6 +531,66 @@ public:
     return msg_.DeserializeFromBuffer(buffer);
   }
 
+  size_t SerializedSize() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return 0;
+    }
+    phaser::BufferOffset *addr = GetIndirectAddress(offset);
+    if (*addr != 0) {
+      // Load up the message if it's already been allocated.
+      msg_.runtime = GetRuntime();
+      msg_.absolute_binary_offset = *addr;
+    }
+    return ProtoBuffer::LengthDelimitedSize(Number(), msg_.SerializedSize());
+  }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return absl::OkStatus();
+    }
+    phaser::BufferOffset *addr = GetIndirectAddress(offset);
+    if (*addr != 0) {
+      // Load up the message if it's already been allocated.
+      msg_.runtime = GetRuntime();
+      msg_.absolute_binary_offset = *addr;
+    }
+
+    size_t size = msg_.SerializedSize();
+    if (absl::Status status =
+            buffer.SerializeLengthDelimitedHeader(Number(), size);
+        !status.ok()) {
+      return status;
+    }
+
+    return msg_.Serialize(buffer);
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    absl::StatusOr<absl::Span<char>> s = buffer.DeserializeLengthDelimited();
+    if (!s.ok()) {
+      return s.status();
+    }
+    // Allocate a new message.
+    void *msg_addr = phaser::PayloadBuffer::Allocate(
+        GetBufferAddr(), MessageType::BinarySize(), 8);
+    phaser::BufferOffset msg_offset = GetBuffer()->ToOffset(msg_addr);
+    // Assign to the message.
+    msg_.runtime = GetRuntime();
+    msg_.absolute_binary_offset = msg_offset;
+
+    // Buffer might have moved, get address of indirect again.
+    phaser::BufferOffset* addr = GetIndirectAddress(relative_binary_offset_);
+    *addr = msg_offset; // Put message field offset into message.
+
+    // Install the metadata into the binary message.
+    msg_.template InstallMetadata<MessageType>();
+
+    ProtoBuffer sub_buffer(s.value());
+    return msg_.Deserialize(sub_buffer);
+  }
+
 private:
   phaser::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
@@ -465,7 +620,7 @@ private:
 
 template <typename MessageType> class MessageObject {
 public:
-  MessageObject() = default;
+  MessageObject() : msg_(InternalDefault{}) {};
   explicit MessageObject(std::shared_ptr<MessageRuntime> runtime,
                          uint32_t absolute_binary_offset)
       : msg_(runtime, absolute_binary_offset) {}
@@ -500,6 +655,21 @@ public:
       return;
     }
     msg_.Clear();
+  }
+
+  size_t SerializedSize() const { return msg_.SerializedSize(); }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    return msg_.Serialize(buffer);
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    absl::StatusOr<absl::Span<char>> s = buffer.DeserializeLengthDelimited();
+    if (!s.ok()) {
+      return s.status();
+    }
+    ProtoBuffer sub_buffer(s.value());
+    return msg_.Deserialize(sub_buffer);
   }
 
 private:

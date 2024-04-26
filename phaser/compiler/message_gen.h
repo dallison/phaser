@@ -65,14 +65,15 @@ private:
   void CompileUnions();
   void FinalizeOffsetsAndSizes();
 
-  void GenerateDefaultConstructor(std::ostream &os);
-  void GenerateMainConstructor(std::ostream &os);
-  void GenerateConstructors(std::ostream &os);
+  void GenerateDefaultConstructor(std::ostream &os, bool decl);
+  void GenerateInternalDefaultConstructor(std::ostream &os, bool decl);
+  void GenerateMainConstructor(std::ostream &os, bool decl);
+  void GenerateConstructors(std::ostream &os, bool decl);
   void GenerateFieldInitializers(std::ostream &os, const char *sep = ": ");
   void GenerateSizeFunctions(std::ostream &os);
   void GenerateFieldMetadata(std::ostream &os);
-  void GenerateCreators(std::ostream &os);
-  void GenerateClear(std::ostream &os);
+  void GenerateCreators(std::ostream &os, bool decl);
+  void GenerateClear(std::ostream &os, bool decl);
 
   void GenerateProtobufAccessors(std::ostream &os);
   void GenerateFieldProtobufAccessors(std::ostream &os);
@@ -80,6 +81,11 @@ private:
   void GenerateUnionProtobufAccessors(std::ostream &os);
   void GenerateNestedTypes(std::ostream &os);
   void GenerateFieldNumbers(std::ostream &os);
+  void GenerateSerializedSize(std::ostream &os, bool decl);
+  void GenerateSerializer(std::ostream &os, bool decl);
+  void GenerateDeserializer(std::ostream &os, bool decl);
+
+  void GenerateProtobufSerialization(std::ostream &os);
 
   const google::protobuf::Descriptor *message_;
   std::vector<std::unique_ptr<MessageGenerator>> nested_message_gens_;

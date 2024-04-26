@@ -62,6 +62,22 @@ struct MutableMessageRuntime : public MessageRuntime {
   }
 };
 
+struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
+  DynamicMutableMessageRuntime(phaser::PayloadBuffer *p)
+      : MutableMessageRuntime(p) {
+    // Free the buffer when the runtime is destroyed.
+    buffer_data =
+        std::shared_ptr<void>(reinterpret_cast<void *>(p), [](void *p) {
+          std::cout << "freeing " << p << std::endl;
+          free(p);
+        });
+  }
+
+  std::shared_ptr<void> buffer_data;
+};
+
+struct InternalDefault {};
+
 // Payload buffers can move. All messages in a message tree must all use the
 // same payload buffer. We hold a shared pointer to a pointer to the payload
 // buffer.
@@ -179,5 +195,7 @@ struct Message {
   // Similar for field id for presence bit mask.
   int32_t FindFieldId(uint32_t field_number) const;
 };
+
+phaser::PayloadBuffer *NewDynamicBuffer(size_t initial_size);
 
 } // namespace phaser

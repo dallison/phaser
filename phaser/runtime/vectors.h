@@ -8,6 +8,7 @@
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/payload_buffer.h"
+#include "phaser/runtime/wireformat.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string>
@@ -102,7 +103,8 @@ class ProtoBuffer;
 // This is a variable length vector of T.  It looks like a std::vector<T>.
 // The binary message contains a phaser::VectorHeader at the binary offset.
 // This contains the number of elements and the base offset for the data.
-template <typename T> class PrimitiveVectorField : public Field {
+template <typename T, bool FixedSize, bool Signed, bool Packed>
+class PrimitiveVectorField : public Field {
 public:
   PrimitiveVectorField() = default;
   explicit PrimitiveVectorField(uint32_t source_offset,
@@ -200,7 +202,8 @@ public:
   }
   phaser::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
 
-  bool operator==(const PrimitiveVectorField<T> &other) const {
+  bool operator==(
+      const PrimitiveVectorField<T, FixedSize, Packed, Signed> &other) const {
     size_t n = size();
     for (size_t i = 0; i < n; i++) {
       if ((*this)[i] != other[i]) {
@@ -209,8 +212,152 @@ public:
     }
     return true;
   }
-  bool operator!=(const PrimitiveVectorField<T> &other) const {
+  bool operator!=(
+      const PrimitiveVectorField<T, FixedSize, Packed, Signed> &other) const {
     return !(*this == other);
+  }
+
+  size_t SerializedSize() const {
+    size_t sz = size();
+    if (sz == 0) {
+      return 0;
+    }
+    size_t length = 0;
+
+    // Packed is default in proto3 but optional in proto2.
+    if (Packed) {
+      if (FixedSize) {
+        return ProtoBuffer::LengthDelimitedSize(Number(), sz * sizeof(T));
+      } else {
+        T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+        if (base == nullptr) {
+          return 0;
+        }
+        for (size_t i = 0; i < sz; i++) {
+          length += ProtoBuffer::VarintSize<T, Signed>(base[i]);
+        }
+        return ProtoBuffer::LengthDelimitedSize(Number(), length);
+      }
+    }
+
+    // Not packed, just a sequence of individual fields, all with the same
+    // tag.
+    if (FixedSize) {
+      length += sz * (ProtoBuffer::TagSize(Number(),
+                                           ProtoBuffer::FixedWireType<T>()) +
+                      sizeof(T));
+    } else {
+      T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+      if (base == nullptr) {
+        return 0;
+      }
+      for (size_t i = 0; i < sz; i++) {
+        length += ProtoBuffer::TagSize(Number(), WireType::kVarint) +
+                  ProtoBuffer::VarintSize<T, Signed>(base[i]);
+      }
+    }
+
+    return ProtoBuffer::LengthDelimitedSize(Number(), length);
+  }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    size_t sz = size();
+    if (sz == 0) {
+      return absl::OkStatus();
+    }
+
+    T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return absl::OkStatus();
+    }
+    // Packed is default in proto3 but optional in proto2.
+    if (Packed) {
+      if (FixedSize) {
+        return buffer.SerializeLengthDelimited(
+            Number(), reinterpret_cast<const char *>(base), sz * sizeof(T));
+      } else {
+        size_t length = 0;
+        for (size_t i = 0; i < sz; i++) {
+          length += ProtoBuffer::VarintSize<T, Signed>(base[i]);
+        }
+
+        if (absl::Status status =
+                buffer.SerializeLengthDelimitedHeader(Number(), length);
+            !status.ok()) {
+          return status;
+        }
+
+        for (size_t i = 0; i < sz; i++) {
+          if (absl::Status status =
+                  buffer.SerializeRawVarint<T, Signed>(base[i]);
+              !status.ok()) {
+            return status;
+          }
+        }
+        return absl::OkStatus();
+      }
+    }
+
+    // Not packed, just a sequence of individual fields, all with the same
+    // tag.
+    if (FixedSize) {
+      for (size_t i = 0; i < sz; i++) {
+        if (absl::Status status = buffer.SerializeFixed<T>(Number(), base[i]);
+            !status.ok()) {
+          return status;
+        }
+      }
+    } else {
+      for (size_t i = 0; i < sz; i++) {
+        if (absl::Status status =
+                buffer.SerializeVarint<T, Signed>(Number(), base[i]);
+            !status.ok()) {
+          return status;
+        }
+      }
+    }
+
+    return absl::OkStatus();
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    if (Packed) {
+      absl::StatusOr<absl::Span<char>> data =
+          buffer.DeserializeLengthDelimited();
+      if (!data.ok()) {
+        return data.status();
+      }
+      if (FixedSize) {
+        resize(data->size() / sizeof(T));
+        T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+        memcpy(base, data->data(), data->size());
+        return absl::OkStatus();
+      } else {
+        ProtoBuffer sub_buffer(*data);
+        while (!sub_buffer.Eof()) {
+          absl::StatusOr<T> v = sub_buffer.DeserializeVarint<T, Signed>();
+          if (!v.ok()) {
+            return v.status();
+          }
+          push_back(*v);
+        }
+      }
+    } else {
+      if (FixedSize) {
+        absl::StatusOr<T> v = buffer.DeserializeFixed<T>();
+        if (!v.ok()) {
+          return v.status();
+        }
+        push_back(*v);
+      } else {
+        absl::StatusOr<T> v = buffer.DeserializeVarint<T, Signed>();
+        if (!v.ok()) {
+          return v.status();
+        }
+        push_back(*v);
+      }
+    }
+    return absl::OkStatus();
   }
 
 private:
@@ -256,7 +403,7 @@ private:
   phaser::BufferOffset relative_binary_offset_;
 };
 
-template <typename Enum> class EnumVectorField : public Field {
+template <typename Enum, bool Packed> class EnumVectorField : public Field {
 public:
   EnumVectorField() = default;
   explicit EnumVectorField(uint32_t source_offset,
@@ -351,7 +498,7 @@ public:
   }
   phaser::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
 
-  bool operator==(const EnumVectorField<Enum> &other) const {
+  bool operator==(const EnumVectorField<Enum, Packed> &other) const {
     size_t n = size();
     for (size_t i = 0; i < n; i++) {
       if ((*this)[i] != other[i]) {
@@ -360,8 +507,112 @@ public:
     }
     return true;
   }
-  bool operator!=(const EnumVectorField<Enum> &other) const {
+  bool operator!=(const EnumVectorField<Enum, Packed> &other) const {
     return !(*this == other);
+  }
+
+  size_t SerializedSize() const {
+    size_t sz = size();
+    if (sz == 0) {
+      return 0;
+    }
+    size_t length = 0;
+
+    // Packed is default in proto3 but optional in proto2.
+    if (Packed) {
+      T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+      if (base == nullptr) {
+        return 0;
+      }
+      for (size_t i = 0; i < sz; i++) {
+        length += ProtoBuffer::VarintSize<T, false>(base[i]);
+      }
+      return ProtoBuffer::LengthDelimitedSize(Number(), length);
+    }
+
+    // Not packed, just a sequence of individual fields, all with the same
+    // tag.
+    T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return 0;
+    }
+    for (size_t i = 0; i < sz; i++) {
+      length += ProtoBuffer::TagSize(Number(), WireType::kVarint) +
+                ProtoBuffer::VarintSize<T, false>(base[i]);
+    }
+
+    return ProtoBuffer::LengthDelimitedSize(Number(), length);
+  }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    size_t sz = size();
+    if (sz == 0) {
+      return absl::OkStatus();
+    }
+
+    T *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return absl::OkStatus();
+    }
+    // Packed is default in proto3 but optional in proto2.
+    if (Packed) {
+      size_t length = 0;
+      for (size_t i = 0; i < sz; i++) {
+        length += ProtoBuffer::VarintSize<T, false>(base[i]);
+      }
+
+      if (absl::Status status =
+              buffer.SerializeLengthDelimitedHeader(Number(), length);
+          !status.ok()) {
+        return status;
+      }
+
+      for (size_t i = 0; i < sz; i++) {
+        if (absl::Status status = buffer.SerializeRawVarint<T, false>(base[i]);
+            !status.ok()) {
+          return status;
+        }
+      }
+      return absl::OkStatus();
+    }
+
+    // Not packed, just a sequence of individual fields, all with the same
+    // tag.
+
+    for (size_t i = 0; i < sz; i++) {
+      if (absl::Status status =
+              buffer.SerializeVarint<T, false>(Number(), base[i]);
+          !status.ok()) {
+        return status;
+      }
+    }
+
+    return absl::OkStatus();
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    if (Packed) {
+      absl::StatusOr<absl::Span<char>> data =
+          buffer.DeserializeLengthDelimited();
+      if (!data.ok()) {
+        return data.status();
+      }
+      ProtoBuffer sub_buffer(*data);
+      while (!sub_buffer.Eof()) {
+        absl::StatusOr<T> v = sub_buffer.DeserializeVarint<T, false>();
+        if (!v.ok()) {
+          return v.status();
+        }
+        push_back(*v);
+      }
+    } else {
+      absl::StatusOr<T> v = buffer.DeserializeVarint<T, false>();
+      if (!v.ok()) {
+        return v.status();
+      }
+      push_back(*v);
+    }
+    return absl::OkStatus();
   }
 
 private:
@@ -585,6 +836,48 @@ public:
       MessageObject<T> obj(GetRuntime(), data[i]);
       msgs_.push_back(std::move(obj));
     }
+  }
+
+  size_t SerializedSize() const {
+    size_t length = 0;
+    for (size_t i = 0; i < size(); i++) {
+      length += phaser::ProtoBuffer::LengthDelimitedSize(
+          Number(), msgs_[i].SerializedSize());
+    }
+    return length;
+  }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    size_t sz = size();
+    if (sz == 0) {
+      return absl::OkStatus();
+    }
+
+    for (const auto &msg : msgs_) {
+      if (absl::Status status = buffer.SerializeLengthDelimitedHeader(
+              Number(), msg.SerializedSize());
+          !status.ok()) {
+        return status;
+      }
+      if (absl::Status status = msg.Serialize(buffer); !status.ok()) {
+        return status;
+      }
+    }
+    return absl::OkStatus();
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    absl::StatusOr<absl::Span<char>> v =
+        buffer.DeserializeLengthDelimited();
+    if (!v.ok()) {
+      return v.status();
+    }
+    ProtoBuffer msg_buffer(*v);
+    T *msg = Add();
+    if (absl::Status status = msg->Deserialize(msg_buffer); !status.ok()) {
+      return status;
+    }
+    return absl::OkStatus();
   }
 
 private:
@@ -821,6 +1114,40 @@ public:
       r.push_back(s.Get());
     }
     return r;
+  }
+
+  size_t SerializedSize() const {
+    size_t length = 0;
+    for (size_t i = 0; i < size(); i++) {
+      length += phaser::ProtoBuffer::LengthDelimitedSize(
+          Number(), strings_[i].SerializedSize());
+    }
+    return length;
+  }
+
+  absl::Status Serialize(ProtoBuffer &buffer) const {
+    size_t sz = size();
+    if (sz == 0) {
+      return absl::OkStatus();
+    }
+
+    for (const auto &s : strings_) {
+      if (absl::Status status =
+              buffer.SerializeLengthDelimited(Number(), s.data(), s.size());
+          !status.ok()) {
+        return status;
+      }
+    }
+    return absl::OkStatus();
+  }
+
+  absl::Status Deserialize(ProtoBuffer &buffer) {
+    absl::StatusOr<std::string_view> v = buffer.DeserializeString();
+    if (!v.ok()) {
+      return v.status();
+    }
+    push_back(*v);
+    return absl::OkStatus();
   }
 
 private:

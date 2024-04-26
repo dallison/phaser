@@ -128,25 +128,31 @@ static std::string
 FieldCFieldType(const google::protobuf::FieldDescriptor *field) {
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
+    return "Int32Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    return "Int32Field<false, true>";
   case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
-    return "Int32Field";
+    return "Int32Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_INT64:
+    return "Int64Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    return "Int64Field<false, true>";
   case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
-    return "Int64Field";
+    return "Int64Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    return "Uint32Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_FIXED32:
-    return "Uint32Field";
+    return "Uint32Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    return "Uint64Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_FIXED64:
-    return "Uint64Field";
+    return "Uint64Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
-    return "DoubleField";
+    return "DoubleField<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_FLOAT:
-    return "FloatField";
+    return "FloatField<true, false";
   case google::protobuf::FieldDescriptor::TYPE_BOOL:
-    return "BoolField";
+    return "BoolField<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return "EnumField<" + EnumName(field->enum_type()) + ">";
   case google::protobuf::FieldDescriptor::TYPE_STRING:
@@ -198,29 +204,36 @@ static std::string FieldCType(const google::protobuf::FieldDescriptor *field) {
 
 static std::string
 FieldRepeatedCType(const google::protobuf::FieldDescriptor *field) {
+  std::string packed = field->is_packed() ? ", true>" : ", false>";
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
+    return "PrimitiveVectorField<int32_t, false, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    return "PrimitiveVectorField<int32_t, false, true" + packed;
   case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
-    return "PrimitiveVectorField<int32_t>";
+    return "PrimitiveVectorField<int32_t, true, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_INT64:
+    return "PrimitiveVectorField<int64_t, false, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    return "PrimitiveVectorField<int64_t, false, true" + packed;
   case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
-    return "PrimitiveVectorField<int64_t>";
+    return "PrimitiveVectorField<int64_t, true, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    return "PrimitiveVectorField<uint32_t, false, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_FIXED32:
-    return "PrimitiveVectorField<uint32_t>";
+    return "PrimitiveVectorField<uint32_t, true, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    return "PrimitiveVectorField<uint64_t, false, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_FIXED64:
-    return "PrimitiveVectorField<uint64_t>";
+    return "PrimitiveVectorField<uint64_t, true, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
-    return "PrimitiveVectorField<double>";
+    return "PrimitiveVectorField<double, true, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_FLOAT:
-    return "PrimitiveVectorField<float>";
+    return "PrimitiveVectorField<float, true, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_BOOL:
-    return "PrimitiveVectorField<bool>";
+    return "PrimitiveVectorField<bool, false, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
-    return "EnumVectorField<" + EnumName(field->enum_type()) + ">";
+    return "EnumVectorField<" + EnumName(field->enum_type()) + packed;
   case google::protobuf::FieldDescriptor::TYPE_STRING:
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringVectorField";
@@ -236,25 +249,31 @@ static std::string
 FieldUnionCType(const google::protobuf::FieldDescriptor *field) {
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
+    return "UnionInt32Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    return "UnionInt32Field<false, true>";
   case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
-    return "UnionInt32Field";
+    return "UnionInt32Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_INT64:
+    return "UnionInt64Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    return "UnionInt64Field<false, true>";
   case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
-    return "UnionInt64Field";
+    return "UnionInt64Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    return "UnionUint32Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_FIXED32:
-    return "UnionUint32Field";
+    return "UnionUint32Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    return "UnionUint64Field<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_FIXED64:
-    return "UnionUint64Field";
+    return "UnionUint64Field<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
-    return "UnionDoubleField";
+    return "UnionDoubleField<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_FLOAT:
-    return "UnionFloatField";
+    return "UnionFloatField<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_BOOL:
-    return "UnionBoolField";
+    return "UnionBoolField<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return "UnionEnumField<" + EnumName(field->enum_type()) + ">";
   case google::protobuf::FieldDescriptor::TYPE_STRING:
@@ -424,17 +443,19 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   os << "class " << MessageName(message_) << " : public phaser::Message {\n";
   os << "public:\n";
   // Generate constructors.
-  GenerateConstructors(os);
+  GenerateConstructors(os, true);
   // Generate size functions.
   GenerateSizeFunctions(os);
   // Generate creators.
-  GenerateCreators(os);
+  GenerateCreators(os, true);
   // Generate clear function.
-  GenerateClear(os);
+  GenerateClear(os, true);
   // Generate field metadata.
   GenerateFieldMetadata(os);
 
-  os << "  static std::string GetName() { return \"" << message_->full_name()
+  os << "  static std::string GetFullName() { return \""
+     << message_->full_name() << "\"; }\n";
+  os << "  static std::string GetName() { return \"" << message_->name()
      << "\"; }\n\n";
 
   GenerateNestedTypes(os);
@@ -442,6 +463,16 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
 
   // Generate protobuf accessors.
   GenerateProtobufAccessors(os);
+
+  GenerateProtobufSerialization(os);
+
+  // Generate serialized size.
+  GenerateSerializedSize(os, true);
+  // Generate serializer.
+  GenerateSerializer(os, true);
+  // Generate deserializer.
+  GenerateDeserializer(os, true);
+
   os << "private:\n";
   GenerateFieldDeclarations(os);
   os << "};\n";
@@ -451,6 +482,20 @@ void MessageGenerator::GenerateSource(std::ostream &os) {
   for (const auto &nested : nested_message_gens_) {
     nested->GenerateSource(os);
   }
+
+  GenerateConstructors(os, false);
+
+  // Generate creators.
+  GenerateCreators(os, false);
+  // Generate clear function.
+  GenerateClear(os, false);
+
+  // Generate serialized size.
+  GenerateSerializedSize(os, false);
+  // Generate serializer.
+  GenerateSerializer(os, false);
+  // Generate deserializer.
+  GenerateDeserializer(os, false);
 }
 
 void MessageGenerator::GenerateFieldDeclarations(std::ostream &os) {
@@ -473,27 +518,57 @@ void MessageGenerator::GenerateEnums(std::ostream &os) {
   }
 }
 
-void MessageGenerator::GenerateConstructors(std::ostream &os) {
+void MessageGenerator::GenerateConstructors(std::ostream &os, bool decl) {
   // Generate default constructor.
-  GenerateDefaultConstructor(os);
+  GenerateDefaultConstructor(os, decl);
+  GenerateInternalDefaultConstructor(os, decl);
   // Generate main constructor.
-  GenerateMainConstructor(os);
+  GenerateMainConstructor(os, decl);
 }
 
-void MessageGenerator::GenerateDefaultConstructor(std::ostream &os) {
-  os << "  " << MessageName(message_) << "()\n";
+void MessageGenerator::GenerateDefaultConstructor(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  " << MessageName(message_) << "(size_t initial_size = 1024);\n";
+    return;
+  }
+  os << MessageName(message_) << "::" << MessageName(message_)
+     << "(size_t initial_size)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os);
-  os << "  {}\n";
+  os << R"XXX({
+  InitDynamicMutable(initial_size);
+}
+)XXX";
 }
 
-void MessageGenerator::GenerateMainConstructor(std::ostream &os) {
-  os << "  " << MessageName(message_) << "(";
-  os << "std::shared_ptr<phaser::MessageRuntime> runtime, phaser::BufferOffset "
+void MessageGenerator::GenerateInternalDefaultConstructor(std::ostream &os,
+                                                          bool decl) {
+  if (decl) {
+    os << "  " << MessageName(message_) << "(phaser::InternalDefault d);\n";
+    return;
+  }
+  os << MessageName(message_) << "::" << MessageName(message_)
+     << "(phaser::InternalDefault d)\n";
+  // Generate field initializers.
+  GenerateFieldInitializers(os);
+  os << "{}\n";
+}
+
+void MessageGenerator::GenerateMainConstructor(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  " << MessageName(message_)
+       << "(std::shared_ptr<phaser::MessageRuntime> runtime, "
+          "phaser::BufferOffset "
+          "offset);\n";
+    return;
+  }
+  os << MessageName(message_) << "::" << MessageName(message_) << "(";
+  os << "std::shared_ptr<phaser::MessageRuntime> runtime, "
+        "phaser::BufferOffset "
         "offset) : Message(runtime, offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
-  os << "  {}\n";
+  os << "{}\n";
 }
 
 void MessageGenerator::GenerateFieldInitializers(std::ostream &os,
@@ -523,36 +598,77 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream &os,
   os << "#pragma clang diagnostic pop\n\n";
 }
 
-void MessageGenerator::GenerateCreators(std::ostream &os) {
-  os << "  static " << MessageName(message_)
-     << " CreateMutable(void *addr, size_t size) {\n"
-        "    phaser::PayloadBuffer *pb = new (addr) "
+void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  static " << MessageName(message_)
+       << " CreateMutable(void *addr, size_t size);\n";
+    os << "  static " << MessageName(message_)
+       << " CreateReadonly(void *addr);\n";
+    os << "  static " << MessageName(message_)
+       << " CreateDynamicMutable(size_t initial_size);\n";
+    os << "  void InitDynamicMutable(size_t initial_size);\n";
+    return;
+  }
+  os << MessageName(message_) << " " << MessageName(message_)
+     << "::CreateMutable(void *addr, size_t size) {\n"
+        "  phaser::PayloadBuffer *pb = new (addr) "
         "phaser::PayloadBuffer(size);\n"
-        "    phaser::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
-        "    auto runtime = "
+        "  auto runtime = "
         "std::make_shared<phaser::MutableMessageRuntime>(pb);\n"
-        "    auto msg = "
+        "  auto msg = "
      << MessageName(message_)
      << "(runtime, pb->message);\n"
-        "    msg.InstallMetadata<"
+        "  msg.InstallMetadata<"
      << MessageName(message_)
      << ">();\n"
-        "    return msg;\n"
-        "  }\n"
+        "  return msg;\n"
+        "}\n"
         "\n"
-        "  static "
-     << MessageName(message_)
-     << " CreateReadonly(void *addr) {\n"
-        "    phaser::PayloadBuffer *pb = "
+     << MessageName(message_) << " " << MessageName(message_)
+     << "::CreateReadonly(void *addr) {\n"
+        "  phaser::PayloadBuffer *pb = "
         "reinterpret_cast<phaser::PayloadBuffer "
         "*>(addr);\n"
-        "    auto runtime = std::make_shared<phaser::MessageRuntime>(pb);\n"
-        "    return "
+        "  auto runtime = std::make_shared<phaser::MessageRuntime>(pb);\n"
+        "  return "
      << MessageName(message_)
      << "(runtime, pb->message);\n"
-        "  }\n";
+        "}\n";
+  os << "  " << MessageName(message_) << " " << MessageName(message_)
+     << "::CreateDynamicMutable(size_t initial_size = 1024) {\n"
+        "  phaser::PayloadBuffer *pb = "
+        "phaser::NewDynamicBuffer(initial_size);\n"
+        "  phaser::PayloadBuffer::AllocateMainMessage(&pb, "
+     << MessageName(message_)
+     << "::BinarySize());\n"
+        "  auto runtime = "
+        "std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);\n"
+        "  auto msg = "
+     << MessageName(message_)
+     << "(runtime, pb->message);\n"
+        "  msg.InstallMetadata<"
+     << MessageName(message_)
+     << ">();\n"
+        "  return msg;\n"
+        "}\n";
+
+  os << "void " << MessageName(message_) << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
+        "  phaser::PayloadBuffer *pb = "
+        "phaser::NewDynamicBuffer(initial_size);\n"
+        "  phaser::PayloadBuffer::AllocateMainMessage(&pb, "
+     << MessageName(message_)
+     << "::BinarySize());\n"
+        "  auto runtime = "
+        "std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);\n"
+        "  this->runtime = runtime;\n"
+        "  this->absolute_binary_offset = pb->message;\n"
+        "  this->InstallMetadata<"
+     << MessageName(message_)
+     << ">();\n"
+        "}\n";
 }
 
 void MessageGenerator::GenerateSizeFunctions(std::ostream &os) {
@@ -605,17 +721,21 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream &os) {
   os << "  };\n";
 }
 
-void MessageGenerator::GenerateClear(std::ostream &os) {
-  os << "  void Clear() {\n";
+void MessageGenerator::GenerateClear(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  void Clear();\n";
+    return;
+  }
+  os << "void " << MessageName(message_) << "::Clear() {\n";
   for (auto &field : fields_) {
-    os << "    " << field->member_name << ".Clear();\n";
+    os << "  " << field->member_name << ".Clear();\n";
   }
   for (auto & [ oneof, u ] : unions_) {
     for (size_t i = 0; i < u->members.size(); i++) {
-      os << "    " << u->member_name << ".Clear<" << i << ">();\n";
+      os << "  " << u->member_name << ".Clear<" << i << ">();\n";
     }
   }
-  os << "  }\n";
+  os << "}\n\n";
 }
 
 void MessageGenerator::GenerateProtobufAccessors(std::ostream &os) {
@@ -647,6 +767,25 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
   if (union_index != -1) {
     suffix += "<" + std::to_string(union_index) + ">";
   }
+
+  std::string fixed_size_string =
+      field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_SFIXED32 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_SFIXED64 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_FIXED32 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_FIXED64
+          ? ", true"
+          : ", false";
+  std::string signed_string =
+      field->field->type() == google::protobuf::FieldDescriptor::TYPE_SINT32 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_SINT64
+          ? ", true"
+          : ", false";
+  std::string packed_string = field->field->is_packed() ? ", true" : ", false";
 
   os << "\n  // Field " << field_name << "\n";
   if (field->field->is_repeated()) {
@@ -704,7 +843,8 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << " value) {\n";
         os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
-        os << "  phaser::PrimitiveVectorField<" << field->c_type << ">& "
+        os << "  phaser::PrimitiveVectorField<" << field->c_type
+           << fixed_size_string << signed_string << packed_string << ">& "
            << sanitized_field_name << "() {\n";
         os << "    return " << member_name << ";\n";
         os << "  }\n";
@@ -875,6 +1015,157 @@ void MessageGenerator::GenerateFieldNumbers(std::ostream &os) {
          << "FieldNumber = " << field->field->number() << ";\n";
     }
   }
+}
+
+void MessageGenerator::GenerateSerializedSize(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  size_t SerializedSize() const;\n";
+    return;
+  }
+  os << "size_t " << MessageName(message_) << "::SerializedSize() const {\n";
+  os << "  size_t size = 0;\n";
+  for (auto &field : fields_) {
+    if (field->field->is_repeated()) {
+      os << "  size += " << field->member_name << ".SerializedSize();\n";
+    } else {
+      os << "  if (" << field->member_name << ".IsPresent()) {\n";
+      os << "    size += " << field->member_name << ".SerializedSize();\n";
+      os << "  }\n";
+    }
+  }
+  for (auto & [ oneof, u ] : unions_) {
+    os << "  switch (" << u->member_name << ".Discriminator()) {\n";
+    for (size_t i = 0; i < u->members.size(); i++) {
+      auto &field = u->members[i];
+      os << "  case " << field->field->number() << ":\n";
+      os << "    size += " << u->member_name << ".SerializedSize<" << i << ">("
+         << field->field->number() << ");\n";
+      os << "    break;\n";
+    }
+    os << "  }\n";
+  }
+  os << "  return size;\n";
+  os << "}\n\n";
+}
+
+void MessageGenerator::GenerateSerializer(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  absl::Status Serialize(phaser::ProtoBuffer &buffer) const;\n";
+    return;
+  }
+  os << "absl::Status " << MessageName(message_)
+     << "::Serialize(phaser::ProtoBuffer &buffer) const {\n";
+  for (auto &field : fields_) {
+    if (field->field->is_repeated()) {
+      os << "  if (absl::Status status = " << field->member_name
+         << ".Serialize(buffer); !status.ok()) return status;\n";
+    } else {
+      os << "  if (" << field->member_name << ".IsPresent()) {\n";
+      os << "    if (absl::Status status = " << field->member_name
+         << ".Serialize(buffer); !status.ok()) return status;\n";
+      os << "  }\n";
+    }
+  }
+  for (auto & [ oneof, u ] : unions_) {
+    os << "  switch (" << u->member_name << ".Discriminator()) {\n";
+    for (size_t i = 0; i < u->members.size(); i++) {
+      auto &field = u->members[i];
+      os << "  case " << field->field->number() << ":\n";
+      os << "    if (absl::Status status = " << u->member_name << ".Serialize<"
+         << i << ">(" << field->field->number()
+         << ", buffer); !status.ok()) return status;\n";
+      os << "    break;\n";
+    }
+    os << "  }\n";
+  }
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+}
+
+void MessageGenerator::GenerateDeserializer(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  absl::Status Deserialize(phaser::ProtoBuffer &buffer);\n";
+    return;
+  }
+  os << "absl::Status " << MessageName(message_)
+     << "::Deserialize(phaser::ProtoBuffer &buffer) {";
+  os << R"XXX(
+  while (!buffer.Eof()) {
+    absl::StatusOr<uint32_t> tag =
+        buffer.DeserializeVarint<uint32_t, false>();
+    if (!tag.ok()) {
+      return tag.status();
+    }
+    uint32_t field_number = *tag >> phaser::ProtoBuffer::kFieldIdShift;
+    switch (field_number) {
+)XXX";
+  for (auto &field : fields_) {
+    os << "    case " << field->field->number() << ":\n";
+    os << "      if (absl::Status status = " << field->member_name
+       << ".Deserialize(buffer); !status.ok()) return status;\n";
+    os << "      break;\n";
+  }
+  for (auto & [ oneof, u ] : unions_) {
+    for (size_t i = 0; i < u->members.size(); i++) {
+      auto &field = u->members[i];
+      os << "    case " << field->field->number() << ":\n";
+      os << "      if (absl::Status status = " << u->member_name
+         << ".Deserialize<" << i << ">(" << field->field->number()
+         << ", buffer); !status.ok()) return status;\n";
+      os << "      break;\n";
+    }
+  }
+  os << R"XXX(
+    default:
+      if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
+        return status;
+      }
+    }
+  }
+)XXX";
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+}
+
+void MessageGenerator::GenerateProtobufSerialization(std::ostream &os) {
+  os << R"XXX(
+  size_t ByteSizeLong() const {
+    return SerializedSize();
+  }
+
+  int ByteSize() const {
+    return static_cast<int>(ByteSizeLong());
+  }
+
+  bool SerializeToArray(char* array, size_t size) const {
+    phaser::ProtoBuffer buffer(array, size);
+    if (absl::Status status = Serialize(buffer); !status.ok()) return false;
+    return true;
+  }
+
+  bool ParseFromArray(const char* array, size_t size) {
+    phaser::ProtoBuffer buffer(array, size);
+    if (absl::Status status = Deserialize(buffer); !status.ok()) return false;
+    return true;
+  }
+
+  // String serialization.
+  bool SerializeToString(std::string* str) const {
+    size_t size = ByteSizeLong();
+    str->resize(size);
+    return SerializeToArray(&(*str)[0], size);
+  }
+
+  std::string SerializeAsString() const {
+    std::string str;
+    SerializeToString(&str);
+    return str;
+  }
+
+  bool ParseFromString(const std::string& str) {
+    return ParseFromArray(str.data(), str.size());
+  }
+)XXX";
 }
 
 } // namespace phaser

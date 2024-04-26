@@ -64,4 +64,13 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
   return -1;
 }
 
+phaser::PayloadBuffer *NewDynamicBuffer(size_t initial_size) {
+  char *buffer = (char *)malloc(initial_size);
+  PayloadBuffer *pb =
+      new (buffer) PayloadBuffer(initial_size, [](PayloadBuffer **p, size_t new_size) {
+        *p = reinterpret_cast<PayloadBuffer *>(realloc(*p, new_size));
+      });
+  return pb;
+}
+
 } // namespace phaser
