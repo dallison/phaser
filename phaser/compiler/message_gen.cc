@@ -655,7 +655,8 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "  return msg;\n"
         "}\n";
 
-  os << "void " << MessageName(message_) << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
+  os << "void " << MessageName(message_)
+     << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
         "  toolbelt::PayloadBuffer *pb = "
         "phaser::NewDynamicBuffer(initial_size);\n"
         "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
@@ -832,7 +833,11 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "  }\n";
         os << "  phaser::StringVectorField& " << sanitized_field_name
            << "() {\n";
+        os << "    " << sanitized_field_name << ".Populate();\n";
         os << "    return " << member_name << ";\n";
+        os << "  }\n";
+        os << "  absl::Span<char> Allocate(size_t len) {\n";
+        os << "    return " << member_name << ".Allocate(len);\n";
         os << "  }\n";
       } else {
         os << "  void add_" << field_name << "(" << field->c_type
@@ -870,6 +875,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "  }\n";
       os << "  phaser::MessageVectorField<" << field->c_type << ">& "
          << sanitized_field_name << "() {\n";
+      os << "    " << sanitized_field_name << ".Populate();\n";
       os << "    return " << member_name << ";\n";
       os << "  }\n";
       break;

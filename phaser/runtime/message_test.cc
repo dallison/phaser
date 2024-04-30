@@ -1,8 +1,8 @@
 #include "absl/strings/str_format.h"
-#include "toolbelt/payload_buffer.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "toolbelt/hexdump.h"
+#include "toolbelt/payload_buffer.h"
 #include <gtest/gtest.h>
 #include <sstream>
 
@@ -25,8 +25,9 @@ struct InnerMessage : public Message {
   //     : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
   //       f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {
   //   this->runtime = runtime;
-  //   void *data = toolbelt::PayloadBuffer::Allocate(&runtime->pb, BinarySize(),
-  //   8); this->absolute_binary_offset = runtime->pb->ToOffset(data);
+  //   void *data = toolbelt::PayloadBuffer::Allocate(&runtime->pb,
+  //   BinarySize(), 8); this->absolute_binary_offset =
+  //   runtime->pb->ToOffset(data);
 
   //   std::cout << "InnerMessage start: " << std::hex
   //             << this->absolute_binary_offset << std::dec << std::endl;
@@ -130,7 +131,8 @@ struct InnerMessage : public Message {
 
 struct TestMessage : public Message {
   // Default constructor makes a dynamic payload buffer.
-  TestMessage(size_t initial_size = 1024) : x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
+  TestMessage(size_t initial_size = 1024)
+      : x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
         y_(offsetof(TestMessage, y_), HeaderSize() + 8, 1, 101),
         s_(offsetof(TestMessage, s_), HeaderSize() + 16, 0, 102),
         m_(offsetof(TestMessage, m_), HeaderSize() + 20, 0, 103),
@@ -140,8 +142,8 @@ struct TestMessage : public Message {
         u1_(offsetof(TestMessage, u1_), HeaderSize() + 48, 0, 0, {107, 108}),
         u2_(offsetof(TestMessage, u2_), HeaderSize() + 56, 0, 0, {109, 110}),
         u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0, {111, 112}) {
-          InitDynamicMutable(initial_size);
-        }
+    InitDynamicMutable(initial_size);
+  }
 
   TestMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
               toolbelt::BufferOffset offset)
@@ -159,7 +161,8 @@ struct TestMessage : public Message {
 
   static TestMessage CreateMutable(void *addr, size_t size) {
     toolbelt::PayloadBuffer *pb = new (addr) toolbelt::PayloadBuffer(size);
-    toolbelt::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
+    toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+                                                 TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
@@ -167,23 +170,26 @@ struct TestMessage : public Message {
   }
 
   static TestMessage CreateReadonly(void *addr) {
-    toolbelt::PayloadBuffer *pb = reinterpret_cast<toolbelt::PayloadBuffer *>(addr);
+    toolbelt::PayloadBuffer *pb =
+        reinterpret_cast<toolbelt::PayloadBuffer *>(addr);
     auto runtime = std::make_shared<phaser::MessageRuntime>(pb);
     return TestMessage(runtime, pb->message);
   }
 
   static TestMessage CreateDynamicMutable(size_t initial_size = 1024) {
     toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
-    toolbelt::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
+    toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+                                                 TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
     return msg;
   }
 
- void InitDynamicMutable(size_t initial_size = 1024) {
+  void InitDynamicMutable(size_t initial_size = 1024) {
     toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
-    toolbelt::PayloadBuffer::AllocateMainMessage(&pb, TestMessage::BinarySize());
+    toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+                                                 TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     this->runtime = runtime;
     this->absolute_binary_offset = pb->message;
@@ -403,32 +409,38 @@ struct TestMessage : public Message {
         }
         break;
       case 107:
-        if (absl::Status status = u1_.Deserialize<0>(107, buffer); !status.ok()) {
+        if (absl::Status status = u1_.Deserialize<0>(107, buffer);
+            !status.ok()) {
           return status;
         }
         break;
       case 108:
-        if (absl::Status status = u1_.Deserialize<1>(108, buffer); !status.ok()) {
+        if (absl::Status status = u1_.Deserialize<1>(108, buffer);
+            !status.ok()) {
           return status;
         }
         break;
       case 109:
-        if (absl::Status status = u2_.Deserialize<0>(109, buffer); !status.ok()) {
+        if (absl::Status status = u2_.Deserialize<0>(109, buffer);
+            !status.ok()) {
           return status;
         }
         break;
       case 110:
-        if (absl::Status status = u2_.Deserialize<1>(110, buffer); !status.ok()) {
+        if (absl::Status status = u2_.Deserialize<1>(110, buffer);
+            !status.ok()) {
           return status;
         }
         break;
       case 111:
-        if (absl::Status status = u3_.Deserialize<0>(111, buffer); !status.ok()) {
+        if (absl::Status status = u3_.Deserialize<0>(111, buffer);
+            !status.ok()) {
           return status;
         }
         break;
       case 112:
-        if (absl::Status status = u3_.Deserialize<1>(112, buffer); !status.ok()) {
+        if (absl::Status status = u3_.Deserialize<1>(112, buffer);
+            !status.ok()) {
           return status;
         }
         break;
@@ -456,6 +468,7 @@ struct TestMessage : public Message {
   void set_s(const std::string &s) { s_.Set(s); }
   void clear_s() { s_.Clear(); }
   bool has_s() const { return s_.IsPresent(); }
+  absl::Span<char> allocate_s(size_t len) { return s_.Allocate(len); }
 
   const InnerMessage &m() const { return m_.Get(); }
   InnerMessage *mutable_m() { return m_.Mutable(); }
@@ -477,14 +490,20 @@ struct TestMessage : public Message {
   void add_vstr(const std::string &v) { vstr_.Add(v); }
   void set_vstr(size_t i, const std::string &v) { vstr_.Set(i, v); }
   void clear_vstr() { vstr_.Clear(); }
-  phaser::StringVectorField &vstr() { return vstr_; }
+  phaser::StringVectorField &vstr() {
+    vstr_.Populate();
+    return vstr_;
+  }
 
   size_t vm_size() const { return vm_.size(); }
   const InnerMessage &vm(size_t i) const { return vm_.Get(i); }
   InnerMessage *mutable_vm(size_t i) { return vm_.Mutable(i); }
   void add_vm() { vm_.Add(); }
   void clear_vm() { vm_.Clear(); }
-  phaser::MessageVectorField<InnerMessage> &vm() { return vm_; }
+  phaser::MessageVectorField<InnerMessage> &vm() {
+    vm_.Populate();
+    return vm_;
+  }
 
   // Union fields.
   int u1_case() const { return u1_.Discriminator(); }

@@ -96,16 +96,6 @@ protected:
       SetPresence(GetBuffer(), GetPresenceMaskStart());                        \
     }                                                                          \
     void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }       \
-    void SetLocation(uint32_t soff, uint32_t boff) {                           \
-      source_offset_ = soff;                                                   \
-      relative_binary_offset_ = boff;                                          \
-    }                                                                          \
-    toolbelt::BufferOffset BinaryEndOffset() const {                             \
-      return relative_binary_offset_ + sizeof(type);                           \
-    }                                                                          \
-    toolbelt::BufferOffset BinaryOffset() const {                                \
-      return relative_binary_offset_;                                          \
-    }                                                                          \
     bool operator==(const cname##Field &other) const {                         \
       return Get() == other.Get();                                             \
     }                                                                          \
@@ -213,12 +203,6 @@ public:
 
   void Clear() { ClearPresence(GetBuffer(), GetMessageBinaryStart()); }
 
-  toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ +
-           sizeof(typename std::underlying_type<Enum>::type);
-  }
-  toolbelt::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
-
   bool operator==(const EnumField &other) const {
     return static_cast<Enum>(*this) == static_cast<Enum>(other);
   }
@@ -293,11 +277,10 @@ public:
         GetBufferAddr(), GetMessageBinaryStart() + relative_binary_offset_);
   }
 
-  toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::BufferOffset);
+  absl::Span<char> Allocate(size_t size) {
+    return toolbelt::PayloadBuffer::AllocateString(
+        GetBufferAddr(), size, GetMessageBinaryStart() + relative_binary_offset_);
   }
-
-  toolbelt::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
 
   bool operator==(const StringField &other) const {
     return Get() == other.Get();
@@ -358,8 +341,7 @@ private:
   toolbelt::BufferOffset relative_binary_offset_;
 };
 
-// This is a string field that is not embedded inside a message.  These will be
-// allocated from the heap, as is the case when used in a std::vector.  They
+// This is a string field that is not embedded inside a message. They
 // store the std::shared_ptr to the phaser::Runtime pointer instead of
 // an offset to the start of the message.
 class NonEmbeddedStringField {
@@ -368,11 +350,6 @@ public:
   explicit NonEmbeddedStringField(const Message *msg,
                                   uint32_t absolute_binary_offset)
       : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
-
-  toolbelt::BufferOffset BinaryEndOffset() const {
-    return absolute_binary_offset_ + sizeof(toolbelt::BufferOffset);
-  }
-  toolbelt::BufferOffset BinaryOffset() const { return absolute_binary_offset_; }
 
   std::string_view Get() const {
     return GetBuffer()->GetStringView(absolute_binary_offset_);
@@ -510,25 +487,11 @@ public:
     *addr = 0;
   }
 
-  toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::BufferOffset);
-  }
-
-  toolbelt::BufferOffset BinaryOffset() const { return relative_binary_offset_; }
-
   bool operator==(const IndirectMessageField<MessageType> &other) const {
     return msg_ != other.msg_;
   }
   bool operator!=(const IndirectMessageField<MessageType> &other) const {
     return !(*this == other);
-  }
-
-  absl::Status SerializeToBuffer(ProtoBuffer &buffer) const {
-    return msg_.SerializeToBuffer(buffer);
-  }
-
-  absl::Status DeserializeFromBuffer(ProtoBuffer &buffer) {
-    return msg_.DeserializeFromBuffer(buffer);
   }
 
   size_t SerializedSize() const {
@@ -634,14 +597,6 @@ public:
   }
   bool operator!=(const MessageObject<MessageType> &other) const {
     return !(*this == other);
-  }
-
-  absl::Status SerializeToBuffer(ProtoBuffer &buffer) const {
-    return msg_.SerializeToBuffer(buffer);
-  }
-
-  absl::Status DeserializeFromBuffer(ProtoBuffer &buffer) {
-    return msg_.DeserializeFromBuffer(buffer);
   }
 
   bool empty() const { return msg_.runtime == nullptr; }
