@@ -1,0 +1,16 @@
+package(default_visibility = ["//visibility:public"])
+
+cc_test(
+    name = "phaser_test",
+    srcs = [
+        "phaser_test.cc",
+    ],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:test_message_cc_proto",
+        "//phaser/testdata:test_message_phaser",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
+        "@toolbelt//toolbelt",
+    ],
+)

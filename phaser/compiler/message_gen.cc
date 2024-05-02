@@ -316,7 +316,7 @@ FieldBinarySize(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return 4;
   case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
-    return 8;
+    return 4;
   case google::protobuf::FieldDescriptor::TYPE_GROUP:
     std::cerr << "Groups are not supported\n";
     exit(1);
@@ -347,7 +347,7 @@ void MessageGenerator::CompileUnions() {
     } else {
       union_info->member_type += ", ";
     }
-    union_info->member_type += "phaser::" + field_type;
+    union_info->member_type += "::phaser::" + field_type;
     uint32_t field_size = FieldBinarySize(field);
     union_info->members.push_back(std::make_shared<FieldInfo>(
         field, 4, union_info->id, field->name() + "_", field_type,
@@ -440,7 +440,7 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   CompileUnions();
   FinalizeOffsetsAndSizes();
 
-  os << "class " << MessageName(message_) << " : public phaser::Message {\n";
+  os << "class " << MessageName(message_) << " : public ::phaser::Message {\n";
   os << "public:\n";
   // Generate constructors.
   GenerateConstructors(os, true);
@@ -500,11 +500,11 @@ void MessageGenerator::GenerateSource(std::ostream &os) {
 
 void MessageGenerator::GenerateFieldDeclarations(std::ostream &os) {
   for (auto &field : fields_) {
-    os << "  phaser::" << field->member_type << " " << field->member_name
+    os << "  ::phaser::" << field->member_type << " " << field->member_name
        << ";\n";
   }
   for (auto & [ oneof, u ] : unions_) {
-    os << "  phaser::" << u->member_type << " " << u->member_name << ";\n";
+    os << "  ::phaser::" << u->member_type << " " << u->member_name << ";\n";
   }
 }
 
@@ -538,37 +538,38 @@ void MessageGenerator::GenerateDefaultConstructor(std::ostream &os, bool decl) {
   os << R"XXX({
   InitDynamicMutable(initial_size);
 }
+
 )XXX";
 }
 
 void MessageGenerator::GenerateInternalDefaultConstructor(std::ostream &os,
                                                           bool decl) {
   if (decl) {
-    os << "  " << MessageName(message_) << "(phaser::InternalDefault d);\n";
+    os << "  " << MessageName(message_) << "(::phaser::InternalDefault d);\n";
     return;
   }
   os << MessageName(message_) << "::" << MessageName(message_)
-     << "(phaser::InternalDefault d)\n";
+     << "(::phaser::InternalDefault d)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os);
-  os << "{}\n";
+  os << "{}\n\n";
 }
 
 void MessageGenerator::GenerateMainConstructor(std::ostream &os, bool decl) {
   if (decl) {
     os << "  " << MessageName(message_)
-       << "(std::shared_ptr<phaser::MessageRuntime> runtime, "
+       << "(std::shared_ptr<::phaser::MessageRuntime> runtime, "
           "toolbelt::BufferOffset "
           "offset);\n";
     return;
   }
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
-  os << "std::shared_ptr<phaser::MessageRuntime> runtime, "
+  os << "std::shared_ptr<::phaser::MessageRuntime> runtime, "
         "toolbelt::BufferOffset "
         "offset) : Message(runtime, offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
-  os << "{}\n";
+  os << "{}\n\n";
 }
 
 void MessageGenerator::GenerateFieldInitializers(std::ostream &os,
@@ -609,6 +610,7 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
     os << "  void InitDynamicMutable(size_t initial_size);\n";
     return;
   }
+  os << "// Create a mutable message in the given memory.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateMutable(void *addr, size_t size) {\n"
         "  toolbelt::PayloadBuffer *pb = new (addr) "
@@ -617,7 +619,7 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
-        "std::make_shared<phaser::MutableMessageRuntime>(pb);\n"
+        "std::make_shared<::phaser::MutableMessageRuntime>(pb);\n"
         "  auto msg = "
      << MessageName(message_)
      << "(runtime, pb->message);\n"
@@ -626,26 +628,29 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
      << ">();\n"
         "  return msg;\n"
         "}\n"
-        "\n"
-     << MessageName(message_) << " " << MessageName(message_)
+        "\n";
+
+    os << "// Create a readonly message that already exists at the given address.\n";
+    os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateReadonly(void *addr) {\n"
         "  toolbelt::PayloadBuffer *pb = "
         "reinterpret_cast<toolbelt::PayloadBuffer "
         "*>(addr);\n"
-        "  auto runtime = std::make_shared<phaser::MessageRuntime>(pb);\n"
+        "  auto runtime = std::make_shared<::phaser::MessageRuntime>(pb);\n"
         "  return "
      << MessageName(message_)
      << "(runtime, pb->message);\n"
-        "}\n";
-  os << "  " << MessageName(message_) << " " << MessageName(message_)
+        "}\n\n";
+  os << "// Create a message in a dynamically resized buffer allocated from the heap.\n";
+  os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateDynamicMutable(size_t initial_size = 1024) {\n"
         "  toolbelt::PayloadBuffer *pb = "
-        "phaser::NewDynamicBuffer(initial_size);\n"
+        "::phaser::NewDynamicBuffer(initial_size);\n"
         "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
-        "std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);\n"
+        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb);\n"
         "  auto msg = "
      << MessageName(message_)
      << "(runtime, pb->message);\n"
@@ -653,23 +658,23 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
      << MessageName(message_)
      << ">();\n"
         "  return msg;\n"
-        "}\n";
+        "}\n\n";
 
   os << "void " << MessageName(message_)
      << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
         "  toolbelt::PayloadBuffer *pb = "
-        "phaser::NewDynamicBuffer(initial_size);\n"
+        "::phaser::NewDynamicBuffer(initial_size);\n"
         "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
-        "std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);\n"
+        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb);\n"
         "  this->runtime = runtime;\n"
         "  this->absolute_binary_offset = pb->message;\n"
         "  this->InstallMetadata<"
      << MessageName(message_)
      << ">();\n"
-        "}\n";
+        "}\n\n";
 }
 
 void MessageGenerator::GenerateSizeFunctions(std::ostream &os) {
@@ -831,14 +836,14 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << "(size_t index, const std::string& value) {\n";
         os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
-        os << "  phaser::StringVectorField& " << sanitized_field_name
+        os << "  ::phaser::StringVectorField& " << sanitized_field_name
            << "() {\n";
-        os << "    " << sanitized_field_name << ".Populate();\n";
+        os << "    " << member_name << ".Populate();\n";
         os << "    return " << member_name << ";\n";
         os << "  }\n";
-        os << "  absl::Span<char> Allocate(size_t len) {\n";
-        os << "    return " << member_name << ".Allocate(len);\n";
-        os << "  }\n";
+        // os << "  absl::Span<char> Allocate(size_t index, size_t len) {\n";
+        // os << "    return " << member_name << ".Allocate(index, len);\n";
+        // os << "  }\n";
       } else {
         os << "  void add_" << field_name << "(" << field->c_type
            << " value) {\n";
@@ -848,7 +853,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << " value) {\n";
         os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
-        os << "  phaser::PrimitiveVectorField<" << field->c_type
+        os << "  ::phaser::PrimitiveVectorField<" << field->c_type
            << fixed_size_string << signed_string << packed_string << ">& "
            << sanitized_field_name << "() {\n";
         os << "    return " << member_name << ";\n";
@@ -870,12 +875,12 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
          << "(size_t index) {\n";
       os << "    return " << member_name << ".Mutable(index);\n";
       os << "  }\n";
-      os << "  add_" << field_name << "(" << field->c_type << " value) {\n";
-      os << "    " << member_name << ".Add(value);\n";
+      os << "  " << field->c_type << "* add_" << field_name << "() {\n";
+      os << "    return " << member_name << ".Add();\n";
       os << "  }\n";
-      os << "  phaser::MessageVectorField<" << field->c_type << ">& "
+      os << "  ::phaser::MessageVectorField<" << field->c_type << ">& "
          << sanitized_field_name << "() {\n";
-      os << "    " << sanitized_field_name << ".Populate();\n";
+      os << "    " << member_name << ".Populate();\n";
       os << "    return " << member_name << ";\n";
       os << "  }\n";
       break;
@@ -925,6 +930,9 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
               google::protobuf::FieldDescriptor::TYPE_BYTES) {
         os << "  void set_" << field_name << "(const std::string& value) {\n";
         os << "    " << member_name << ".Set" << suffix << "(value);\n";
+        os << "  }\n";
+        os << "  absl::Span<char> allocate_" << field_name << "(size_t len) {\n";
+        os << "    return " << member_name << ".Allocate" << suffix << "(len);\n";
         os << "  }\n";
       } else {
         os << "  void set_" << field_name << "(" << field->c_type
@@ -1056,11 +1064,11 @@ void MessageGenerator::GenerateSerializedSize(std::ostream &os, bool decl) {
 
 void MessageGenerator::GenerateSerializer(std::ostream &os, bool decl) {
   if (decl) {
-    os << "  absl::Status Serialize(phaser::ProtoBuffer &buffer) const;\n";
+    os << "  absl::Status Serialize(::phaser::ProtoBuffer &buffer) const;\n";
     return;
   }
   os << "absl::Status " << MessageName(message_)
-     << "::Serialize(phaser::ProtoBuffer &buffer) const {\n";
+     << "::Serialize(::phaser::ProtoBuffer &buffer) const {\n";
   for (auto &field : fields_) {
     if (field->field->is_repeated()) {
       os << "  if (absl::Status status = " << field->member_name
@@ -1090,11 +1098,11 @@ void MessageGenerator::GenerateSerializer(std::ostream &os, bool decl) {
 
 void MessageGenerator::GenerateDeserializer(std::ostream &os, bool decl) {
   if (decl) {
-    os << "  absl::Status Deserialize(phaser::ProtoBuffer &buffer);\n";
+    os << "  absl::Status Deserialize(::phaser::ProtoBuffer &buffer);\n";
     return;
   }
   os << "absl::Status " << MessageName(message_)
-     << "::Deserialize(phaser::ProtoBuffer &buffer) {";
+     << "::Deserialize(::phaser::ProtoBuffer &buffer) {";
   os << R"XXX(
   while (!buffer.Eof()) {
     absl::StatusOr<uint32_t> tag =
@@ -1102,7 +1110,7 @@ void MessageGenerator::GenerateDeserializer(std::ostream &os, bool decl) {
     if (!tag.ok()) {
       return tag.status();
     }
-    uint32_t field_number = *tag >> phaser::ProtoBuffer::kFieldIdShift;
+    uint32_t field_number = *tag >> ::phaser::ProtoBuffer::kFieldIdShift;
     switch (field_number) {
 )XXX";
   for (auto &field : fields_) {
@@ -1144,13 +1152,13 @@ void MessageGenerator::GenerateProtobufSerialization(std::ostream &os) {
   }
 
   bool SerializeToArray(char* array, size_t size) const {
-    phaser::ProtoBuffer buffer(array, size);
+    ::phaser::ProtoBuffer buffer(array, size);
     if (absl::Status status = Serialize(buffer); !status.ok()) return false;
     return true;
   }
 
   bool ParseFromArray(const char* array, size_t size) {
-    phaser::ProtoBuffer buffer(array, size);
+    ::phaser::ProtoBuffer buffer(array, size);
     if (absl::Status status = Deserialize(buffer); !status.ok()) return false;
     return true;
   }

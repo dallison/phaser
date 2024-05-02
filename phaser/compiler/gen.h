@@ -17,7 +17,7 @@ namespace phaser {
 
 class CodeGenerator : public google::protobuf::compiler::CodeGenerator {
 public:
-  CodeGenerator(const std::string& ns) : added_namespace_(ns) {}
+  CodeGenerator() = default;
   bool Generate(const google::protobuf::FileDescriptor *file,
                 const std::string &parameter,
                 google::protobuf::compiler::GeneratorContext *generator_context,
@@ -26,7 +26,7 @@ public:
   uint64_t GetSupportedFeatures() const override {
     return FEATURE_PROTO3_OPTIONAL;
   }
-  std::string added_namespace_;
+  mutable std::string added_namespace_;
 };
 
 

@@ -26,7 +26,20 @@ bool CodeGenerator::Generate(
     const google::protobuf::FileDescriptor *file, const std::string &parameter,
     google::protobuf::compiler::GeneratorContext *generator_context,
     std::string *error) const {
+
+  // The options for the compiler are passed in the --phaser_out parameter
+  // as a comma separated list of key=value pairs, followed by a colon
+  // and then the output directory.
+  std::vector<std::pair<std::string, std::string>> options;
+  google::protobuf::compiler::ParseGeneratorParameter(parameter, &options);
+
   Generator gen(file, added_namespace_);
+
+  for (auto option : options) {
+    if (option.first == "add_namespace") {
+      added_namespace_ = option.second;
+    }
+  }
 
   std::filesystem::path hp(file->name());
   hp.replace_extension(".phaser.h");
@@ -36,8 +49,12 @@ bool CodeGenerator::Generate(
   // std::ofstream to write the file, so we'll write to a stringstream and then
   // copy the data to the file.
   std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> header_output(
-      generator_context->Open(hp.filename()));
+      generator_context->Open(hp.string()));
 
+  if (header_output == nullptr) {
+    *error = absl::StrFormat("Failed to open %s for writing", hp.string());
+    return false;
+  }
   std::stringstream header_stream;
   gen.GenerateHeaders(header_stream);
 
@@ -45,8 +62,11 @@ bool CodeGenerator::Generate(
   cp.replace_extension(".phaser.cc");
 
   std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> source_output(
-      generator_context->Open(cp.filename()));
-
+      generator_context->Open(cp.string()));
+  if (source_output == nullptr) {
+    *error = absl::StrFormat("Failed to open %s for writing", cp.string());
+    return false;
+  }
   std::stringstream source_stream;
   gen.GenerateSources(source_stream);
 

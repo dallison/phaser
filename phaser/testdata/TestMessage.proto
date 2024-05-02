@@ -8,6 +8,8 @@ message InnerMessage {
   sfixed64 f = 20;
 }
 
+message XXX{}
+
 message TestMessage {
   int32 x = 100;
   int64 y = 101;
@@ -29,6 +31,59 @@ message TestMessage {
     int64 u2a = 109;
     string u2b = 110;
   }
+
+  oneof u3 {
+    int64 u3a = 111;
+    InnerMessage u3b = 112;
+  }
+}
+
+message TestMessageNewFields {
+  int32 new1 = 2;
+  int32 x = 100;
+  int64 y = 101;
+  string s = 102;
+  string new2 = 3;
+  InnerMessage m = 103;
+
+  // Repeated fields.
+  repeated int32 vi32 = 104;
+  repeated string vstr = 105;
+  repeated int32 new3 = 4;
+  repeated InnerMessage vm = 106;
+
+  // Oneof fields.
+  oneof u1 {
+    uint32 u1a = 107;
+    fixed64 u1b = 108;
+  }
+
+  oneof new4 {
+    int32 u4a = 113;
+    string u4b = 114;
+  }
+
+  oneof u2 {
+    int64 u2a = 109;
+    string u2b = 110;
+  }
+
+  oneof u3 {
+    int64 u3a = 111;
+    InnerMessage u3b = 112;
+  }
+}
+
+message TestMessageDeletedFields {
+  int32 x = 100;
+  string s = 102;
+  InnerMessage m = 103;
+
+  // Repeated fields.
+  repeated int32 vi32 = 104;
+  repeated InnerMessage vm = 106;
+
+  // Oneof fields.
 
   oneof u3 {
     int64 u3a = 111;

@@ -201,6 +201,12 @@ public:
     toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
   }
 
+ absl::Span<char> Allocate(size_t size, std::shared_ptr<MessageRuntime> runtime,
+           uint32_t abs_offset) {
+    return toolbelt::PayloadBuffer::AllocateString(
+        GetBufferAddr(runtime), size, abs_offset);
+  }
+
   bool Equal(const UnionStringField &other,
              std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
     return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);
@@ -421,6 +427,20 @@ public:
     auto &t = std::get<Id>(value_);
     return t.Mutable(GetRuntime(),
                      GetMessageBinaryStart() + relative_binary_offset_ + 4);
+  }
+
+  // Only valid for strings and bytes.
+  template <int Id> absl::Span<char> Allocate(size_t size) {
+    // Write the field number into the discriminator.
+    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+        GetMessageBinaryStart() + relative_binary_offset_);
+    *discrim = field_numbers_[Id];
+
+    // Get the variant and set its location.  In binary it is
+    // 4 bytes after the discriminator.
+    auto &t = std::get<Id>(value_);
+    return t.Allocate(size, GetRuntime(),
+               GetMessageBinaryStart() + relative_binary_offset_ + 4);
   }
 
   int32_t Discriminator() const {

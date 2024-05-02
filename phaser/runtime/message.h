@@ -68,7 +68,6 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
     // Free the buffer when the runtime is destroyed.
     buffer_data =
         std::shared_ptr<void>(reinterpret_cast<void *>(p), [](void *p) {
-          std::cout << "freeing " << p << std::endl;
           free(p);
         });
   }
@@ -194,6 +193,14 @@ struct Message {
 
   // Similar for field id for presence bit mask.
   int32_t FindFieldId(uint32_t field_number) const;
+
+  void* Data() const {
+    return reinterpret_cast<void*>(runtime->pb);
+  }
+
+  size_t Size() const {
+    return runtime->pb->Size();
+  }
 };
 
 toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size);
