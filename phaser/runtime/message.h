@@ -201,6 +201,7 @@ struct Message {
   size_t Size() const {
     return runtime->pb->Size();
   }
+
 };
 
 toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size);

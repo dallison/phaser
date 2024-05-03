@@ -1,3 +1,6 @@
+"""
+This module provides a rule to generate phaser message files from proto_library targets.
+"""
 load("@bazel_skylib//lib:paths.bzl", "paths")
 
 MessageInfo = provider(fields = ["direct_sources", "transitive_sources", "cpp_outputs"])
@@ -9,6 +12,9 @@ def _phaser_action(
         out_dir,
         outputs,
         add_namespace):
+    # The protobuf compiler allow plugins to get arguments specified in the --plugin_out
+    # argument.  The args are passed as a comma separated list of key=value pairs followed
+    # by a colon and the output directory.  The phaser plugin uses the add_namespace key.
     options_and_out_dir = ""
     if add_namespace != "":
         options_and_out_dir = "--phaser_out=add_namespace={}:{}".format(add_namespace, out_dir)
@@ -38,6 +44,8 @@ def _phaser_action(
         mnemonic = "Phaser",
     )
 
+# This aspect generates the MessageInfo provider containing the files we
+# will generate from running the Phaser plugin.
 def _phaser_aspect_impl(target, _ctx):
     direct_sources = []
     transitive_sources = depset()
@@ -67,6 +75,8 @@ phaser_aspect = aspect(
 )
 
 
+# The phaser rule runs the Phaser plugin from the protoc compiler.
+# The deps for the rule are proto_libraries that contain the protobuf files.
 def _phaser_impl(ctx):  
     outputs = []
 
@@ -110,7 +120,6 @@ _phaser_gen = rule(
         "deps": attr.label_list(
           aspects = [phaser_aspect],
         ),
-        "package_name": attr.string(),
         "add_namespace": attr.string(),
     },
     implementation = _phaser_impl,
@@ -149,7 +158,6 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser:runtime", add_nam
     _phaser_gen(
         name = phaser,
         deps = deps,
-        package_name = native.package_name(),
         add_namespace = add_namespace,
     )
 
@@ -167,12 +175,11 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser:runtime", add_nam
         deps = [phaser],
     )
 
-    deps_without_proto = []
+    libdeps = []
     for dep in deps:
         if not dep.endswith("_proto"):
-            deps_without_proto.append(dep)
+            libdeps.append(dep)
 
-    libdeps = deps_without_proto
     if runtime != "":
         libdeps = libdeps + [runtime]
 

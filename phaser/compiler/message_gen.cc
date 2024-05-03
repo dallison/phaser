@@ -154,7 +154,9 @@ FieldCFieldType(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "BoolField<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
-    return "EnumField<" + EnumName(field->enum_type()) + ">";
+    return "EnumField<" + EnumName(field->enum_type()) + ", " +
+           EnumName(field->enum_type()) + "Stringizer, " +
+           EnumName(field->enum_type()) + "Parser>";
   case google::protobuf::FieldDescriptor::TYPE_STRING:
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringField";
@@ -233,7 +235,9 @@ FieldRepeatedCType(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "PrimitiveVectorField<bool, false, false" + packed;
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
-    return "EnumVectorField<" + EnumName(field->enum_type()) + packed;
+    return "EnumVectorField<" + EnumName(field->enum_type()) + ", " +
+           EnumName(field->enum_type()) + "Stringizer, " +
+           EnumName(field->enum_type()) + "Parser"+ packed;
   case google::protobuf::FieldDescriptor::TYPE_STRING:
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringVectorField";
@@ -275,7 +279,9 @@ FieldUnionCType(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "UnionBoolField<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
-    return "UnionEnumField<" + EnumName(field->enum_type()) + ">";
+    return "UnionEnumField<" + EnumName(field->enum_type()) + ", " +
+           EnumName(field->enum_type()) + "Stringizer, " +
+           EnumName(field->enum_type()) + "Parser>";
   case google::protobuf::FieldDescriptor::TYPE_STRING:
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "UnionStringField";
@@ -458,8 +464,13 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   os << "  static std::string GetName() { return \"" << message_->name()
      << "\"; }\n\n";
 
+  os << "friend std::ostream &operator<<(std::ostream &os, const "
+     << MessageName(message_) << " &msg);\n";
+
   GenerateNestedTypes(os);
   GenerateFieldNumbers(os);
+
+  GenerateIndent(os);
 
   // Generate protobuf accessors.
   GenerateProtobufAccessors(os);
@@ -476,6 +487,9 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   os << "private:\n";
   GenerateFieldDeclarations(os);
   os << "};\n";
+
+  // Steamer outside the class.
+  GenerateStreamer(os);
 }
 
 void MessageGenerator::GenerateSource(std::ostream &os) {
@@ -630,8 +644,9 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "}\n"
         "\n";
 
-    os << "// Create a readonly message that already exists at the given address.\n";
-    os << MessageName(message_) << " " << MessageName(message_)
+  os << "// Create a readonly message that already exists at the given "
+        "address.\n";
+  os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateReadonly(void *addr) {\n"
         "  toolbelt::PayloadBuffer *pb = "
         "reinterpret_cast<toolbelt::PayloadBuffer "
@@ -641,7 +656,8 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
      << MessageName(message_)
      << "(runtime, pb->message);\n"
         "}\n\n";
-  os << "// Create a message in a dynamically resized buffer allocated from the heap.\n";
+  os << "// Create a message in a dynamically resized buffer allocated from "
+        "the heap.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateDynamicMutable(size_t initial_size = 1024) {\n"
         "  toolbelt::PayloadBuffer *pb = "
@@ -853,11 +869,21 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << " value) {\n";
         os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
+        if (field->field->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
+         os << "  ::phaser::EnumVectorField<" << field->c_type
+           << ", " << EnumName(field->field->enum_type()) << "Stringizer, "
+            << EnumName(field->field->enum_type()) << "Parser"
+           << packed_string << ">& "
+           << sanitized_field_name << "() {\n";
+        os << "    return " << member_name << ";\n";
+        os << "  }\n";
+        } else {
         os << "  ::phaser::PrimitiveVectorField<" << field->c_type
            << fixed_size_string << signed_string << packed_string << ">& "
            << sanitized_field_name << "() {\n";
         os << "    return " << member_name << ";\n";
         os << "  }\n";
+        }
       }
       break;
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
@@ -929,14 +955,32 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
           field->field->type() ==
               google::protobuf::FieldDescriptor::TYPE_BYTES) {
         os << "  void set_" << field_name << "(const std::string& value) {\n";
+        if (union_index != -1) {
+          // Clear all other union members.
+          for (size_t i = 0; i < union_field->members.size(); i++) {
+            if (i != size_t(union_index)) {
+              os << "    " << member_name << ".Clear<" << i << ">();\n";
+            }
+          }
+        }
         os << "    " << member_name << ".Set" << suffix << "(value);\n";
         os << "  }\n";
-        os << "  absl::Span<char> allocate_" << field_name << "(size_t len) {\n";
-        os << "    return " << member_name << ".Allocate" << suffix << "(len);\n";
+        os << "  absl::Span<char> allocate_" << field_name
+           << "(size_t len) {\n";
+        os << "    return " << member_name << ".Allocate" << suffix
+           << "(len);\n";
         os << "  }\n";
       } else {
         os << "  void set_" << field_name << "(" << field->c_type
            << " value) {\n";
+        if (union_index != -1) {
+          // Clear all other union members.
+          for (size_t i = 0; i < union_field->members.size(); i++) {
+            if (i != size_t(union_index)) {
+              os << "    " << member_name << ".Clear<" << i << ">();\n";
+            }
+          }
+        }
         os << "    " << member_name << ".Set" << suffix << "(value);\n";
         os << "  }\n";
       }
@@ -967,6 +1011,12 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << MessageName(field->field->message_type()) << ">();\n";
         os << "  }\n";
         os << "  " << field->c_type << "* mutable_" << field_name << "() {\n";
+        // Clear all other union members.
+        for (size_t i = 0; i < union_field->members.size(); i++) {
+          if (i != size_t(union_index)) {
+            os << "    " << member_name << ".Clear<" << i << ">();\n";
+          }
+        }
         os << "    return " << member_name << ".Mutable<"
            << std::to_string(union_index) << ", "
            << MessageName(field->field->message_type()) << ">();\n";
@@ -1180,6 +1230,61 @@ void MessageGenerator::GenerateProtobufSerialization(std::ostream &os) {
     return ParseFromArray(str.data(), str.size());
   }
 )XXX";
+}
+
+void MessageGenerator::GenerateIndent(std::ostream &os) {
+  os << "  void Indent(int indent) const {\n";
+  for (auto &field : fields_) {
+    os << "    " << field->member_name << ".Indent(indent);\n";
+  }
+  for (auto & [ oneof, u ] : unions_) {
+    os << "    " << u->member_name << ".Indent(indent);\n";
+  }
+  os << "  }\n\n";
+}
+
+void MessageGenerator::GenerateStreamer(std::ostream &os) {
+  os << "inline std::ostream &operator<<(std::ostream &os, const "
+     << MessageName(message_) << " &msg) {\n";
+  for (auto &field : fields_) {
+    if (field->field->is_repeated()) {
+      os << "  for (auto& v : msg." << field->member_name << ") {\n";
+      os << "    msg." << field->member_name << ".PrintIndent(os);\n";
+      if (field->field->type() ==
+          google::protobuf::FieldDescriptor::TYPE_ENUM) {
+        os << "    os << \"" << field->field->name() << ": \" << "
+           << EnumName(field->field->enum_type())
+           << "Stringizer()(v) << std::endl;\n";
+      } else {
+        os << "    os << \"" << field->field->name()
+           << ": \" << v << std::endl;\n";
+      }
+      os << "  }\n";
+    } else {
+      os << "  if (msg." << field->member_name << ".IsPresent()) {\n";
+      os << "    msg." << field->member_name << ".PrintIndent(os);\n";
+      // e.g.    os << "str: " << msg.str_ << std::endl;
+      os << "    os << \"" << field->field->name() << ": \" << msg."
+         << field->member_name << " << std::endl;\n";
+      os << "  }\n";
+    }
+  }
+  // Unions
+  for (auto & [ oneof, u ] : unions_) {
+    os << "  switch (msg." << u->member_name << ".Discriminator()) {\n";
+    for (size_t i = 0; i < u->members.size(); i++) {
+      auto &field = u->members[i];
+      os << "  case " << field->field->number() << ":\n";
+      os << "    msg." << u->member_name << ".PrintIndent(os);\n";
+      os << "    os << \"" << field->field->name() << ": \";\n";
+      os << "    msg." << u->member_name << ".Print<" << i << ">(os);\n";
+      os << "    os << std::endl;\n";
+      os << "    break;\n";
+    }
+    os << "  }\n";
+  }
+  os << "  return os;\n";
+  os << "}\n\n";
 }
 
 } // namespace phaser

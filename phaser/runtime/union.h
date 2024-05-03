@@ -29,7 +29,6 @@ protected:
   }
 
   std::shared_ptr<MessageRuntime> GetRuntime() { return runtime_; }
-
   std::shared_ptr<MessageRuntime> runtime_;
 };
 
@@ -44,6 +43,10 @@ protected:
         return type();                                                         \
       }                                                                        \
       return GetBuffer(runtime)->template Get<type>(abs_offset);               \
+    }                                                                          \
+    void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,      \
+               uint32_t abs_offset) const {                                    \
+      os << Get(runtime, abs_offset);                                          \
     }                                                                          \
     void Set(type v, std::shared_ptr<MessageRuntime> runtime,                  \
              uint32_t abs_offset) {                                            \
@@ -112,7 +115,8 @@ DEFINE_PRIMITIVE_UNION_FIELD(Bool, bool)
 
 #undef DEFINE_PRIMITIVE_UNION_FIELD
 
-template <typename Enum> class UnionEnumField : public UnionMemberField {
+template <typename Enum, typename Stringizer, typename Parser>
+class UnionEnumField : public UnionMemberField {
 public:
   using T = typename std::underlying_type<Enum>::type;
   UnionEnumField() = default;
@@ -125,6 +129,11 @@ public:
         GetBuffer(runtime)
             ->template Get<typename std::underlying_type<Enum>::type>(
                 abs_offset));
+  }
+
+  void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,
+             uint32_t abs_offset) const {
+    os << Stringizer()(Get(runtime, abs_offset));
   }
 
   T GetUnderlying(std::shared_ptr<MessageRuntime> runtime,
@@ -143,7 +152,7 @@ public:
     GetBuffer(runtime)->Set(abs_offset, e);
   }
 
-  bool Equal(const UnionEnumField<Enum> &other,
+  bool Equal(const UnionEnumField<Enum, Stringizer, Parser> &other,
              std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
     return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);
   }
@@ -170,7 +179,7 @@ public:
     if (!v.ok()) {
       return v.status();
     }
-    Set(v, runtime, abs_offset);
+    Set(static_cast<Enum>(*v), runtime, abs_offset);
     return absl::OkStatus();
   }
   constexpr WireType GetWireType() { return WireType::kVarint; }
@@ -189,6 +198,11 @@ public:
     return GetBuffer(runtime)->GetStringView(abs_offset);
   }
 
+  void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,
+             uint32_t abs_offset) const {
+    os << "\"" << std::string(Get(runtime, abs_offset)) << "\"";
+  }
+
   bool IsPresent(std::shared_ptr<MessageRuntime> runtime,
                  uint32_t abs_offset) const {
     const toolbelt::BufferOffset *addr =
@@ -201,10 +215,11 @@ public:
     toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
   }
 
- absl::Span<char> Allocate(size_t size, std::shared_ptr<MessageRuntime> runtime,
-           uint32_t abs_offset) {
-    return toolbelt::PayloadBuffer::AllocateString(
-        GetBufferAddr(runtime), size, abs_offset);
+  absl::Span<char> Allocate(size_t size,
+                            std::shared_ptr<MessageRuntime> runtime,
+                            uint32_t abs_offset) {
+    return toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(runtime), size,
+                                                   abs_offset);
   }
 
   bool Equal(const UnionStringField &other,
@@ -268,6 +283,19 @@ public:
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = *addr;
     return msg_;
+  }
+
+  void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,
+             uint32_t abs_offset) const {
+    os << "{\n";
+    auto msg = Get(runtime, abs_offset);
+    msg.Indent(2);
+    os << msg;
+    msg.Indent(-2);
+    for (int i = 0; i < indent; i++) {
+      os << " ";
+    }
+    os << "}";
   }
 
   bool IsPresent(std::shared_ptr<MessageRuntime> runtime,
@@ -350,7 +378,7 @@ public:
     msg_.template InstallMetadata<MessageType>();
 
     // Buffer might have moved, get address of indirect again.
-    toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
     *addr = msg_offset; // Put message field offset into message.
     ProtoBuffer sub_buffer(s.value());
     return msg_.Deserialize(sub_buffer);
@@ -404,6 +432,21 @@ public:
                                                       relative_offset + 4);
   }
 
+  template <int Id> void Print(std::ostream &os) const {
+    int32_t relative_offset = Message::GetMessage(this, source_offset_)
+                                  ->FindFieldOffset(field_numbers_[Id]);
+    if (relative_offset < 0) {
+      return;
+    }
+    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+        GetMessageBinaryStart() + relative_offset);
+    if (*discrim != field_numbers_[Id]) {
+      return;
+    }
+    std::get<Id>(value_).Print(os, indent_, GetRuntime(),
+                               GetMessageBinaryStart() + relative_offset + 4);
+  }
+
   template <int Id, typename U> void Set(const U &v) {
     // Write the field number into the discriminator.
     int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
@@ -440,8 +483,10 @@ public:
     // 4 bytes after the discriminator.
     auto &t = std::get<Id>(value_);
     return t.Allocate(size, GetRuntime(),
-               GetMessageBinaryStart() + relative_binary_offset_ + 4);
+                      GetMessageBinaryStart() + relative_binary_offset_ + 4);
   }
+
+  bool Is(int number) const { return Discriminator() == number; }
 
   int32_t Discriminator() const {
     // The offset of all the fields is the offset to the discriminator but we

@@ -15,29 +15,50 @@ using StringHeader = toolbelt::StringHeader;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 
-enum class EnumTest : uint16_t { FOO = 0xda, BAR = 0xad };
+enum class EnumTest : uint16_t { UNSET = 0, FOO = 0xda, BAR = 0xad };
+
+struct EnumTestStringizer {
+  std::string operator()(EnumTest e) const {
+    switch (e) {
+    case EnumTest::FOO:
+      return "FOO";
+    case EnumTest::BAR:
+      return "BAR";
+    case EnumTest::UNSET:
+      return "UNSET";
+    }
+  }
+};
+
+struct EnumTestParser {
+  EnumTest operator()(std::string_view s) const {
+    if (s == "FOO") {
+      return EnumTest::FOO;
+    } else if (s == "BAR") {
+      return EnumTest::BAR;
+    }
+    return EnumTest::UNSET;
+  }
+};
 
 struct InnerMessage : public Message {
   InnerMessage(phaser::InternalDefault d)
       : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
-        f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {}
-  // explicit InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime)
-  //     : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
-  //       f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {
-  //   this->runtime = runtime;
-  //   void *data = toolbelt::PayloadBuffer::Allocate(&runtime->pb,
-  //   BinarySize(), 8); this->absolute_binary_offset =
-  //   runtime->pb->ToOffset(data);
+        f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
+        e_(offsetof(InnerMessage, e_), HeaderSize() + 16, 2, 30),
+        ev_(offsetof(InnerMessage, ev_), HeaderSize() + 20, 0, 40),
+        uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0, {50, 60}) {}
 
-  //   std::cout << "InnerMessage start: " << std::hex
-  //             << this->absolute_binary_offset << std::dec << std::endl;
-  // }
   InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
                toolbelt::BufferOffset offset)
       : Message(runtime, offset),
         str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
-        f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20) {}
-  static constexpr size_t BinarySize() { return HeaderSize() + 16; }
+        f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
+        e_(offsetof(InnerMessage, e_), HeaderSize() + 16, 2, 30),
+        ev_(offsetof(InnerMessage, ev_), HeaderSize() + 20, 0, 40),
+        uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0, {50, 60}) {}
+
+  static constexpr size_t BinarySize() { return HeaderSize() + 36; }
   static constexpr size_t PresenceMaskSize() { return 4; }
   static constexpr uint32_t HeaderSize() { return 4 + PresenceMaskSize(); }
   struct FieldData {
@@ -46,15 +67,29 @@ struct InnerMessage : public Message {
       uint32_t number;
       uint32_t offset : 24;
       uint32_t id : 8;
-    } fields[12];
+    } fields[6];
   };
   static constexpr FieldData field_data = {
-      .num = 2,
+      .num = 6,
       .fields = {
           {.number = 10, .offset = 8, .id = 0},
           {.number = 20, .offset = 16, .id = 1},
+          {.number = 30, .offset = 24, .id = 2},
+          {.number = 40, .offset = 28, .id = 0},
+          {.number = 50, .offset = 36, .id = 0},
+          {.number = 60, .offset = 36, .id = 0},
       }};
   static std::string GetName() { return "InnerMessage"; }
+
+  friend std::ostream &operator<<(std::ostream &os, const InnerMessage &msg);
+
+  void Indent(int indent) {
+    str_.Indent(indent);
+    f_.Indent(indent);
+    e_.Indent(indent);
+    ev_.Indent(indent);
+    uv_.Indent(indent);
+  }
 
   // Protobuf accessors.
   std::string_view str() const { return str_.Get(); }
@@ -67,9 +102,18 @@ struct InnerMessage : public Message {
   void clear_f() { f_.Clear(); }
   bool has_f() const { return f_.IsPresent(); }
 
+  EnumTest e() const { return e_.Get(); }
+  void set_e(EnumTest e) { e_.Set(e); }
+  void clear_e() { e_.Clear(); }
+  bool has_e() const { return e_.IsPresent(); }
+
   void Clear() {
     str_.Clear();
     f_.Clear();
+    e_.Clear();
+    ev_.Clear();
+    uv_.Clear<0>();
+    uv_.Clear<1>();
   }
 
   size_t SerializedSize() const {
@@ -79,6 +123,18 @@ struct InnerMessage : public Message {
     }
     if (f_.IsPresent()) {
       size += f_.SerializedSize();
+    }
+    if (e_.IsPresent()) {
+      size += e_.SerializedSize();
+    }
+    size += ev_.SerializedSize();
+    switch (uv_.Discriminator()) {
+    case 50:
+      size += uv_.SerializedSize<0>(50);
+      break;
+    case 60:
+      size += uv_.SerializedSize<1>(60);
+      break;
     }
     return size;
   }
@@ -94,6 +150,28 @@ struct InnerMessage : public Message {
         return status;
       }
     }
+    if (e_.IsPresent()) {
+      if (absl::Status status = e_.Serialize(buffer); !status.ok()) {
+        return status;
+      }
+    }
+    if (absl::Status status = ev_.Serialize(buffer); !status.ok()) {
+      return status;
+    }
+
+    switch (uv_.Discriminator()) {
+    case 50:
+      if (absl::Status status = uv_.Serialize<0>(50, buffer); !status.ok()) {
+        return status;
+      }
+      break;
+    case 60:
+      if (absl::Status status = uv_.Serialize<1>(60, buffer); !status.ok()) {
+        return status;
+      }
+      break;
+    }
+
     return absl::OkStatus();
   }
 
@@ -116,6 +194,28 @@ struct InnerMessage : public Message {
           return status;
         }
         break;
+      case 30:
+        if (absl::Status status = e_.Deserialize(buffer); !status.ok()) {
+          return status;
+        }
+        break;
+      case 40:
+        if (absl::Status status = ev_.Deserialize(buffer); !status.ok()) {
+          return status;
+        }
+        break;
+      case 50:
+        if (absl::Status status = uv_.Deserialize<0>(50, buffer);
+            !status.ok()) {
+          return status;
+        }
+        break;
+      case 60:
+        if (absl::Status status = uv_.Deserialize<1>(60, buffer);
+            !status.ok()) {
+          return status;
+        }
+        break;
       default:
         if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
           return status;
@@ -127,7 +227,48 @@ struct InnerMessage : public Message {
 
   phaser::StringField str_;
   phaser::Uint64Field<true, false> f_; // Fixed size.
+  phaser::EnumField<EnumTest, EnumTestStringizer, EnumTestParser> e_;
+  phaser::EnumVectorField<EnumTest, EnumTestStringizer, EnumTestParser, false>
+      ev_;
+  phaser::UnionField<
+      phaser::UnionUint32Field<false, false>,
+      phaser::UnionEnumField<EnumTest, EnumTestStringizer, EnumTestParser>>
+      uv_;
 };
+
+inline std::ostream &operator<<(std::ostream &os, const InnerMessage &msg) {
+  if (msg.str_.IsPresent()) {
+    msg.str_.PrintIndent(os);
+    os << "str: " << msg.str_ << std::endl;
+  }
+  if (msg.f_.IsPresent()) {
+    msg.f_.PrintIndent(os);
+    os << "f: " << msg.f_ << std::endl;
+  }
+  if (msg.e_.IsPresent()) {
+    msg.e_.PrintIndent(os);
+    os << "e: " << msg.e_ << std::endl;
+  }
+  for (auto &v : msg.ev_) {
+    msg.ev_.PrintIndent(os);
+    os << "ev: " << EnumTestStringizer()(v) << std::endl;
+  }
+  switch (msg.uv_.Discriminator()) {
+  case 50:
+    msg.uv_.PrintIndent(os);
+    os << "uva: ";
+    msg.uv_.Print<0>(os);
+    os << std::endl;
+    break;
+  case 60:
+    msg.uv_.PrintIndent(os);
+    os << "uvb: ";
+    msg.uv_.Print<1>(os);
+    os << std::endl;
+    break;
+  }
+  return os;
+}
 
 struct TestMessage : public Message {
   // Default constructor makes a dynamic payload buffer.
@@ -453,6 +594,21 @@ struct TestMessage : public Message {
     return absl::OkStatus();
   }
 
+  friend std::ostream &operator<<(std::ostream &os, const TestMessage &msg);
+
+  void Indent(int indent) {
+    x_.Indent(indent);
+    y_.Indent(indent);
+    s_.Indent(indent);
+    m_.Indent(indent);
+    vi32_.Indent(indent);
+    vstr_.Indent(indent);
+    vm_.Indent(indent);
+    u1_.Indent(indent);
+    u2_.Indent(indent);
+    u3_.Indent(indent);
+  }
+
   // Protobuf access functions.
   uint32_t x() const { return x_.Get(); }
   void set_x(uint32_t x) { x_.Set(x); }
@@ -509,33 +665,51 @@ struct TestMessage : public Message {
   int u1_case() const { return u1_.Discriminator(); }
 
   uint32_t u1a() const { return u1_.GetValue<0, uint32_t>(); }
-  void set_u1a(uint32_t v) { u1_.Set<0>(v); }
+  void set_u1a(uint32_t v) {
+    u1_.Clear<1>();
+    u1_.Set<0>(v);
+  }
   void clear_u1a() { u1_.Clear<0>(); }
 
   uint64_t u1b() const { return u1_.GetValue<1, uint64_t>(); }
-  void set_u1b(uint64_t v) { u1_.Set<1>(v); }
+  void set_u1b(uint64_t v) {
+    u1_.Clear<0>();
+    u1_.Set<1>(v);
+  }
   void clear_u1b() { u1_.Clear<1>(); }
 
   int u2_case() const { return u2_.Discriminator(); }
 
   int64_t u2a() const { return u2_.GetValue<0, int64_t>(); }
-  void set_u2a(int64_t v) { u2_.Set<0>(v); }
+  void set_u2a(int64_t v) {
+    u2_.Clear<1>();
+    u2_.Set<0>(v);
+  }
   void clear_u2a() { u2_.Clear<0>(); }
 
   std::string_view u2b() const { return u2_.GetValue<1, std::string_view>(); }
-  void set_u2b(const std::string &v) { u2_.Set<1>(v); }
+  void set_u2b(const std::string &v) {
+    u2_.Clear<0>();
+    u2_.Set<1>(v);
+  }
   void clear_u2b() { u2_.Clear<1>(); }
 
   int u3_case() const { return u3_.Discriminator(); }
 
   int64_t u3a() const { return u3_.GetValue<0, int64_t>(); }
-  void set_u3a(int64_t v) { u3_.Set<0>(v); }
+  void set_u3a(int64_t v) {
+    u3_.Clear<1>();
+    u3_.Set<0>(v);
+  }
   void clear_u3a() { u3_.Clear<0>(); }
 
   const InnerMessage &u3b() const {
     return u3_.GetReference<1, InnerMessage>();
   }
-  InnerMessage *mutable_u3b() { return u3_.Mutable<1, InnerMessage>(); }
+  InnerMessage *mutable_u3b() {
+    u3_.Clear<0>();
+    return u3_.Mutable<1, InnerMessage>();
+  }
   void clear_u3b() { u3_.Clear<1>(); }
 
   phaser::Uint32Field<false, false> x_;
@@ -566,6 +740,92 @@ struct TestMessage : public Message {
 };
 
 #pragma clang diagnostic pop
+
+inline std::ostream &operator<<(std::ostream &os, const TestMessage &msg) {
+  if (msg.x_.IsPresent()) {
+    msg.x_.PrintIndent(os);
+    os << "x: " << msg.x_ << std::endl;
+  }
+
+  if (msg.y_.IsPresent()) {
+    msg.y_.PrintIndent(os);
+    os << "y: " << msg.y_ << std::endl;
+  }
+
+  if (msg.s_.IsPresent()) {
+    msg.s_.PrintIndent(os);
+    os << "s: " << msg.s_ << std::endl;
+  }
+
+  if (msg.m_.IsPresent()) {
+    msg.m_.PrintIndent(os);
+    os << "m: " << msg.m_ << std::endl;
+  }
+
+  // Repeated Fields.
+  for (auto &v : msg.vi32_) {
+    msg.vi32_.PrintIndent(os);
+    os << "vi32: " << v << std::endl;
+  }
+
+  for (auto &v : msg.vstr_) {
+    msg.vstr_.PrintIndent(os);
+    os << "vstr: " << v << std::endl;
+  }
+
+  for (auto &v : msg.vm_) {
+    msg.vm_.PrintIndent(os);
+    os << "vm: " << v << std::endl;
+  }
+
+  // Unions
+  switch (msg.u1_.Discriminator()) {
+  case 107:
+    msg.u1_.PrintIndent(os);
+    os << "u1a: ";
+    msg.u1_.Print<0>(os);
+    os << std::endl;
+    break;
+  case 108:
+    msg.u1_.PrintIndent(os);
+    os << "u1b: ";
+    msg.u1_.Print<1>(os);
+    os << std::endl;
+    break;
+  }
+
+  switch (msg.u2_.Discriminator()) {
+  case 109:
+    msg.u2_.PrintIndent(os);
+    os << "u2a: ";
+    msg.u2_.Print<0>(os);
+    os << std::endl;
+    break;
+  case 110:
+    msg.u2_.PrintIndent(os);
+    os << "u2b: ";
+    msg.u2_.Print<1>(os);
+    os << std::endl;
+    break;
+  }
+
+  switch (msg.u3_.Discriminator()) {
+  case 111:
+    msg.u3_.PrintIndent(os);
+    os << "u3a: ";
+    msg.u3_.Print<0>(os);
+    os << std::endl;
+    break;
+  case 112:
+    msg.u3_.PrintIndent(os);
+    os << "u3b: ";
+    msg.u3_.Print<1>(os);
+    os << std::endl;
+    break;
+  }
+
+  return os;
+}
 
 TEST(MessageTest, Basic) {
   char *buffer = (char *)malloc(4096);
@@ -1243,6 +1503,44 @@ TEST(MessageTest, Dynamic) {
   ASSERT_TRUE(msg.s_.IsPresent());
   std::string_view s = msg.s_.Get();
   ASSERT_EQ("Hello, world!", s);
+}
+
+TEST(MessageTest, Print) {
+  TestMessage msg;
+  msg.x_.Set(1234);
+  msg.y_.Set(0xffff);
+  msg.s_.Set("Hello, world!");
+  auto inner = msg.m_.Mutable();
+  inner->str_.Set("Inner message");
+  inner->f_.Set(0xdeadbeef);
+  inner->e_.Set(EnumTest::BAR);
+  inner->ev_.Add(EnumTest::FOO);
+  inner->ev_.Add(EnumTest::BAR);
+  inner->uv_.Set<0>(1234);
+
+  msg.vi32_.Add(1);
+  msg.vi32_.Add(2);
+  msg.vi32_.Add(3);
+
+  msg.vstr_.Add("one");
+  msg.vstr_.Add("two");
+
+  auto *inner1 = msg.vm_.Add();
+  inner1->str_.Set("one");
+  inner1->f_.Set(0xdeadbeef);
+
+  auto *inner2 = msg.vm_.Add();
+  inner2->str_.Set("two");
+  inner2->f_.Set(0x1234);
+
+  // Unions.
+  msg.u1_.Set<0>(1234);
+  msg.u2_.Set<1>("Hello, world!");
+  InnerMessage *inner3 = msg.u3_.Mutable<1, InnerMessage>();
+  inner3->str_.Set("Inner message");
+  inner3->f_.Set(0xdeadbeef);
+
+  std::cout << msg << std::endl;
 }
 
 int main(int argc, char **argv) {

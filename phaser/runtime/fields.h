@@ -7,8 +7,8 @@
 #include "absl/status/statusor.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
-#include "toolbelt/payload_buffer.h"
 #include "phaser/runtime/wireformat.h"
+#include "toolbelt/payload_buffer.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string>
@@ -64,11 +64,20 @@ public:
     return cached_field_id_;
   }
 
+  // For printing.
+  void Indent(int indent) const { indent_ += indent; }
+  void PrintIndent(std::ostream &os) const {
+    for (int i = 0; i < indent_; i++) {
+      os << " ";
+    }
+  }
+
 protected:
   int id_ = 0;
   int number_ = 0;
   mutable toolbelt::BufferOffset cached_offset_ = 0xffffffff;
   mutable int32_t cached_field_id_ = -1;
+  mutable int indent_ = 0;
 };
 
 #define DEFINE_PRIMITIVE_FIELD(cname, type)                                    \
@@ -86,6 +95,7 @@ protected:
       return GetBuffer()->template Get<type>(GetMessageBinaryStart() +         \
                                              offset);                          \
     }                                                                          \
+    type GetForPrinting() const { return Get(); }                              \
     bool IsPresent() const {                                                   \
       return Field::IsPresent(FindFieldId(source_offset_), GetBuffer(),        \
                               GetPresenceMaskStart());                         \
@@ -130,22 +140,22 @@ protected:
       if (!v.ok()) {                                                           \
         return v.status();                                                     \
       }                                                                        \
-      Set(*v);                                                                  \
+      Set(*v);                                                                 \
       return absl::OkStatus();                                                 \
     }                                                                          \
                                                                                \
   private:                                                                     \
-    toolbelt::PayloadBuffer *GetBuffer() const {                                 \
+    toolbelt::PayloadBuffer *GetBuffer() const {                               \
       return Message::GetBuffer(this, source_offset_);                         \
     }                                                                          \
-    toolbelt::BufferOffset GetMessageBinaryStart() const {                       \
+    toolbelt::BufferOffset GetMessageBinaryStart() const {                     \
       return Message::GetMessageBinaryStart(this, source_offset_);             \
     }                                                                          \
-    toolbelt::BufferOffset GetPresenceMaskStart() const {                        \
+    toolbelt::BufferOffset GetPresenceMaskStart() const {                      \
       return Message::GetMessageBinaryStart(this, source_offset_) + 4;         \
     }                                                                          \
     uint32_t source_offset_;                                                   \
-    toolbelt::BufferOffset relative_binary_offset_;                              \
+    toolbelt::BufferOffset relative_binary_offset_;                            \
   };
 
 DEFINE_PRIMITIVE_FIELD(Int32, int32_t)
@@ -158,7 +168,8 @@ DEFINE_PRIMITIVE_FIELD(Bool, bool)
 
 #undef DEFINE_PRIMITIVE_FIELD
 
-template <typename Enum> class EnumField : public Field {
+template <typename Enum, typename Stringizer, typename Parser>
+class EnumField : public Field {
 public:
   using T = typename std::underlying_type<Enum>::type;
   EnumField() = default;
@@ -176,10 +187,16 @@ public:
             GetMessageBinaryStart() + offset));
   }
 
+  std::string GetForPrinting() const { return ToString(); }
+
   bool IsPresent() const {
     return Field::IsPresent(FindFieldId(source_offset_), GetBuffer(),
-                     GetMessageBinaryStart());
+                            GetPresenceMaskStart());
   }
+
+  std::string ToString() const { return Stringizer()(Get()); }
+
+  Enum ParseFromString(const std::string &s) { Set(Parser(s)); }
 
   T GetUnderlying() const {
     int32_t offset = FindFieldOffset(source_offset_);
@@ -193,15 +210,15 @@ public:
   void Set(Enum e) {
     GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_,
                      static_cast<typename std::underlying_type<Enum>::type>(e));
-    SetPresence(GetBuffer(), GetMessageBinaryStart());
+    SetPresence(GetBuffer(), GetPresenceMaskStart());
   }
 
   void Set(T e) {
     GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, e);
-    SetPresence(GetBuffer(), GetMessageBinaryStart());
+    SetPresence(GetBuffer(), GetPresenceMaskStart());
   }
 
-  void Clear() { ClearPresence(GetBuffer(), GetMessageBinaryStart()); }
+  void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }
 
   bool operator==(const EnumField &other) const {
     return static_cast<Enum>(*this) == static_cast<Enum>(other);
@@ -235,6 +252,10 @@ private:
   toolbelt::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
+  toolbelt::BufferOffset GetPresenceMaskStart() const {
+    return Message::GetMessageBinaryStart(this, source_offset_) + 4;
+  }
+
   uint32_t source_offset_;
   toolbelt::BufferOffset relative_binary_offset_;
 };
@@ -278,8 +299,9 @@ public:
   }
 
   absl::Span<char> Allocate(size_t size) {
-    return toolbelt::PayloadBuffer::AllocateString(
-        GetBufferAddr(), size, GetMessageBinaryStart() + relative_binary_offset_);
+    return toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(), size,
+                                                   GetMessageBinaryStart() +
+                                                       relative_binary_offset_);
   }
 
   bool operator==(const StringField &other) const {
@@ -357,17 +379,17 @@ public:
 
   void Set(const std::string &s) {
     toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
-                                     absolute_binary_offset_);
+                                       absolute_binary_offset_);
   }
 
   void Set(std::string_view s) {
     toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
-                                     absolute_binary_offset_);
+                                       absolute_binary_offset_);
   }
 
   void Clear() {
     toolbelt::PayloadBuffer::ClearString(GetBufferAddr(),
-                                       absolute_binary_offset_);
+                                         absolute_binary_offset_);
   }
 
   bool operator==(const NonEmbeddedStringField &other) const {
@@ -402,8 +424,8 @@ private:
 
   const Message *msg_;
   toolbelt::BufferOffset absolute_binary_offset_; // Offset into
-                                                // toolbelt::PayloadBuffer of
-                                                // toolbelt::StringHeader
+                                                  // toolbelt::PayloadBuffer of
+                                                  // toolbelt::StringHeader
 };
 
 // This is a buffer offset containing the absolute offset of a message in the
@@ -426,7 +448,8 @@ public:
                                 uint32_t relative_binary_offset, int id,
                                 int number)
       : Field(id, number), source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset), msg_(InternalDefault{}) {}
+        relative_binary_offset_(relative_binary_offset),
+        msg_(InternalDefault{}) {}
 
   const MessageType &Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
@@ -544,7 +567,7 @@ public:
     msg_.absolute_binary_offset = msg_offset;
 
     // Buffer might have moved, get address of indirect again.
-    toolbelt::BufferOffset* addr = GetIndirectAddress(relative_binary_offset_);
+    toolbelt::BufferOffset *addr = GetIndirectAddress(relative_binary_offset_);
     *addr = msg_offset; // Put message field offset into message.
 
     // Install the metadata into the binary message.
@@ -552,6 +575,11 @@ public:
 
     ProtoBuffer sub_buffer(s.value());
     return msg_.Deserialize(sub_buffer);
+  }
+
+  void Indent(int indent) const {
+    Field::Indent(indent);
+    msg_.Indent(indent);
   }
 
 private:
@@ -583,7 +611,7 @@ private:
 
 template <typename MessageType> class MessageObject {
 public:
-  MessageObject() : msg_(InternalDefault{}) {};
+  MessageObject() : msg_(InternalDefault{}){};
   explicit MessageObject(std::shared_ptr<MessageRuntime> runtime,
                          uint32_t absolute_binary_offset)
       : msg_(runtime, absolute_binary_offset) {}
@@ -627,8 +655,20 @@ public:
     return msg_.Deserialize(sub_buffer);
   }
 
+  void Indent(int indent) const {
+    indent_ += indent;
+    msg_.Indent(indent);
+  }
+
+  void PrintIndent(std::ostream &os) const {
+    for (int i = 0; i < indent_; i++) {
+      os << " ";
+    }
+  }
+
 private:
   mutable MessageType msg_;
+  mutable int indent_ = 0;
 };
 
 } // namespace phaser

@@ -86,6 +86,8 @@ private:
   void GenerateDeserializer(std::ostream &os, bool decl);
 
   void GenerateProtobufSerialization(std::ostream &os);
+  void GenerateIndent(std::ostream &os);
+  void GenerateStreamer(std::ostream &os);
 
   const google::protobuf::Descriptor *message_;
   std::vector<std::unique_ptr<MessageGenerator>> nested_message_gens_;

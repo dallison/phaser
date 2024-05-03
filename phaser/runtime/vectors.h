@@ -405,7 +405,8 @@ private:
   toolbelt::BufferOffset relative_binary_offset_;
 };
 
-template <typename Enum, bool Packed> class EnumVectorField : public Field {
+template <typename Enum, typename Stringizer, typename Parser, bool Packed>
+class EnumVectorField : public Field {
 public:
   EnumVectorField() = default;
   explicit EnumVectorField(uint32_t source_offset,
@@ -448,7 +449,7 @@ public:
   Enum Get(size_t index) const { return (*this)[index]; }
 
   void Set(size_t index, Enum v) {
-    Enum *base = GetBuffer()->template ToAddress<T>(BaseOffset());
+    Enum *base = GetBuffer()->template ToAddress<Enum>(BaseOffset());
     if (base == nullptr) {
       return;
     }
@@ -461,17 +462,21 @@ public:
 #undef CTYPE
 
   void push_back(const Enum &v) {
-    toolbelt::PayloadBuffer::VectorPush<T>(GetBufferAddr(), Header(),
-                                           static_cast<T>(v));
+    toolbelt::PayloadBuffer::VectorPush<T>(
+        GetBufferAddr(), Header(relative_binary_offset_), static_cast<T>(v));
   }
 
   void reserve(size_t n) {
-    toolbelt::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), Header(), n);
+    toolbelt::PayloadBuffer::VectorReserve<T>(
+        GetBufferAddr(), Header(relative_binary_offset_), n);
   }
 
   void resize(size_t n) {
-    toolbelt::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(), n);
+    toolbelt::PayloadBuffer::VectorResize<T>(
+        GetBufferAddr(), Header(relative_binary_offset_), n);
   }
+
+  void Add(Enum v) { push_back(v); }
 
   void Clear() {
     toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
@@ -502,7 +507,8 @@ public:
     return relative_binary_offset_;
   }
 
-  bool operator==(const EnumVectorField<Enum, Packed> &other) const {
+  bool operator==(
+      const EnumVectorField<Enum, Stringizer, Parser, Packed> &other) const {
     size_t n = size();
     for (size_t i = 0; i < n; i++) {
       if ((*this)[i] != other[i]) {
@@ -511,7 +517,8 @@ public:
     }
     return true;
   }
-  bool operator!=(const EnumVectorField<Enum, Packed> &other) const {
+  bool operator!=(
+      const EnumVectorField<Enum, Stringizer, Parser, Packed> &other) const {
     return !(*this == other);
   }
 
@@ -607,14 +614,14 @@ public:
         if (!v.ok()) {
           return v.status();
         }
-        push_back(*v);
+        push_back(static_cast<Enum>(*v));
       }
     } else {
       absl::StatusOr<T> v = buffer.DeserializeVarint<T, false>();
       if (!v.ok()) {
         return v.status();
       }
-      push_back(*v);
+      push_back(static_cast<Enum>(*v));
     }
     return absl::OkStatus();
   }
@@ -828,7 +835,7 @@ public:
   void Populate() const {
     if (!msgs_.empty()) {
       return;
-    } 
+    }
     // Populate the msgs vector with MessageObject objects referring to the
     // binary messages.
     int32_t offset = FindFieldOffset(source_offset_);

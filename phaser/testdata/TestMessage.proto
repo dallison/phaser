@@ -3,12 +3,26 @@ syntax = "proto3";
 // These messages must match the hand-coded ones in message_test.cc
 package foo.bar;
 
+enum EnumTest {
+  UNSET = 0; 
+  FOO = 0xda; 
+  BAR = 0xad;
+}
+
 message InnerMessage {
   string str = 10;
   sfixed64 f = 20;
+  EnumTest e = 30;
+  repeated EnumTest ev = 40;
+  oneof uv {
+    uint32 uva = 50;
+    EnumTest uvb = 60;
+  }
 }
 
 message XXX{}
+
+
 
 message TestMessage {
   int32 x = 100;
