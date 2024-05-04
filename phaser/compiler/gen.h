@@ -27,12 +27,14 @@ public:
     return FEATURE_PROTO3_OPTIONAL;
   }
   mutable std::string added_namespace_;
+  mutable std::string package_name_;
+  mutable std::string target_name_;
 };
 
 
 class Generator {
 public:
-  Generator(const google::protobuf::FileDescriptor *file, const std::string& ns);
+  Generator(const google::protobuf::FileDescriptor *file, const std::string& ns, const std::string& pn, const std::string& tn);
 
   void GenerateHeaders(std::ostream& os);
   void GenerateSources(std::ostream& os);
@@ -45,6 +47,8 @@ private:
   std::vector<std::unique_ptr<MessageGenerator>> message_gens_;
   std::vector<std::unique_ptr<EnumGenerator>> enum_gens_;
   const std::string& added_namespace_;
+  const std::string& package_name_;
+  const std::string& target_name_;
 };
 
 } // namespace phaser

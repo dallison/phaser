@@ -2,6 +2,7 @@ syntax = "proto3";
 
 // These messages must match the hand-coded ones in message_test.cc
 package foo.bar;
+// import "google.protobuf.any.proto";
 
 enum EnumTest {
   UNSET = 0; 
@@ -20,15 +21,12 @@ message InnerMessage {
   }
 }
 
-message XXX{}
-
-
-
 message TestMessage {
   int32 x = 100;
   int64 y = 101;
   string s = 102;
   InnerMessage m = 103;
+  //google.protobuf.Any any = 200;
 
   // Repeated fields.
   repeated int32 vi32 = 104;

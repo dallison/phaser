@@ -7,6 +7,7 @@ cc_library(
         "wireformat.cc",
     ],
     hdrs = [
+        "any.h",
         "fields.h",
         "iterators.h",
         "message.h",
@@ -33,10 +34,10 @@ cc_test(
     ],
     deps = [
         ":phaser_runtime",
+        "//phaser/testdata:test_message_cc_proto",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
         "@toolbelt//toolbelt",
-        "//phaser/testdata:test_message_cc_proto",
     ],
 )
 
@@ -52,4 +53,3 @@ cc_test(
         "@toolbelt//toolbelt",
     ],
 )
-

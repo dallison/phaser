@@ -16,6 +16,7 @@ proto_library(
     ],
     deps = [
         ":foo_proto",
+        "@com_google_protobuf//:any_proto",
     ],
 )
 
@@ -29,6 +30,9 @@ proto_library(
     srcs = [
         "TestMessage.proto",
     ],
+    deps = [
+        "@com_google_protobuf//:any_proto",
+    ],
 )
 
 cc_proto_library(
@@ -38,14 +42,14 @@ cc_proto_library(
 
 phaser_library(
     name = "test_message_phaser",
-    deps = [":test_message_proto"],
-    runtime = "//phaser/runtime:phaser_runtime",
     add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":test_message_proto"],
 )
 
 phaser_library(
     name = "test_phaser",
-    deps = [":test_proto"],
-    runtime = "//phaser/runtime:phaser_runtime",
     add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":test_proto"],
 )

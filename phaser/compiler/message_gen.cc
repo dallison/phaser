@@ -1,5 +1,6 @@
 #include "phaser/compiler/message_gen.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_replace.h"
 #include <algorithm>
 #include <ctype.h>
 
@@ -108,7 +109,8 @@ bool IsCppReservedWord(const std::string &s) {
   return reserved_words.contains(s);
 }
 
-static std::string EnumName(const google::protobuf::EnumDescriptor *desc) {
+std::string
+MessageGenerator::EnumName(const google::protobuf::EnumDescriptor *desc) {
   std::string name = desc->name();
   if (desc->containing_type() != nullptr) {
     name = desc->containing_type()->name() + "_" + name;
@@ -116,7 +118,21 @@ static std::string EnumName(const google::protobuf::EnumDescriptor *desc) {
   return name;
 }
 
-static std::string MessageName(const google::protobuf::Descriptor *desc) {
+std::string
+MessageGenerator::MessageName(const google::protobuf::Descriptor *desc) {
+  std::string full_name = desc->full_name();
+  // If the message is in our package, use the short name.
+  if (full_name.find(package_name_) == std::string::npos) {
+    std::string cpp_name =
+        absl::StrReplaceAll(desc->full_name(), {{".", "::"}});
+    if (added_namespace_.empty()) {
+      return cpp_name;
+    }
+    // Add the namespace between the final :: and the message name.
+    size_t pos = cpp_name.rfind("::");
+    return cpp_name.substr(0, pos) + "::" + added_namespace_ +
+           cpp_name.substr(pos);
+  }
   std::string name = desc->name();
   if (desc->containing_type() != nullptr) {
     name = desc->containing_type()->name() + "_" + name;
@@ -124,8 +140,9 @@ static std::string MessageName(const google::protobuf::Descriptor *desc) {
   return name;
 }
 
-static std::string
-FieldCFieldType(const google::protobuf::FieldDescriptor *field) {
+std::string MessageGenerator::FieldCFieldType(
+    const google::protobuf::FieldDescriptor *field) {
+  std::cerr << "field C type: " << field->name() << "\n";
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
     return "Int32Field<false, false>";
@@ -161,6 +178,9 @@ FieldCFieldType(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringField";
   case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+    if (IsAny(field)) {
+      return "AnyField";
+    }
     return "IndirectMessageField<" + MessageName(field->message_type()) + ">";
 
   case google::protobuf::FieldDescriptor::TYPE_GROUP:
@@ -169,7 +189,8 @@ FieldCFieldType(const google::protobuf::FieldDescriptor *field) {
   }
 }
 
-static std::string FieldCType(const google::protobuf::FieldDescriptor *field) {
+std::string
+MessageGenerator::FieldCType(const google::protobuf::FieldDescriptor *field) {
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
   case google::protobuf::FieldDescriptor::TYPE_SINT32:
@@ -204,8 +225,8 @@ static std::string FieldCType(const google::protobuf::FieldDescriptor *field) {
   }
 }
 
-static std::string
-FieldRepeatedCType(const google::protobuf::FieldDescriptor *field) {
+std::string MessageGenerator::FieldRepeatedCType(
+    const google::protobuf::FieldDescriptor *field) {
   std::string packed = field->is_packed() ? ", true>" : ", false>";
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
@@ -237,7 +258,7 @@ FieldRepeatedCType(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
     return "EnumVectorField<" + EnumName(field->enum_type()) + ", " +
            EnumName(field->enum_type()) + "Stringizer, " +
-           EnumName(field->enum_type()) + "Parser"+ packed;
+           EnumName(field->enum_type()) + "Parser" + packed;
   case google::protobuf::FieldDescriptor::TYPE_STRING:
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringVectorField";
@@ -249,8 +270,8 @@ FieldRepeatedCType(const google::protobuf::FieldDescriptor *field) {
   }
 }
 
-static std::string
-FieldUnionCType(const google::protobuf::FieldDescriptor *field) {
+std::string MessageGenerator::FieldUnionCType(
+    const google::protobuf::FieldDescriptor *field) {
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
     return "UnionInt32Field<false, false>";
@@ -293,8 +314,8 @@ FieldUnionCType(const google::protobuf::FieldDescriptor *field) {
   }
 }
 
-static uint32_t
-FieldBinarySize(const google::protobuf::FieldDescriptor *field) {
+uint32_t MessageGenerator::FieldBinarySize(
+    const google::protobuf::FieldDescriptor *field) {
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
   case google::protobuf::FieldDescriptor::TYPE_SINT32:
@@ -327,6 +348,16 @@ FieldBinarySize(const google::protobuf::FieldDescriptor *field) {
     std::cerr << "Groups are not supported\n";
     exit(1);
   }
+}
+
+bool MessageGenerator::IsAny(const google::protobuf::Descriptor *desc) {
+  return desc->full_name() == "google.protobuf.Any";
+}
+
+bool MessageGenerator::IsAny(const google::protobuf::FieldDescriptor *field) {
+  std::cerr << "AnyField: " << field->message_type()->full_name() << "\n";
+  return field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+         field->message_type()->full_name() == "google.protobuf.Any";
 }
 
 void MessageGenerator::CompileUnions() {
@@ -869,20 +900,20 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << " value) {\n";
         os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
-        if (field->field->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
-         os << "  ::phaser::EnumVectorField<" << field->c_type
-           << ", " << EnumName(field->field->enum_type()) << "Stringizer, "
-            << EnumName(field->field->enum_type()) << "Parser"
-           << packed_string << ">& "
-           << sanitized_field_name << "() {\n";
-        os << "    return " << member_name << ";\n";
-        os << "  }\n";
+        if (field->field->type() ==
+            google::protobuf::FieldDescriptor::TYPE_ENUM) {
+          os << "  ::phaser::EnumVectorField<" << field->c_type << ", "
+             << EnumName(field->field->enum_type()) << "Stringizer, "
+             << EnumName(field->field->enum_type()) << "Parser" << packed_string
+             << ">& " << sanitized_field_name << "() {\n";
+          os << "    return " << member_name << ";\n";
+          os << "  }\n";
         } else {
-        os << "  ::phaser::PrimitiveVectorField<" << field->c_type
-           << fixed_size_string << signed_string << packed_string << ">& "
-           << sanitized_field_name << "() {\n";
-        os << "    return " << member_name << ";\n";
-        os << "  }\n";
+          os << "  ::phaser::PrimitiveVectorField<" << field->c_type
+             << fixed_size_string << signed_string << packed_string << ">& "
+             << sanitized_field_name << "() {\n";
+          os << "    return " << member_name << ";\n";
+          os << "  }\n";
         }
       }
       break;
@@ -987,6 +1018,10 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       break;
 
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsAny(field->field)) {
+        GenerateAnyProtobufAccessors(*field, os);
+        break;
+      }
       os << "  void clear_" << field_name << "() {\n";
       os << "    " << member_name << ".Clear" << suffix << "();\n";
       os << "  }\n";
@@ -1030,6 +1065,11 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
     }
   }
 }
+
+void MessageGenerator::GenerateAnyProtobufAccessors(const FieldInfo &field,
+                                                    std::ostream &os) {
+                                                      
+                                                    }
 
 void MessageGenerator::GenerateUnionProtobufAccessors(std::ostream &os) {
   for (auto & [ oneof, u ] : unions_) {

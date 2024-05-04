@@ -3,6 +3,7 @@
 
 #include "phaser/runtime/message.h"
 
+#include "phaser/runtime/any.h"
 #include "phaser/runtime/fields.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/union.h"
@@ -70,5 +71,9 @@ inline std::ostream &operator<<(std::ostream &os,
   return os;
 }
 
+inline std::ostream &operator<<(std::ostream &os,
+                                const AnyField &field) {
+  return os;
 }
 
+}

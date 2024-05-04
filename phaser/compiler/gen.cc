@@ -22,6 +22,18 @@ WriteToZeroCopyStream(const std::string &data,
   }
 }
 
+static std::string GeneratedFilename(const std::filesystem::path& package_name, const std::filesystem::path& target_name, std::string filename) {
+  size_t virtual_imports = filename.find("_virtual_imports/");
+  if (virtual_imports != std::string::npos) {
+    // This is something like:
+    // bazel-out/darwin_arm64-dbg/bin/external/com_google_protobuf/_virtual_imports/any_proto/google/protobuf/any.proto
+    filename = filename.substr(virtual_imports + sizeof("_virtual_imports/"));
+    // Remove the first directory.
+    filename = filename.substr(filename.find('/') + 1);
+  }
+  return  package_name / target_name / filename;
+}
+
 bool CodeGenerator::Generate(
     const google::protobuf::FileDescriptor *file, const std::string &parameter,
     google::protobuf::compiler::GeneratorContext *generator_context,
@@ -33,16 +45,23 @@ bool CodeGenerator::Generate(
   std::vector<std::pair<std::string, std::string>> options;
   google::protobuf::compiler::ParseGeneratorParameter(parameter, &options);
 
-  Generator gen(file, added_namespace_);
-
   for (auto option : options) {
     if (option.first == "add_namespace") {
       added_namespace_ = option.second;
-    }
+    } else if (option.first == "package_name") {
+      package_name_ = option.second;
+    } else if (option.first == "target_name") {
+      target_name_ = option.second;
+   }
   }
 
-  std::filesystem::path hp(file->name());
+  Generator gen(file, added_namespace_, package_name_, target_name_);
+
+  std::string filename = GeneratedFilename(package_name_, target_name_, file->name());
+
+  std::filesystem::path hp(filename);
   hp.replace_extension(".phaser.h");
+  std::cerr << "Generating " << hp << "\n";
 
   // There appears to be no way to get anything other than a
   // ZeorCopyOutputStream from the GeneratorContext.  We want to use
@@ -51,14 +70,17 @@ bool CodeGenerator::Generate(
   std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> header_output(
       generator_context->Open(hp.string()));
 
+  std::filesystem::create_directories(hp.parent_path());
+  
   if (header_output == nullptr) {
+    std::cerr << "Failed to open " << hp << " for writing\n";
     *error = absl::StrFormat("Failed to open %s for writing", hp.string());
     return false;
   }
   std::stringstream header_stream;
   gen.GenerateHeaders(header_stream);
 
-  std::filesystem::path cp(file->name());
+  std::filesystem::path cp(filename);
   cp.replace_extension(".phaser.cc");
 
   std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> source_output(
@@ -75,6 +97,7 @@ bool CodeGenerator::Generate(
   WriteToZeroCopyStream(source_stream.str(), source_output.get());
   return true;
 }
+
 
 void Generator::OpenNamespace(std::ostream &os) {
   std::vector<std::string> parts = absl::StrSplit(file_->package(), '.');
@@ -97,11 +120,12 @@ void Generator::CloseNamespace(std::ostream &os) {
 }
 
 Generator::Generator(const google::protobuf::FileDescriptor *file,
-                     const std::string &ns)
-    : file_(file), added_namespace_(ns) {
+                     const std::string &ns, const std::string& pn,
+                     const std::string& tn)
+    : file_(file), added_namespace_(ns), package_name_(pn), target_name_(tn) {
   for (int i = 0; i < file->message_type_count(); i++) {
     message_gens_.push_back(
-        std::make_unique<MessageGenerator>(file->message_type(i)));
+        std::make_unique<MessageGenerator>(file->message_type(i), added_namespace_, file->package()));
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {
@@ -113,7 +137,8 @@ void Generator::GenerateHeaders(std::ostream &os) {
   os << "#pragma once\n";
   os << "#include \"phaser/runtime/runtime.h\"\n";
   for (int i = 0; i < file_->dependency_count(); i++) {
-    std::filesystem::path p(file_->dependency(i)->name());
+    std::string base = GeneratedFilename(package_name_, target_name_, file_->dependency(i)->name());
+    std::filesystem::path p(base);
     p.replace_extension(".phaser.h");
     os << "#include \"" << p.string() << "\"\n";
   }
@@ -137,7 +162,7 @@ void Generator::GenerateHeaders(std::ostream &os) {
 }
 
 void Generator::GenerateSources(std::ostream &os) {
-  std::filesystem::path p(file_->name());
+  std::filesystem::path p(GeneratedFilename(package_name_, target_name_, file_->name()));
   p.replace_extension(".phaser.h");
   os << "#include \"" << p.string() << "\"\n";
 

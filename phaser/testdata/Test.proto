@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package foo.bar;
 import "phaser/testdata/Foo.proto";
+import "google/protobuf/any.proto";
 
 enum State {
   UNKNOWN = 0;
@@ -9,7 +10,7 @@ enum State {
   OFF = 2;
 }
 
-message TestMessage {
+message Test {
   int32 a = 1;
   string b = 2;
 
@@ -35,4 +36,5 @@ message TestMessage {
   Status status = 51;
   NestedMessage nested = 52;
   bytes data = 153;
+  google.protobuf.Any any = 154;
 }
