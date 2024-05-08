@@ -288,7 +288,8 @@ public:
     return *addr != 0;
   }
 
-  void Set(const std::string &s) {
+  template <typename Str>
+  void Set(Str s) {
     toolbelt::PayloadBuffer::SetString(
         GetBufferAddr(), s, GetMessageBinaryStart() + relative_binary_offset_);
   }
@@ -638,6 +639,12 @@ public:
       return;
     }
     msg_.Clear();
+  }
+
+  const MessageType& Msg() const { return msg_; }
+
+  template <typename T> void CopyFrom(const T& other) {
+    msg_.CopyFrom(other.msg_);
   }
 
   size_t SerializedSize() const { return msg_.SerializedSize(); }

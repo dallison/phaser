@@ -1012,7 +1012,8 @@ public:
   NonEmbeddedStringField &back() { return strings_.back(); }
   const NonEmbeddedStringField &back() const { return strings_.back(); }
 
-  void push_back(std::string_view s) {
+  template <typename Str>
+  void push_back(Str s) {
     // Allocate string header in buffer.
     void *str_hdr = toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), sizeof(toolbelt::StringHeader), 4);
@@ -1030,11 +1031,13 @@ public:
   }
 
   void Add(const char *s, size_t len) { push_back(std::string(s, len)); }
-  void Add(std::string_view s) { push_back(s); }
+  template <typename Str>
+  void Add(Str s) { push_back(s); }
 
   std::string_view Get(int index) const { return (*this)[index].Get(); }
 
-  void Set(int index, std::string_view s) {
+  template <typename Str>
+  void Set(int index, Str s) {
     if (index >= strings_.size()) {
       toolbelt::PayloadBuffer::VectorResize<toolbelt::BufferOffset>(
           GetBufferAddr(), Header(), index + 1);

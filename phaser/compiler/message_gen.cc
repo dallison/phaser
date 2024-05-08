@@ -119,7 +119,11 @@ MessageGenerator::EnumName(const google::protobuf::EnumDescriptor *desc) {
 }
 
 std::string
-MessageGenerator::MessageName(const google::protobuf::Descriptor *desc) {
+MessageGenerator::MessageName(const google::protobuf::Descriptor *desc,
+                              bool is_ref) {
+  if (is_ref && IsAny(desc)) {
+    return "::phaser::AnyMessage";
+  }
   std::string full_name = desc->full_name();
   // If the message is in our package, use the short name.
   if (full_name.find(package_name_) == std::string::npos) {
@@ -142,7 +146,6 @@ MessageGenerator::MessageName(const google::protobuf::Descriptor *desc) {
 
 std::string MessageGenerator::FieldCFieldType(
     const google::protobuf::FieldDescriptor *field) {
-  std::cerr << "field C type: " << field->name() << "\n";
   switch (field->type()) {
   case google::protobuf::FieldDescriptor::TYPE_INT32:
     return "Int32Field<false, false>";
@@ -181,7 +184,8 @@ std::string MessageGenerator::FieldCFieldType(
     if (IsAny(field)) {
       return "AnyField";
     }
-    return "IndirectMessageField<" + MessageName(field->message_type()) + ">";
+    return "IndirectMessageField<" + MessageName(field->message_type(), true) +
+           ">";
 
   case google::protobuf::FieldDescriptor::TYPE_GROUP:
     std::cerr << "Groups are not supported\n";
@@ -218,7 +222,7 @@ MessageGenerator::FieldCType(const google::protobuf::FieldDescriptor *field) {
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "std::string_view";
   case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
-    return MessageName(field->message_type());
+    return MessageName(field->message_type(), true);
   case google::protobuf::FieldDescriptor::TYPE_GROUP:
     std::cerr << "Groups are not supported\n";
     exit(1);
@@ -263,7 +267,8 @@ std::string MessageGenerator::FieldRepeatedCType(
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "StringVectorField";
   case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
-    return "MessageVectorField<" + MessageName(field->message_type()) + ">";
+    return "MessageVectorField<" + MessageName(field->message_type(), true) +
+           ">";
   case google::protobuf::FieldDescriptor::TYPE_GROUP:
     std::cerr << "Groups are not supported\n";
     exit(1);
@@ -307,7 +312,8 @@ std::string MessageGenerator::FieldUnionCType(
   case google::protobuf::FieldDescriptor::TYPE_BYTES:
     return "UnionStringField";
   case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
-    return "UnionMessageField<" + MessageName(field->message_type()) + ">";
+    return "UnionMessageField<" + MessageName(field->message_type(), true) +
+           ">";
   case google::protobuf::FieldDescriptor::TYPE_GROUP:
     std::cerr << "Groups are not supported\n";
     exit(1);
@@ -355,7 +361,6 @@ bool MessageGenerator::IsAny(const google::protobuf::Descriptor *desc) {
 }
 
 bool MessageGenerator::IsAny(const google::protobuf::FieldDescriptor *field) {
-  std::cerr << "AnyField: " << field->message_type()->full_name() << "\n";
   return field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
          field->message_type()->full_name() == "google.protobuf.Any";
 }
@@ -387,7 +392,7 @@ void MessageGenerator::CompileUnions() {
     union_info->member_type += "::phaser::" + field_type;
     uint32_t field_size = FieldBinarySize(field);
     union_info->members.push_back(std::make_shared<FieldInfo>(
-        field, 4, union_info->id, field->name() + "_", field_type,
+        field, 0, union_info->id, field->name() + "_", field_type,
         FieldCType(field), field_size));
     union_info->binary_size = std::max(union_info->binary_size, 4 + field_size);
     union_info->id++;
@@ -456,6 +461,7 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
                       : (fields_.back()->offset + fields_.back()->binary_size);
   // Align offset to 4 bytes.
   offset = (offset + 3) & ~3;
+  size = offset;
 
   // Add the offset to the unions.
   for (auto & [ oneof, u ] : unions_) {
@@ -502,6 +508,7 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   GenerateFieldNumbers(os);
 
   GenerateIndent(os);
+  GenerateCopy(os, true);
 
   // Generate protobuf accessors.
   GenerateProtobufAccessors(os);
@@ -521,6 +528,7 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
 
   // Steamer outside the class.
   GenerateStreamer(os);
+  GenerateCopy(os, false);
 }
 
 void MessageGenerator::GenerateSource(std::ostream &os) {
@@ -876,15 +884,16 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
               google::protobuf::FieldDescriptor::TYPE_STRING ||
           field->field->type() ==
               google::protobuf::FieldDescriptor::TYPE_BYTES) {
-        os << "  void add_" << field_name << "(const std::string& value) {\n";
+        os << "  template <typename Str>\n";
+        os << "  void add_" << field_name << "(Str value) {\n";
         os << "    " << member_name << ".Add(value);\n";
         os << "  }\n";
-        os << "  void set_" << field_name
-           << "(size_t index, const std::string& value) {\n";
+        os << "  template <typename Str>\n";
+        os << "  void set_" << field_name << "(size_t index, Str value) {\n";
         os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
-        os << "  ::phaser::StringVectorField& " << sanitized_field_name
-           << "() {\n";
+        os << "  const ::phaser::StringVectorField& " << sanitized_field_name
+           << "() const {\n";
         os << "    " << member_name << ".Populate();\n";
         os << "    return " << member_name << ";\n";
         os << "  }\n";
@@ -902,16 +911,16 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "  }\n";
         if (field->field->type() ==
             google::protobuf::FieldDescriptor::TYPE_ENUM) {
-          os << "  ::phaser::EnumVectorField<" << field->c_type << ", "
+          os << "  const ::phaser::EnumVectorField<" << field->c_type << ", "
              << EnumName(field->field->enum_type()) << "Stringizer, "
              << EnumName(field->field->enum_type()) << "Parser" << packed_string
-             << ">& " << sanitized_field_name << "() {\n";
+             << ">& " << sanitized_field_name << "() const {\n";
           os << "    return " << member_name << ";\n";
           os << "  }\n";
         } else {
-          os << "  ::phaser::PrimitiveVectorField<" << field->c_type
+          os << "  const ::phaser::PrimitiveVectorField<" << field->c_type
              << fixed_size_string << signed_string << packed_string << ">& "
-             << sanitized_field_name << "() {\n";
+             << sanitized_field_name << "() const {\n";
           os << "    return " << member_name << ";\n";
           os << "  }\n";
         }
@@ -935,8 +944,8 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "  " << field->c_type << "* add_" << field_name << "() {\n";
       os << "    return " << member_name << ".Add();\n";
       os << "  }\n";
-      os << "  ::phaser::MessageVectorField<" << field->c_type << ">& "
-         << sanitized_field_name << "() {\n";
+      os << "  const ::phaser::MessageVectorField<" << field->c_type << ">& "
+         << sanitized_field_name << "() const {\n";
       os << "    " << member_name << ".Populate();\n";
       os << "    return " << member_name << ";\n";
       os << "  }\n";
@@ -985,7 +994,8 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
               google::protobuf::FieldDescriptor::TYPE_STRING ||
           field->field->type() ==
               google::protobuf::FieldDescriptor::TYPE_BYTES) {
-        os << "  void set_" << field_name << "(const std::string& value) {\n";
+        os << "  template <typename Str>\n";
+        os << "  void set_" << field_name << "(Str value) {\n";
         if (union_index != -1) {
           // Clear all other union members.
           for (size_t i = 0; i < union_field->members.size(); i++) {
@@ -1018,10 +1028,6 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       break;
 
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
-      if (IsAny(field->field)) {
-        GenerateAnyProtobufAccessors(*field, os);
-        break;
-      }
       os << "  void clear_" << field_name << "() {\n";
       os << "    " << member_name << ".Clear" << suffix << "();\n";
       os << "  }\n";
@@ -1057,6 +1063,10 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << MessageName(field->field->message_type()) << ">();\n";
         os << "  }\n";
       }
+      if (IsAny(field->field)) {
+        GenerateAnyProtobufAccessors(field, union_field, union_index, os);
+      }
+
       break;
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
       std::cerr << "Groups are not supported\n";
@@ -1066,10 +1076,9 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
   }
 }
 
-void MessageGenerator::GenerateAnyProtobufAccessors(const FieldInfo &field,
-                                                    std::ostream &os) {
-                                                      
-                                                    }
+void MessageGenerator::GenerateAnyProtobufAccessors(
+    std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
+    int union_index, std::ostream &os) {}
 
 void MessageGenerator::GenerateUnionProtobufAccessors(std::ostream &os) {
   for (auto & [ oneof, u ] : unions_) {
@@ -1324,6 +1333,58 @@ void MessageGenerator::GenerateStreamer(std::ostream &os) {
     os << "  }\n";
   }
   os << "  return os;\n";
+  os << "}\n\n";
+}
+
+void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "template <typename T>\n";
+    os << "void CopyFrom(const T & other);\n";
+    return;
+  }
+
+  // CopyFrom.
+  os << "template <typename T>\n";
+  os << "inline void " << MessageName(message_)
+     << "::CopyFrom(const T & other) {\n";
+  for (auto &field : fields_) {
+    if (field->field->is_repeated()) {
+      os << "  for (auto& v : other." << field->field->name() << "()) {\n";
+      if (field->field->type() ==
+          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+        os << "    auto* m = add_" << field->field->name() << "();\n";
+        os << "    m->CopyFrom(v.Msg());\n";
+      } else {
+        os << "    add_" << field->field->name() << "(v);\n";
+      }
+      os << "  }\n";
+
+    } else {
+      os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+      if (field->field->type() ==
+          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+        os << "    auto* m = mutable_" << field->field->name() << "();\n";
+        os << "    m->CopyFrom(other." << field->field->name() << "());\n";
+      } else {
+        os << "    set_" << field->field->name() << "(other."
+           << field->field->name() << "());\n";
+      }
+      os << "  }\n";
+    }
+  }
+  if (!unions_.empty()) {
+    for (auto & [ oneof, u ] : unions_) {
+      os << "  switch (other." << u->member_name << ".Discriminator()) {\n";
+      for (size_t i = 0; i < u->members.size(); i++) {
+        auto &field = u->members[i];
+        os << "  case " << field->field->number() << ":\n";
+        os << "    " << u->member_name << ".template CopyFrom<" << i
+           << ">(other." << field->field->name() << "());\n";
+        os << "    break;\n";
+      }
+      os << "  }\n";
+    }
+  }
   os << "}\n\n";
 }
 

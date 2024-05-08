@@ -111,7 +111,6 @@ def _phaser_impl(ctx):
         dep_outs = []
         for out in dep[MessageInfo].cpp_outputs:
             out_name = ctx.attr.target_name + "/" + out
-            print(out_name)
             out_file = ctx.actions.declare_file(out_name)
             dep_outs.append(out_file)
 
@@ -123,7 +122,8 @@ def _phaser_impl(ctx):
             # so we create the symlink:
             # Test.phaser.h -> phaser/testdata/phaser/testdata/Test.phaser.h
             if out_file.extension == "h":
-                symlink_name = out_file.short_path[len(package_name) + 1:]
+                prefix = paths.join(ctx.attr.target_name, package_name)
+                symlink_name = out_file.short_path[len(prefix) + 1:]
                 if symlink_name.startswith(package_name):
                     # Header is in our package, remove the package name.
                     # If the header is outside our package (like google/protobuf/any.h),

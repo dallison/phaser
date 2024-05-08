@@ -210,7 +210,8 @@ public:
     return *addr != 0;
   }
 
-  void Set(const std::string &s, std::shared_ptr<MessageRuntime> runtime,
+  template <typename Str>
+  void Set(Str s, std::shared_ptr<MessageRuntime> runtime,
            uint32_t abs_offset) {
     toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
   }
@@ -332,6 +333,28 @@ public:
 
   absl::Status DeserializeFromBuffer(ProtoBuffer &buffer) {
     return msg_.DeserializeFromBuffer(buffer);
+  }
+
+  void Set(const MessageType &msg, std::shared_ptr<MessageRuntime> runtime,
+           uint32_t abs_offset) {
+    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (*addr != 0) {
+      msg_.Clear();
+      GetBuffer(runtime)->Free(GetBuffer(runtime)->ToAddress(*addr));
+    }
+    // Allocate a new message.
+    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
+        GetBufferAddr(runtime), MessageType::BinarySize(), 8);
+    toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    // Assign to the message.
+    msg_.runtime = runtime;
+    msg_.absolute_binary_offset = msg_offset;
+    msg_.template InstallMetadata<MessageType>();
+
+    // Buffer might have moved, get address of indirect again.
+    addr = GetIndirectAddress(runtime, abs_offset);
+    *addr = msg_offset; // Put message field offset into message.
+    msg_.CopyFrom(msg);
   }
 
   void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
@@ -567,6 +590,21 @@ public:
     *discrim = field_numbers_[Id];
     return absl::OkStatus();
   }
+
+  template <int Id, typename M>
+  void CopyFrom(const M& other) {
+    int32_t relative_offset = Message::GetMessage(this, source_offset_)
+                                  ->FindFieldOffset(field_numbers_[Id]);
+    if (relative_offset < 0) { // Field not present.
+      return;
+    }
+    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+        GetMessageBinaryStart() + relative_binary_offset_);
+    *discrim = field_numbers_[Id];
+    std::get<Id>(value_).Set(other, GetRuntime(),
+                             GetMessageBinaryStart() + relative_offset + 4);
+  }
+
 
 private:
   toolbelt::PayloadBuffer *GetBuffer() const {

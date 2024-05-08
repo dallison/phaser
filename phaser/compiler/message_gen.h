@@ -92,10 +92,14 @@ private:
   void GenerateStreamer(std::ostream &os);
   bool IsAny(const google::protobuf::Descriptor *desc);
   bool IsAny(const google::protobuf::FieldDescriptor *field);
-  void GenerateAnyProtobufAccessors(const FieldInfo& field, std::ostream &os);
-
+  void GenerateAnyProtobufAccessors(std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
+                                      int union_index, std::ostream &os);
+  void GenerateCopy(std::ostream &os, bool decl);
+  
   std::string EnumName(const google::protobuf::EnumDescriptor *desc);
-  std::string MessageName(const google::protobuf::Descriptor *desc);
+  // If is_ref is true, it changes how the generator treats google.protobuf.Any.  For
+  // a reference to a google.protobuf.Any, we use an internal ::phaser::AnyMessage type.
+  std::string MessageName(const google::protobuf::Descriptor *desc, bool is_ref = false);
   std::string FieldCFieldType(const google::protobuf::FieldDescriptor *field);
   std::string FieldCType(const google::protobuf::FieldDescriptor *field);
   std::string

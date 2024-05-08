@@ -76,4 +76,15 @@ inline std::ostream &operator<<(std::ostream &os,
   return os;
 }
 
+inline std::ostream &operator<<(std::ostream &os, const AnyMessage &msg) {
+  if (msg.type_url_.IsPresent()) {
+    msg.type_url_.PrintIndent(os);
+    os << "type_url: " << msg.type_url_ << std::endl;
+  }
+  if (msg.value_.IsPresent()) {
+    msg.value_.PrintIndent(os);
+    os << "value: " << msg.value_ << std::endl;
+  }
+  return os;
+}
 }
