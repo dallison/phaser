@@ -1,3 +1,7 @@
+// Copyright 2024 David Allison
+// All Rights Reserved
+// See LICENSE file for licensing information.
+
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/runtime/wireformat.h"

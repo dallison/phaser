@@ -1,3 +1,7 @@
+// Copyright 2024 David Allison
+// All Rights Reserved
+// See LICENSE file for licensing information.
+
 #include "phaser/runtime/message.h"
 
 namespace phaser {

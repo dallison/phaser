@@ -1,3 +1,7 @@
+// Copyright 2024 David Allison
+// All Rights Reserved
+// See LICENSE file for licensing information.
+
 #pragma once
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

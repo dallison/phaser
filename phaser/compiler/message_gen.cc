@@ -1,3 +1,7 @@
+// Copyright 2024 David Allison
+// All Rights Reserved
+// See LICENSE file for licensing information.
+
 #include "phaser/compiler/message_gen.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"

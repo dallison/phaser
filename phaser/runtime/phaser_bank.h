@@ -1,3 +1,7 @@
+// Copyright 2024 David Allison
+// All Rights Reserved
+// See LICENSE file for licensing information.
+
 #pragma once
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
