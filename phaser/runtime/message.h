@@ -36,7 +36,8 @@ struct FieldData {
 // metadata offset is held in the message header.
 struct MessageRuntime {
   MessageRuntime(::toolbelt::PayloadBuffer *p) : pb(p) {}
-  MessageRuntime(::toolbelt::PayloadBuffer *p, size_t size) : pb(p), buffer_size(size) {}
+  MessageRuntime(::toolbelt::PayloadBuffer *p, size_t size)
+      : pb(p), buffer_size(size) {}
   virtual ~MessageRuntime() = default;
   ::toolbelt::PayloadBuffer *pb;
 
@@ -57,11 +58,13 @@ struct MessageRuntime {
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
-  template <typename T = void> const T *ToAddress(toolbelt::BufferOffset offset) const {
+  template <typename T = void>
+  const T *ToAddress(toolbelt::BufferOffset offset) const {
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
-  template <typename T = void> toolbelt::BufferOffset ToOffset(const T *addr) const {
+  template <typename T = void>
+  toolbelt::BufferOffset ToOffset(const T *addr) const {
     return pb->ToOffset(addr, buffer_size);
   }
 
@@ -90,15 +93,12 @@ struct MutableMessageRuntime : public MessageRuntime {
   }
 };
 
+// Dynamically allocated payload buffer.  Must be allocated in memory
+// from malloc using the NewDynamicBuffer function.
 struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
   DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer *p)
-      : MutableMessageRuntime(p) {
-    // Free the buffer when the runtime is destroyed.
-    buffer_data = std::shared_ptr<void>(reinterpret_cast<void *>(p),
-                                        [](void *p) { free(p); });
-  }
-
-  std::shared_ptr<void> buffer_data;
+      : MutableMessageRuntime(p) {}
+  ~DynamicMutableMessageRuntime() override { free(pb); }
 };
 
 struct InternalDefault {};
@@ -112,7 +112,7 @@ struct InternalDefault {};
 //            V       |
 // +---------------+  |
 // |               |  |
-// | ::toolbelt::PayloadBuffer |  |
+// | PayloadBuffer |  |
 // |               |  |
 // +---------------+  |
 //                    |
@@ -145,7 +145,7 @@ struct Message {
   // Subtract the field offset from the field to get the address of the
   // std::shared_ptr to the pointer to the ::toolbelt::PayloadBuffer.
   static ::toolbelt::PayloadBuffer *GetBuffer(const void *field,
-                                            uint32_t offset) {
+                                              uint32_t offset) {
     const std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
             reinterpret_cast<const char *>(field) - offset);
@@ -153,7 +153,7 @@ struct Message {
   }
 
   static ::toolbelt::PayloadBuffer **GetBufferAddr(const void *field,
-                                                 uint32_t offset) {
+                                                   uint32_t offset) {
     const std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
             reinterpret_cast<const char *>(field) - offset);
@@ -189,7 +189,7 @@ struct Message {
   }
 
   static ::toolbelt::BufferOffset GetMessageBinaryStart(const void *field,
-                                                      uint32_t offset) {
+                                                        uint32_t offset) {
     const Message *msg = reinterpret_cast<const Message *>(
         reinterpret_cast<const char *>(field) - offset);
     return msg->absolute_binary_offset;
@@ -210,7 +210,8 @@ struct Message {
         &runtime->pb, sizeof(MessageType::field_data), 4, false);
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
     ::toolbelt::BufferOffset *header =
-        runtime->pb->ToAddress<::toolbelt::BufferOffset>(absolute_binary_offset);
+        runtime->pb->ToAddress<::toolbelt::BufferOffset>(
+            absolute_binary_offset);
     *header = runtime->pb->ToOffset(fields);
     runtime->AddMetadata(MessageType::FullName(), *header);
   }

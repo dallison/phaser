@@ -4,11 +4,11 @@
 // See LICENSE file for licensing information.
 
 #include "absl/strings/str_format.h"
-#include "toolbelt/payload_buffer.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "phaser/testdata/TestMessage.phaser.h"
 #include "toolbelt/hexdump.h"
+#include "toolbelt/payload_buffer.h"
 #include <gtest/gtest.h>
 #include <sstream>
 
@@ -84,6 +84,21 @@ TEST(PhaserTest, ProtobufCompat) {
   std::string pb_debug_string = msg2.DebugString();
   std::string phaser_debug_string = msg.DebugString();
   ASSERT_EQ(pb_debug_string, phaser_debug_string);
+}
+
+TEST(PhaserTest, Expansion) {
+  foo::bar::phaser::TestMessage msg;
+  msg.set_x(1234);
+  msg.set_y(5678);
+  msg.set_s("hello world");
+
+  auto buffer = msg.allocate_buffer(16000);
+  ASSERT_NE(nullptr, buffer.data());
+  ASSERT_EQ(16000, buffer.size());
+
+  ASSERT_EQ(1234, msg.x());
+  ASSERT_EQ(5678, msg.y());
+  ASSERT_EQ("hello world", msg.s());
 }
 
 TEST(PhaserTest, NewFieldsBasic) {
@@ -438,7 +453,6 @@ TEST(PhaserTest, GarbageWithTailoring) {
 
   std::cout << msg;
 }
-
 
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
