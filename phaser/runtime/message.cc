@@ -7,12 +7,14 @@ int32_t Message::FindFieldOffset(uint32_t field_number) const {
     return -1;
   }
   // First 4 bytes of message are the the offset to the field data.
-  toolbelt::BufferOffset *field_data =
-      runtime->pb->ToAddress<toolbelt::BufferOffset>(absolute_binary_offset);
-
+  ::toolbelt::BufferOffset *field_data =
+      runtime->ToAddress<::toolbelt::BufferOffset>(absolute_binary_offset);
+  if (field_data == nullptr) {
+    return -1;
+  }
   // Dereference offset to get a pointer to the field data (in the payload
   // buffer)l
-  FieldData *fd = runtime->pb->ToAddress<FieldData>(*field_data);
+  FieldData *fd = runtime->ToAddress<FieldData>(*field_data);
   if (fd == nullptr) {
     return -1;
   }
@@ -38,12 +40,15 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
     return -1;
   }
   // First 4 bytes of message are the the offset to the field data.
-  toolbelt::BufferOffset *field_data =
-      runtime->pb->ToAddress<toolbelt::BufferOffset>(absolute_binary_offset);
+  ::toolbelt::BufferOffset *field_data =
+      runtime->ToAddress<::toolbelt::BufferOffset>(absolute_binary_offset);
 
+  if (field_data == nullptr) {
+    return -1;
+  }
   // Dereference offset to get a pointer to the field data (in the payload
   // buffer)l
-  FieldData *fd = runtime->pb->ToAddress<FieldData>(*field_data);
+  FieldData *fd = runtime->ToAddress<FieldData>(*field_data);
   if (fd == nullptr) {
     return -1;
   }
@@ -64,11 +69,11 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
   return -1;
 }
 
-toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size) {
+::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size) {
   char *buffer = (char *)malloc(initial_size);
-  toolbelt::PayloadBuffer *pb =
-      new (buffer) toolbelt::PayloadBuffer(initial_size, [](toolbelt::PayloadBuffer **p, size_t new_size) {
-        *p = reinterpret_cast<toolbelt::PayloadBuffer *>(realloc(*p, new_size));
+  ::toolbelt::PayloadBuffer *pb = new (buffer)::toolbelt::PayloadBuffer(
+      initial_size, [](::toolbelt::PayloadBuffer **p, size_t new_size) {
+        *p = reinterpret_cast<::toolbelt::PayloadBuffer *>(realloc(*p, new_size));
       });
   return pb;
 }

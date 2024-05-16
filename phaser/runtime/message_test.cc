@@ -1,13 +1,14 @@
 #include "absl/strings/str_format.h"
+#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "toolbelt/hexdump.h"
-#include "toolbelt/payload_buffer.h"
 #include <gtest/gtest.h>
 #include <sstream>
 
-using PayloadBuffer = toolbelt::PayloadBuffer;
-using BufferOffset = toolbelt::BufferOffset;
+using PayloadBuffer = ::toolbelt::PayloadBuffer;
+using BufferOffset = ::toolbelt::BufferOffset;
 using Message = phaser::Message;
 using VectorHeader = toolbelt::VectorHeader;
 using StringHeader = toolbelt::StringHeader;
@@ -50,7 +51,7 @@ struct InnerMessage : public Message {
         uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0, {50, 60}) {}
 
   InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
-               toolbelt::BufferOffset offset)
+               ::toolbelt::BufferOffset offset)
       : Message(runtime, offset),
         str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
@@ -58,6 +59,9 @@ struct InnerMessage : public Message {
         ev_(offsetof(InnerMessage, ev_), HeaderSize() + 20, 0, 40),
         uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0, {50, 60}) {}
 
+  // uv_ is a union of:
+  // uint32_t
+  // EnumTest
   static constexpr size_t BinarySize() { return HeaderSize() + 36; }
   static constexpr size_t PresenceMaskSize() { return 4; }
   static constexpr uint32_t HeaderSize() { return 4 + PresenceMaskSize(); }
@@ -79,7 +83,8 @@ struct InnerMessage : public Message {
           {.number = 50, .offset = 36, .id = 0},
           {.number = 60, .offset = 36, .id = 0},
       }};
-  static std::string GetName() { return "InnerMessage"; }
+  static std::string Name() { return "InnerMessage"; }
+  static std::string FullName() { return "foo.bar.InnerMessage"; }
 
   friend std::ostream &operator<<(std::ostream &os, const InnerMessage &msg);
 
@@ -89,6 +94,42 @@ struct InnerMessage : public Message {
     e_.Indent(indent);
     ev_.Indent(indent);
     uv_.Indent(indent);
+  }
+
+  std::string DebugString() const {
+    std::ostringstream os;
+    os << *this;
+    return os.str();
+  }
+
+  absl::Status CloneFrom(const InnerMessage &other) {
+    if (other.str_.IsPresent()) {
+      str_.Set(other.str_.Get());
+    }
+    if (other.f_.IsPresent()) {
+      f_.Set(other.f_.Get());
+    }
+    if (other.e_.IsPresent()) {
+      e_.Set(other.e_.Get());
+    }
+    for (auto &v : other.ev_) {
+      ev_.Add(v);
+    }
+    switch (other.uv_.Discriminator()) {
+    case 50:
+      if (absl::Status s = uv_.CloneFrom<0>(other.uv_.GetValue<0, uint32_t>());
+          !s.ok()) {
+        return s;
+      }
+      break;
+    case 60:
+      if (absl::Status s = uv_.CloneFrom<1>(other.uv_.GetValue<1, EnumTest>());
+          !s.ok()) {
+        return s;
+      }
+      break;
+    }
+    return absl::OkStatus();
   }
 
   // Protobuf accessors.
@@ -270,6 +311,72 @@ inline std::ostream &operator<<(std::ostream &os, const InnerMessage &msg) {
   return os;
 }
 
+static void InnerMessageStreamTo(const Message &msg, std::ostream &os, int indent) {
+  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
+  os << *m;
+}
+
+static absl::Status InnerMessageSerializeToBuffer(const Message &msg,
+                                                  phaser::ProtoBuffer &buffer) {
+  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
+  return m->Serialize(buffer);
+}
+
+static absl::Status
+InnerMessageDeserializeFromBuffer(Message &msg, phaser::ProtoBuffer &buffer) {
+  InnerMessage *m = static_cast<InnerMessage *>(&msg);
+  return m->Deserialize(buffer);
+}
+
+static size_t InnerMessageSerializedSize(const Message &msg) {
+  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
+  return m->SerializedSize();
+}
+
+static Message *
+InnerMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, toolbelt::BufferOffset offset) {
+  auto msg = new InnerMessage(runtime, offset);
+  msg->InstallMetadata<InnerMessage>();
+  return msg;
+}
+
+static void InnerMessageClear(Message &msg) {
+  InnerMessage *m = static_cast<InnerMessage *>(&msg);
+  m->Clear();
+}
+
+static absl::Status InnerMessageCopy(const Message &src, Message &dst) {
+  const InnerMessage *src_m = static_cast<const InnerMessage *>(&src);
+  InnerMessage *dst_m = static_cast<InnerMessage *>(&dst);
+  return dst_m->CloneFrom(*src_m);
+}
+
+static const Message *InnerMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
+const void *data) {
+  return new InnerMessage(runtime, runtime->pb->ToOffset(data));
+}
+
+static size_t InnerMessageBinarySize() { return InnerMessage::BinarySize(); }
+
+static phaser::BankInfo innerMessageBackInfo{
+    .stream_to = InnerMessageStreamTo,
+    .serialize_to_buffer = InnerMessageSerializeToBuffer,
+    .deserialize_from_buffer = InnerMessageDeserializeFromBuffer,
+    .serialized_size = InnerMessageSerializedSize,
+    .allocate_at_offset = InnerMessageAllocateAtOffset,
+    .clear = InnerMessageClear,
+    .copy = InnerMessageCopy,
+    .make_existing = InnerMessageMakeExisting,
+    .binary_size = InnerMessageBinarySize,
+};
+
+static struct InnerMessageBankRegister {
+  InnerMessageBankRegister() {
+    phaser::PhaserBankRegisterMessage(InnerMessage::FullName(),
+                                      innerMessageBackInfo);
+  }
+} inner_message_bank_register;
+
 struct TestMessage : public Message {
   // Default constructor makes a dynamic payload buffer.
   TestMessage(size_t initial_size = 1024)
@@ -287,7 +394,7 @@ struct TestMessage : public Message {
   }
 
   TestMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
-              toolbelt::BufferOffset offset)
+              ::toolbelt::BufferOffset offset)
       : Message(runtime, offset),
         x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
         y_(offsetof(TestMessage, y_), HeaderSize() + 8, 1, 101),
@@ -301,8 +408,8 @@ struct TestMessage : public Message {
         u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0, {111, 112}) {}
 
   static TestMessage CreateMutable(void *addr, size_t size) {
-    toolbelt::PayloadBuffer *pb = new (addr) toolbelt::PayloadBuffer(size);
-    toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(size);
+    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                  TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
@@ -311,15 +418,15 @@ struct TestMessage : public Message {
   }
 
   static TestMessage CreateReadonly(void *addr) {
-    toolbelt::PayloadBuffer *pb =
-        reinterpret_cast<toolbelt::PayloadBuffer *>(addr);
+    ::toolbelt::PayloadBuffer *pb =
+        reinterpret_cast<::toolbelt::PayloadBuffer *>(addr);
     auto runtime = std::make_shared<phaser::MessageRuntime>(pb);
     return TestMessage(runtime, pb->message);
   }
 
   static TestMessage CreateDynamicMutable(size_t initial_size = 1024) {
-    toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
-    toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+    ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
+    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                  TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
@@ -328,14 +435,26 @@ struct TestMessage : public Message {
   }
 
   void InitDynamicMutable(size_t initial_size = 1024) {
-    toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
-    toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+    ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
+    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                  TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     this->runtime = runtime;
     this->absolute_binary_offset = pb->message;
     this->InstallMetadata<TestMessage>();
   }
+
+  // u1 union of
+  // uint32_t
+  // uint64_t
+
+  // u2 union of
+  // int64_t
+  // string
+
+  // u3 union of
+  // int64_t
+  // InnerMessage
 
   static constexpr size_t BinarySize() { return HeaderSize() + 72; }
   static constexpr size_t PresenceMaskSize() { return 4; }
@@ -365,7 +484,8 @@ struct TestMessage : public Message {
           {.number = 111, .offset = 8 + 64, .id = 0},
           {.number = 112, .offset = 8 + 64, .id = 0},
       }};
-  static std::string GetName() { return "TestMessage"; }
+  static std::string Name() { return "TestMessage"; }
+  static std::string FullName() { return "foo.bar.TestMessage"; }
 
   void Clear() {
     x_.Clear();
@@ -381,6 +501,12 @@ struct TestMessage : public Message {
     u2_.Clear<1>();
     u3_.Clear<0>();
     u3_.Clear<1>();
+  }
+
+  std::string DebugString() const {
+    std::ostringstream os;
+    os << *this;
+    return os.str();
   }
 
   size_t SerializedSize() const {
@@ -609,6 +735,81 @@ struct TestMessage : public Message {
     u3_.Indent(indent);
   }
 
+  absl::Status CloneFrom(const TestMessage &src) {
+    if (src.x_.IsPresent()) {
+      x_.Set(src.x_.Get());
+    } else {
+      x_.Clear();
+    }
+    if (src.y_.IsPresent()) {
+      y_.Set(src.y_.Get());
+    } else {
+      y_.Clear();
+    }
+    if (src.s_.IsPresent()) {
+      s_.Set(src.s_.Get());
+    } else {
+      s_.Clear();
+    }
+    if (src.m_.IsPresent()) {
+      auto *m = mutable_m();
+      if (absl::Status s = m->CloneFrom(src.m()); !s.ok()) {
+        return s;
+      }
+    }
+    for (size_t i = 0; i < src.vi32_size(); ++i) {
+      add_vi32(src.vi32(i));
+    }
+    for (size_t i = 0; i < src.vstr_size(); ++i) {
+      add_vstr(src.vstr(i));
+    }
+    for (size_t i = 0; i < src.vm_size(); ++i) {
+      auto *m = add_vm();
+      if (absl::Status s = m->CloneFrom(src.vm(i)); !s.ok()) {
+        return s;
+      }
+    }
+    switch (src.u1_.Discriminator()) {
+    case 107:
+      if (absl::Status status = u1_.CloneFrom<0, uint32_t>(src.u1a());
+          !status.ok()) {
+        return status;
+      }
+      break;
+    case 108:
+      if (absl::Status s = u1_.CloneFrom<1, uint64_t>(src.u1b()); !s.ok()) {
+        return s;
+      }
+      break;
+    }
+    switch (src.u2_.Discriminator()) {
+    case 109:
+      if (absl::Status s = u2_.CloneFrom<0, int64_t>(src.u2a()); !s.ok()) {
+        return s;
+      }
+      break;
+    case 110:
+      if (absl::Status s = u2_.CloneFrom<1, std::string_view>(src.u2b());
+          !s.ok()) {
+        return s;
+      }
+      break;
+    }
+    switch (src.u3_.Discriminator()) {
+    case 111:
+      if (absl::Status s = u3_.CloneFrom<0, int64_t>(src.u3a()); !s.ok()) {
+        return s;
+      }
+      break;
+    case 112:
+      if (absl::Status s = u3_.CloneFrom<1, InnerMessage>(src.u3b()); !s.ok()) {
+        return s;
+      }
+      break;
+    }
+    return absl::OkStatus();
+  }
+
   // Protobuf access functions.
   uint32_t x() const { return x_.Get(); }
   void set_x(uint32_t x) { x_.Set(x); }
@@ -643,8 +844,8 @@ struct TestMessage : public Message {
 
   size_t vstr_size() const { return vstr_.size(); }
   std::string_view vstr(size_t i) const { return vstr_.Get(i); }
-  void add_vstr(const std::string &v) { vstr_.Add(v); }
-  void set_vstr(size_t i, const std::string &v) { vstr_.Set(i, v); }
+  template <typename Str> void add_vstr(Str v) { vstr_.Add(v); }
+  template <typename Str> void set_vstr(size_t i, Str v) { vstr_.Set(i, v); }
   void clear_vstr() { vstr_.Clear(); }
   phaser::StringVectorField &vstr() {
     vstr_.Populate();
@@ -654,7 +855,7 @@ struct TestMessage : public Message {
   size_t vm_size() const { return vm_.size(); }
   const InnerMessage &vm(size_t i) const { return vm_.Get(i); }
   InnerMessage *mutable_vm(size_t i) { return vm_.Mutable(i); }
-  void add_vm() { vm_.Add(); }
+  InnerMessage *add_vm() { return vm_.Add(); }
   void clear_vm() { vm_.Clear(); }
   phaser::MessageVectorField<InnerMessage> &vm() {
     vm_.Populate();
@@ -826,6 +1027,72 @@ inline std::ostream &operator<<(std::ostream &os, const TestMessage &msg) {
 
   return os;
 }
+
+static void TestMessageStreamTo(const Message &msg, std::ostream &os, int indent) {
+  const TestMessage *m = static_cast<const TestMessage *>(&msg);
+  os << *m;
+}
+
+static absl::Status TestMessageSerializeToBuffer(const Message &msg,
+                                                 phaser::ProtoBuffer &buffer) {
+  const TestMessage *m = static_cast<const TestMessage *>(&msg);
+  return m->Serialize(buffer);
+}
+
+static absl::Status
+TestMessageDeserializeFromBuffer(Message &msg, phaser::ProtoBuffer &buffer) {
+  TestMessage *m = static_cast<TestMessage *>(&msg);
+  return m->Deserialize(buffer);
+}
+
+static size_t TestMessageSerializedSize(const Message &msg) {
+  const TestMessage *m = static_cast<const TestMessage *>(&msg);
+  return m->SerializedSize();
+}
+
+static Message *
+TestMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, toolbelt::BufferOffset offset) {
+  auto msg = new TestMessage(runtime, offset);
+  msg->InstallMetadata<TestMessage>();
+  return msg;
+}
+
+static void TestMessageClear(Message &msg) {
+  TestMessage *m = static_cast<TestMessage *>(&msg);
+  m->Clear();
+}
+
+static absl::Status TestMessageCopy(const Message &src, Message &dst) {
+  const TestMessage *src_m = static_cast<const TestMessage *>(&src);
+  TestMessage *dst_m = static_cast<TestMessage *>(&dst);
+  return dst_m->CloneFrom(*src_m);
+}
+
+static const Message *TestMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
+const void *data) {
+  return new TestMessage(runtime, runtime->pb->ToOffset(data));
+}
+
+static size_t TestMessageBinarySize() { return TestMessage::BinarySize(); }
+
+static phaser::BankInfo kTestMessageBackInfo{
+    .stream_to = TestMessageStreamTo,
+    .serialize_to_buffer = TestMessageSerializeToBuffer,
+    .deserialize_from_buffer = TestMessageDeserializeFromBuffer,
+    .serialized_size = TestMessageSerializedSize,
+    .allocate_at_offset = TestMessageAllocateAtOffset,
+    .clear = TestMessageClear,
+    .copy = TestMessageCopy,
+    .make_existing = TestMessageMakeExisting,
+    .binary_size = TestMessageBinarySize,
+};
+
+static struct TestMessageBankRegister {
+  TestMessageBankRegister() {
+    phaser::PhaserBankRegisterMessage(TestMessage::FullName(),
+                                      kTestMessageBackInfo);
+  }
+} TestMessage_bank_register;
 
 TEST(MessageTest, Basic) {
   char *buffer = (char *)malloc(4096);
@@ -1541,6 +1808,12 @@ TEST(MessageTest, Print) {
   inner3->f_.Set(0xdeadbeef);
 
   std::cout << msg << std::endl;
+
+  // Let's use the phaser bank to print the message.
+  absl::StatusOr<std::string> ds =
+      PhaserBankDebugString("foo.bar.TestMessage", msg);
+  ASSERT_TRUE(ds.ok());
+  std::cout << *ds << std::endl;
 }
 
 int main(int argc, char **argv) {

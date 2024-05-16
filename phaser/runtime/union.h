@@ -18,12 +18,12 @@ namespace phaser {
 
 class UnionMemberField {
 protected:
-  toolbelt::PayloadBuffer *
+  ::toolbelt::PayloadBuffer *
   GetBuffer(std::shared_ptr<MessageRuntime> runtime) const {
     return runtime->pb;
   }
 
-  toolbelt::PayloadBuffer **
+  ::toolbelt::PayloadBuffer **
   GetBufferAddr(std::shared_ptr<MessageRuntime> runtime) const {
     return &runtime->pb;
   }
@@ -44,7 +44,8 @@ protected:
       }                                                                        \
       return GetBuffer(runtime)->template Get<type>(abs_offset);               \
     }                                                                          \
-    void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,      \
+    void Print(std::ostream &os, int indent,                                   \
+               std::shared_ptr<MessageRuntime> runtime,                        \
                uint32_t abs_offset) const {                                    \
       os << Get(runtime, abs_offset);                                          \
     }                                                                          \
@@ -131,7 +132,8 @@ public:
                 abs_offset));
   }
 
-  void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,
+  void Print(std::ostream &os, int indent,
+             std::shared_ptr<MessageRuntime> runtime,
              uint32_t abs_offset) const {
     os << Stringizer()(Get(runtime, abs_offset));
   }
@@ -198,28 +200,29 @@ public:
     return GetBuffer(runtime)->GetStringView(abs_offset);
   }
 
-  void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,
+  void Print(std::ostream &os, int indent,
+             std::shared_ptr<MessageRuntime> runtime,
              uint32_t abs_offset) const {
     os << "\"" << std::string(Get(runtime, abs_offset)) << "\"";
   }
 
   bool IsPresent(std::shared_ptr<MessageRuntime> runtime,
                  uint32_t abs_offset) const {
-    const toolbelt::BufferOffset *addr =
-        GetBuffer(runtime)->ToAddress<const toolbelt::BufferOffset>(abs_offset);
+    const ::toolbelt::BufferOffset *addr =
+        runtime->ToAddress<const ::toolbelt::BufferOffset>(abs_offset);
     return *addr != 0;
   }
 
   template <typename Str>
   void Set(Str s, std::shared_ptr<MessageRuntime> runtime,
            uint32_t abs_offset) {
-    toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
+    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
   }
 
   absl::Span<char> Allocate(size_t size,
                             std::shared_ptr<MessageRuntime> runtime,
                             uint32_t abs_offset) {
-    return toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(runtime), size,
+    return ::toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(runtime), size,
                                                    abs_offset);
   }
 
@@ -238,7 +241,7 @@ public:
     return GetBuffer(runtime)->StringData(abs_offset);
   }
   void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
-    toolbelt::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
+    ::toolbelt::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
   }
 
   size_t SerializedSize(int number, std::shared_ptr<MessageRuntime> runtime,
@@ -262,7 +265,7 @@ public:
     if (!v.ok()) {
       return v.status();
     }
-    toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v, abs_offset);
+    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v, abs_offset);
     return absl::OkStatus();
   }
 
@@ -276,8 +279,8 @@ public:
 
   const MessageType &Get(std::shared_ptr<MessageRuntime> runtime,
                          uint32_t abs_offset) const {
-    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
-    if (*addr == 0) {
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (addr == nullptr || *addr == 0) {
       return msg_;
     }
     // Populate msg_ with the information from the message.
@@ -286,7 +289,8 @@ public:
     return msg_;
   }
 
-  void Print(std::ostream &os, int indent, std::shared_ptr<MessageRuntime> runtime,
+  void Print(std::ostream &os, int indent,
+             std::shared_ptr<MessageRuntime> runtime,
              uint32_t abs_offset) const {
     os << "{\n";
     auto msg = Get(runtime, abs_offset);
@@ -301,21 +305,21 @@ public:
 
   bool IsPresent(std::shared_ptr<MessageRuntime> runtime,
                  uint32_t abs_offset) const {
-    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
-    return *addr != 0;
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    return addr == nullptr || *addr != 0;
   }
 
   MessageType *Mutable(std::shared_ptr<MessageRuntime> runtime,
                        uint32_t abs_offset) {
-    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
-    if (*addr != 0) {
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (addr == nullptr || *addr != 0) {
       // Already allocated.
       return &msg_;
     }
     // Allocate a new message.
-    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
+    void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    ::toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
@@ -323,7 +327,9 @@ public:
 
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(runtime, abs_offset);
-    *addr = msg_offset; // Put message field offset into message.
+    if (addr != nullptr) {
+      *addr = msg_offset; // Put message field offset into message.
+    }
     return &msg_;
   }
 
@@ -337,15 +343,18 @@ public:
 
   void Set(const MessageType &msg, std::shared_ptr<MessageRuntime> runtime,
            uint32_t abs_offset) {
-    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (addr == nullptr) {
+      return;
+    }
     if (*addr != 0) {
       msg_.Clear();
-      GetBuffer(runtime)->Free(GetBuffer(runtime)->ToAddress(*addr));
+      GetBuffer(runtime)->Free(runtime->ToAddress(*addr));
     }
     // Allocate a new message.
-    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
+    void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    ::toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
@@ -353,15 +362,23 @@ public:
 
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(runtime, abs_offset);
+    if (addr == nullptr) {
+      return;
+    }
     *addr = msg_offset; // Put message field offset into message.
-    msg_.CopyFrom(msg);
+
+    // TODO: what to do here if this fails?
+    (void)msg_.CloneFrom(msg);
   }
 
   void Clear(std::shared_ptr<MessageRuntime> runtime, uint32_t abs_offset) {
-    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (addr == nullptr) {
+      return;
+    }
     if (*addr != 0) {
       msg_.Clear();
-      GetBuffer(runtime)->Free(GetBuffer(runtime)->ToAddress(*addr));
+      GetBuffer(runtime)->Free(runtime->ToAddress(*addr));
       *addr = 0;
     }
   }
@@ -392,31 +409,36 @@ public:
     if (!s.ok()) {
       return s.status();
     }
-    void *msg_addr = toolbelt::PayloadBuffer::Allocate(
+    void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    ::toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
     msg_.template InstallMetadata<MessageType>();
 
     // Buffer might have moved, get address of indirect again.
-    toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (addr == nullptr) {
+      return absl::OkStatus();
+    }
     *addr = msg_offset; // Put message field offset into message.
     ProtoBuffer sub_buffer(s.value());
     return msg_.Deserialize(sub_buffer);
   }
 
 private:
-  toolbelt::BufferOffset *
+  ::toolbelt::BufferOffset *
   GetIndirectAddress(std::shared_ptr<MessageRuntime> runtime,
                      uint32_t abs_offset) const {
-    return GetBuffer(runtime)->template ToAddress<toolbelt::BufferOffset>(
-        abs_offset);
+    if (runtime == nullptr) {
+      return nullptr;
+    }
+    return runtime->template ToAddress<::toolbelt::BufferOffset>(abs_offset);
   }
 
   mutable MessageType msg_;
-};
+}; // namespace phaser
 
 // All member of the tuple must be union fields.  These are stored in a
 // std::tuple which does not store them inline so they need to contain the
@@ -461,7 +483,7 @@ public:
     if (relative_offset < 0) {
       return;
     }
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_offset);
     if (*discrim != field_numbers_[Id]) {
       return;
@@ -472,7 +494,7 @@ public:
 
   template <int Id, typename U> void Set(const U &v) {
     // Write the field number into the discriminator.
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     *discrim = field_numbers_[Id];
     // Get the variant and set its location.  In binary it is
@@ -484,7 +506,7 @@ public:
 
   template <int Id, typename U> U *Mutable() {
     // Write the field number into the discriminator.
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     *discrim = field_numbers_[Id];
 
@@ -498,7 +520,7 @@ public:
   // Only valid for strings and bytes.
   template <int Id> absl::Span<char> Allocate(size_t size) {
     // Write the field number into the discriminator.
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     *discrim = field_numbers_[Id];
 
@@ -530,13 +552,13 @@ public:
     if (relative_offset < 0) {
       return 0; // No field present in message (all fields have been removed).
     }
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_offset);
     return *discrim;
   }
 
   template <int Id> void Clear() {
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     int field_number = field_numbers_[Id];
     if (*discrim != field_number) {
@@ -585,36 +607,47 @@ public:
       return status;
     }
     // Set the discriminator.
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     *discrim = field_numbers_[Id];
     return absl::OkStatus();
   }
 
-  template <int Id, typename M>
-  void CopyFrom(const M& other) {
+  template <int Id, typename M> absl::Status CloneFrom(const M &other) {
     int32_t relative_offset = Message::GetMessage(this, source_offset_)
                                   ->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) { // Field not present.
-      return;
+      return absl::OkStatus();
     }
-    int32_t *discrim = GetBuffer()->template ToAddress<int32_t>(
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     *discrim = field_numbers_[Id];
+    // TODO: this isn't right.  If the field is a message, it can fail to clone.
     std::get<Id>(value_).Set(other, GetRuntime(),
                              GetMessageBinaryStart() + relative_offset + 4);
+    return absl::OkStatus();
   }
 
+  template <int Id> bool IsPresent() const {
+    int32_t relative_offset = Message::GetMessage(this, source_offset_)
+                                  ->FindFieldOffset(field_numbers_[Id]);
+    if (relative_offset < 0) {
+      return false;
+    }
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
+        GetMessageBinaryStart() + relative_offset);
+    return *discrim == field_numbers_[Id];
+  }
 
 private:
-  toolbelt::PayloadBuffer *GetBuffer() const {
+  ::toolbelt::PayloadBuffer *GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  toolbelt::PayloadBuffer **GetBufferAddr() const {
+  ::toolbelt::PayloadBuffer **GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
-  toolbelt::BufferOffset GetMessageBinaryStart() const {
+  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
@@ -623,7 +656,7 @@ private:
   }
 
   uint32_t source_offset_;
-  toolbelt::BufferOffset relative_binary_offset_;
+  ::toolbelt::BufferOffset relative_binary_offset_;
   std::vector<int> field_numbers_; // field number for each tuple type
   mutable std::tuple<T...> value_;
 };

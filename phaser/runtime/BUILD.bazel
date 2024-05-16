@@ -5,6 +5,7 @@ cc_library(
     srcs = [
         "message.cc",
         "wireformat.cc",
+        "phaser_bank.cc",
     ],
     hdrs = [
         "any.h",
@@ -15,6 +16,7 @@ cc_library(
         "union.h",
         "vectors.h",
         "wireformat.h",
+        "phaser_bank.h",
     ],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",

@@ -15,7 +15,7 @@
 namespace phaser {
 
 template <typename Field, typename T> struct FieldIterator {
-  FieldIterator(const Field *f, toolbelt::BufferOffset o, bool r = false)
+  FieldIterator(const Field *f, ::toolbelt::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
   FieldIterator &operator++() {
@@ -57,47 +57,47 @@ template <typename Field, typename T> struct FieldIterator {
   bool operator!=(const FieldIterator &it) const { return !operator==(it); }
 
   const Field *field;
-  toolbelt::BufferOffset offset;
+  ::toolbelt::BufferOffset offset;
   bool reverse;
 };
 
 template <typename Field> struct StringFieldIterator {
-  StringFieldIterator(const Field *f, toolbelt::BufferOffset o, bool r = false)
+  StringFieldIterator(const Field *f, ::toolbelt::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
   StringFieldIterator &operator++() {
     if (reverse) {
-      offset -= sizeof(toolbelt::BufferOffset);
+      offset -= sizeof(::toolbelt::BufferOffset);
     } else {
-      offset += sizeof(toolbelt::BufferOffset);
+      offset += sizeof(::toolbelt::BufferOffset);
     }
     return *this;
   }
   StringFieldIterator &operator--() {
     if (reverse) {
-      offset += sizeof(toolbelt::BufferOffset);
+      offset += sizeof(::toolbelt::BufferOffset);
     } else {
-      offset -= sizeof(toolbelt::BufferOffset);
+      offset -= sizeof(::toolbelt::BufferOffset);
     }
     return *this;
   }
   StringFieldIterator operator+(size_t i) {
     if (reverse) {
       return StringFieldIterator(
-          field, field->BaseOffset() - i * sizeof(toolbelt::BufferOffset),
+          field, field->BaseOffset() - i * sizeof(::toolbelt::BufferOffset),
           true);
     }
     return StringFieldIterator(field, field->BaseOffset() +
-                                          i * sizeof(toolbelt::BufferOffset));
+                                          i * sizeof(::toolbelt::BufferOffset));
   }
   StringFieldIterator operator-(size_t i) {
     if (reverse) {
       return StringFieldIterator(
-          field, field->BaseOffset() + i * sizeof(toolbelt::BufferOffset),
+          field, field->BaseOffset() + i * sizeof(::toolbelt::BufferOffset),
           true);
     }
     return StringFieldIterator(field, field->BaseOffset() -
-                                          i * sizeof(toolbelt::BufferOffset));
+                                          i * sizeof(::toolbelt::BufferOffset));
   }
   std::string_view operator*() const {
     return field->GetBuffer()->GetStringView(field->BaseOffset() + offset);
@@ -111,12 +111,12 @@ template <typename Field> struct StringFieldIterator {
   }
 
   const Field *field;
-  toolbelt::BufferOffset offset;
+  ::toolbelt::BufferOffset offset;
   bool reverse;
 };
 
 template <typename Field, typename T> struct EnumFieldIterator {
-  EnumFieldIterator(const Field *f, toolbelt::BufferOffset o, bool r = false)
+  EnumFieldIterator(const Field *f, ::toolbelt::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
   EnumFieldIterator &operator++() {
@@ -168,7 +168,7 @@ template <typename Field, typename T> struct EnumFieldIterator {
   bool operator!=(const EnumFieldIterator &it) const { return !operator==(it); }
 
   const Field *field;
-  toolbelt::BufferOffset offset;
+  ::toolbelt::BufferOffset offset;
   bool reverse;
 };
 
