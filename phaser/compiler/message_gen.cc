@@ -2,6 +2,7 @@
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include <algorithm>
+#include <cassert>
 #include <ctype.h>
 
 namespace phaser {
@@ -370,17 +371,14 @@ void MessageGenerator::CompileUnions() {
     const auto &field = message_->field(i);
     const google::protobuf::OneofDescriptor *oneof = field->containing_oneof();
     if (oneof == nullptr) {
+      // Not a oneof, already handled in CompileFields.
       continue;
     }
+    // We will have created a UnionInfo during the first pass in CompileFields.
     auto it = unions_.find(oneof);
-    std::shared_ptr<UnionInfo> union_info;
-    if (it == unions_.end()) {
-      union_info = std::make_shared<UnionInfo>(oneof, 4, oneof->name() + "_",
-                                               "UnionField");
-      unions_[oneof] = union_info;
-    } else {
-      union_info = it->second;
-    }
+    assert(it != unions_.end());
+
+    auto union_info = it->second;
     // Append field to the members of the union.
     std::string field_type = FieldUnionCType(field);
     // Append union type to the end of the the union member type
@@ -413,7 +411,19 @@ void MessageGenerator::CompileFields() {
     int32_t field_size;
     uint32_t next_id = id;
     if (oneof != nullptr) {
-      // Oneof fields are handled separately.
+      // In order to keep oneof fields in the correct position for printing so
+      // that we match the protobuf printer, we create the union field here and
+      // add it to the fields_in_order_ vector.  We will fill it in later during
+      // the CompileUnions phase.  Since there will be multiple fields in the
+      // union and we see each of them here, we only add it the first time we
+      // see the oneof.
+      auto it = unions_.find(oneof);
+      if (it == unions_.end()) {
+        auto union_info = std::make_shared<UnionInfo>(
+            oneof, 4, oneof->name() + "_", "UnionField");
+        unions_[oneof] = union_info;
+        fields_in_order_.push_back(union_info);
+      }
       continue;
     } else if (field->is_repeated()) {
       field_type = FieldRepeatedCType(field);
@@ -434,6 +444,7 @@ void MessageGenerator::CompileFields() {
     fields_.push_back(
         std::make_shared<FieldInfo>(field, offset, id, field->name() + "_",
                                     field_type, FieldCType(field), field_size));
+    fields_in_order_.push_back(fields_.back());
     offset += field_size;
     id = next_id;
   }
@@ -496,19 +507,26 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   // Generate field metadata.
   GenerateFieldMetadata(os);
 
-  os << "  static std::string GetFullName() { return \""
-     << message_->full_name() << "\"; }\n";
-  os << "  static std::string GetName() { return \"" << message_->name()
+  os << "  static std::string FullName() { return \"" << message_->full_name()
+     << "\"; }\n";
+  os << "  static std::string Name() { return \"" << message_->name()
      << "\"; }\n\n";
 
   os << "friend std::ostream &operator<<(std::ostream &os, const "
      << MessageName(message_) << " &msg);\n";
+
+  os << R"XXX(void DebugDump() {
+runtime->pb->Dump(std::cout);
+toolbelt::Hexdump(runtime->pb, runtime->pb->hwm);
+}
+)XXX";
 
   GenerateNestedTypes(os);
   GenerateFieldNumbers(os);
 
   GenerateIndent(os);
   GenerateCopy(os, true);
+  GenerateDebugString(os);
 
   // Generate protobuf accessors.
   GenerateProtobufAccessors(os);
@@ -549,6 +567,9 @@ void MessageGenerator::GenerateSource(std::ostream &os) {
   GenerateSerializer(os, false);
   // Generate deserializer.
   GenerateDeserializer(os, false);
+
+  // Phaser bank
+  GeneratePhaserBank(os);
 }
 
 void MessageGenerator::GenerateFieldDeclarations(std::ostream &os) {
@@ -612,13 +633,13 @@ void MessageGenerator::GenerateMainConstructor(std::ostream &os, bool decl) {
   if (decl) {
     os << "  " << MessageName(message_)
        << "(std::shared_ptr<::phaser::MessageRuntime> runtime, "
-          "toolbelt::BufferOffset "
+          "::toolbelt::BufferOffset "
           "offset);\n";
     return;
   }
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
   os << "std::shared_ptr<::phaser::MessageRuntime> runtime, "
-        "toolbelt::BufferOffset "
+        "::toolbelt::BufferOffset "
         "offset) : Message(runtime, offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
@@ -657,7 +678,7 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
     os << "  static " << MessageName(message_)
        << " CreateMutable(void *addr, size_t size);\n";
     os << "  static " << MessageName(message_)
-       << " CreateReadonly(void *addr);\n";
+       << " CreateReadonly(const void *addr, size_t size);\n";
     os << "  static " << MessageName(message_)
        << " CreateDynamicMutable(size_t initial_size);\n";
     os << "  void InitDynamicMutable(size_t initial_size);\n";
@@ -666,9 +687,9 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
   os << "// Create a mutable message in the given memory.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateMutable(void *addr, size_t size) {\n"
-        "  toolbelt::PayloadBuffer *pb = new (addr) "
-        "toolbelt::PayloadBuffer(size);\n"
-        "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  ::toolbelt::PayloadBuffer *pb = new (addr) "
+        "::toolbelt::PayloadBuffer(size);\n"
+        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
@@ -684,13 +705,14 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "\n";
 
   os << "// Create a readonly message that already exists at the given "
-        "address.\n";
+        "address with a size.\n";
   os << MessageName(message_) << " " << MessageName(message_)
-     << "::CreateReadonly(void *addr) {\n"
-        "  toolbelt::PayloadBuffer *pb = "
-        "reinterpret_cast<toolbelt::PayloadBuffer "
-        "*>(addr);\n"
-        "  auto runtime = std::make_shared<::phaser::MessageRuntime>(pb);\n"
+     << "::CreateReadonly(const void *addr, size_t size) {\n"
+        "  ::toolbelt::PayloadBuffer *pb ="
+        "reinterpret_cast<::toolbelt::PayloadBuffer "
+        "*>(const_cast<void*>(addr));\n"
+        "  auto runtime = std::make_shared<::phaser::MessageRuntime>(pb, "
+        "size);\n"
         "  return "
      << MessageName(message_)
      << "(runtime, pb->message);\n"
@@ -699,9 +721,9 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "the heap.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateDynamicMutable(size_t initial_size = 1024) {\n"
-        "  toolbelt::PayloadBuffer *pb = "
+        "  ::toolbelt::PayloadBuffer *pb = "
         "::phaser::NewDynamicBuffer(initial_size);\n"
-        "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
@@ -717,9 +739,9 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
 
   os << "void " << MessageName(message_)
      << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
-        "  toolbelt::PayloadBuffer *pb = "
+        "  ::toolbelt::PayloadBuffer *pb = "
         "::phaser::NewDynamicBuffer(initial_size);\n"
-        "  toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
@@ -955,7 +977,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       exit(1);
     }
   } else {
-    // Look at the field type and generate the appropriate accessor.
+    // Non-repeated fields.
     switch (field->field->type()) {
     case google::protobuf::FieldDescriptor::TYPE_INT32:
     case google::protobuf::FieldDescriptor::TYPE_SINT32:
@@ -985,6 +1007,11 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       if (union_index == -1) {
         os << "  bool has_" << field_name << "() const {\n";
         os << "    return " << member_name << ".IsPresent();\n";
+        os << "  }\n";
+      } else {
+        os << "  bool has_" << field_name << "() const {\n";
+        os << "    return " << member_name << ".template IsPresent<"
+           << std::to_string(union_index) << ">();\n";
         os << "  }\n";
       }
       os << "  void clear_" << field_name << "() {\n";
@@ -1061,6 +1088,11 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "    return " << member_name << ".Mutable<"
            << std::to_string(union_index) << ", "
            << MessageName(field->field->message_type()) << ">();\n";
+        os << "  }\n";
+
+        os << "  bool has_" << field_name << "() const {\n";
+        os << "    return " << member_name << ".template IsPresent<"
+           << std::to_string(union_index) << ">();\n";
         os << "  }\n";
       }
       if (IsAny(field->field)) {
@@ -1295,7 +1327,32 @@ void MessageGenerator::GenerateIndent(std::ostream &os) {
 void MessageGenerator::GenerateStreamer(std::ostream &os) {
   os << "inline std::ostream &operator<<(std::ostream &os, const "
      << MessageName(message_) << " &msg) {\n";
-  for (auto &field : fields_) {
+  // We need to print the fields in the same order as they appear in the
+  // message definition.  This is to match the output from the protobuf
+  // printer.
+  for (auto &field : fields_in_order_) {
+    if (field->IsUnion()) {
+      auto u = std::static_pointer_cast<UnionInfo>(field);
+      os << "  switch (msg." << u->member_name << ".Discriminator()) {\n";
+      for (size_t i = 0; i < u->members.size(); i++) {
+        auto &field = u->members[i];
+        os << "  case " << field->field->number() << ":\n";
+        os << "    msg." << u->member_name << ".PrintIndent(os);\n";
+        if (field->field->type() ==
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+          os << "    os << \"" << field->field->name() << " \";\n";
+        } else {
+
+          os << "    os << \"" << field->field->name() << ": \";\n";
+        }
+        os << "    msg." << u->member_name << ".Print<" << i << ">(os);\n";
+        os << "    os << std::endl;\n";
+        os << "    break;\n";
+      }
+      os << "  }\n";
+      continue;
+    }
+
     if (field->field->is_repeated()) {
       os << "  for (auto& v : msg." << field->member_name << ") {\n";
       os << "    msg." << field->member_name << ".PrintIndent(os);\n";
@@ -1313,25 +1370,18 @@ void MessageGenerator::GenerateStreamer(std::ostream &os) {
       os << "  if (msg." << field->member_name << ".IsPresent()) {\n";
       os << "    msg." << field->member_name << ".PrintIndent(os);\n";
       // e.g.    os << "str: " << msg.str_ << std::endl;
-      os << "    os << \"" << field->field->name() << ": \" << msg."
-         << field->member_name << " << std::endl;\n";
+      if (field->field->type() ==
+          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+        // Prootobuf doesn't put a colon after the name.
+        os << "    os << \"" << field->field->name() << " \" << msg.";
+      } else {
+        os << "    os << \"" << field->field->name() << ": \" << msg.";
+      }
+      os << field->member_name << " << std::endl;\n";
       os << "  }\n";
     }
   }
-  // Unions
-  for (auto & [ oneof, u ] : unions_) {
-    os << "  switch (msg." << u->member_name << ".Discriminator()) {\n";
-    for (size_t i = 0; i < u->members.size(); i++) {
-      auto &field = u->members[i];
-      os << "  case " << field->field->number() << ":\n";
-      os << "    msg." << u->member_name << ".PrintIndent(os);\n";
-      os << "    os << \"" << field->field->name() << ": \";\n";
-      os << "    msg." << u->member_name << ".Print<" << i << ">(os);\n";
-      os << "    os << std::endl;\n";
-      os << "    break;\n";
-    }
-    os << "  }\n";
-  }
+
   os << "  return os;\n";
   os << "}\n\n";
 }
@@ -1339,21 +1389,25 @@ void MessageGenerator::GenerateStreamer(std::ostream &os) {
 void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
   if (decl) {
     os << "template <typename T>\n";
-    os << "void CopyFrom(const T & other);\n";
+    os << "absl::Status CloneFrom(const T & other);\n\n";
+    os << "void CopyFrom(const " << MessageName(message_) << " & other) {\n";
+    os << "  (void)CloneFrom(other);\n";
+    os << "}\n\n";
     return;
   }
 
-  // CopyFrom.
+  // CloneFrom.
   os << "template <typename T>\n";
-  os << "inline void " << MessageName(message_)
-     << "::CopyFrom(const T & other) {\n";
+  os << "inline absl::Status " << MessageName(message_)
+     << "::CloneFrom(const T & other) {\n";
   for (auto &field : fields_) {
     if (field->field->is_repeated()) {
       os << "  for (auto& v : other." << field->field->name() << "()) {\n";
       if (field->field->type() ==
           google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
         os << "    auto* m = add_" << field->field->name() << "();\n";
-        os << "    m->CopyFrom(v.Msg());\n";
+        os << "    if (absl::Status s = m->CloneFrom(v.Msg()); !s.ok()) return "
+              "s;\n";
       } else {
         os << "    add_" << field->field->name() << "(v);\n";
       }
@@ -1364,7 +1418,8 @@ void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
       if (field->field->type() ==
           google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
         os << "    auto* m = mutable_" << field->field->name() << "();\n";
-        os << "    m->CopyFrom(other." << field->field->name() << "());\n";
+        os << "    if (absl::Status s = m->CloneFrom(other."
+           << field->field->name() << "()); !s.ok()) return s;\n";
       } else {
         os << "    set_" << field->field->name() << "(other."
            << field->field->name() << "());\n";
@@ -1378,14 +1433,119 @@ void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
       for (size_t i = 0; i < u->members.size(); i++) {
         auto &field = u->members[i];
         os << "  case " << field->field->number() << ":\n";
-        os << "    " << u->member_name << ".template CopyFrom<" << i
-           << ">(other." << field->field->name() << "());\n";
+        os << "    if (absl::Status s = " << u->member_name
+           << ".template CloneFrom<" << i << ">(other." << field->field->name()
+           << "()); !s.ok()) return s;\n";
         os << "    break;\n";
       }
       os << "  }\n";
     }
   }
+  os << "  return absl::OkStatus();\n";
   os << "}\n\n";
+}
+
+// DebugString
+void MessageGenerator::GenerateDebugString(std::ostream &os) {
+  os << R"XXX(
+std::string DebugString() const {
+  std::ostringstream os;
+  os << *this;
+  return os.str();
+}
+)XXX";
+}
+
+void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
+  os << "static void " << MessageName(message_)
+     << "StreamTo(const ::phaser::Message& msg, std::ostream& os, int indent) "
+        "{\n";
+  os << "  const " << MessageName(message_) << " *m = static_cast<const "
+     << MessageName(message_) << "*>(&msg);\n";
+  os << "  m->Indent(indent);\n";
+  os << "  os << *m;\n";
+  os << "  m->Indent(-indent);\n";
+  os << "}\n\n";
+
+  os << "static absl::Status " << MessageName(message_)
+     << "SerializeToBuffer(const ::phaser::Message& msg, ::phaser::ProtoBuffer "
+        "&buffer) {\n";
+  os << "  const " << MessageName(message_) << " *m = static_cast<const "
+     << MessageName(message_) << "*>(&msg);\n";
+  os << "  return m->Serialize(buffer);\n";
+  os << "}\n\n";
+
+  os << "static absl::Status " << MessageName(message_)
+     << "DeserializeFromBuffer(::phaser::Message &msg, ::phaser::ProtoBuffer "
+        "&buffer) {\n";
+  os << "  " << MessageName(message_) << " *m = static_cast<"
+     << MessageName(message_) << "*>(&msg);\n";
+  os << "  return m->Deserialize(buffer);\n";
+  os << "}\n\n";
+
+  os << "static size_t " << MessageName(message_)
+     << "SerializedSize(const ::phaser::Message& msg) {\n";
+  os << "  const " << MessageName(message_) << " *m = static_cast<const "
+     << MessageName(message_) << "*>(&msg);\n";
+  os << "  return m->SerializedSize();\n";
+  os << "}\n\n";
+
+  os << "static ::phaser::Message* " << MessageName(message_)
+     << "AllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, "
+        "::toolbelt::BufferOffset offset) {\n";
+  os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
+  os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
+  os << "  return msg;\n";
+  os << "}\n\n";
+
+  os << "static void " << MessageName(message_)
+     << "Clear(::phaser::Message &msg) {\n";
+  os << "  " << MessageName(message_) << " *m = static_cast<"
+     << MessageName(message_) << "*>(&msg);\n";
+  os << "  m->Clear();\n";
+  os << "}\n\n";
+
+  os << "static absl::Status " << MessageName(message_)
+     << "Copy(const ::phaser::Message &src, ::phaser::Message& dst) {\n";
+  os << "  const " << MessageName(message_) << " *src_m = static_cast<const "
+     << MessageName(message_) << "*>(&src);\n";
+  os << "  " << MessageName(message_) << " *dst_m = static_cast<"
+     << MessageName(message_) << "*>(&dst);\n";
+  os << "  return dst_m->CloneFrom(*src_m);\n";
+  os << "}\n\n";
+
+  os << "static const ::phaser::Message *" << MessageName(message_)
+     << "MakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime, const "
+        "void *data) {\n";
+  os << "  return new " << MessageName(message_)
+     << "(runtime, runtime->ToOffset(data));\n";
+  os << "}\n\n";
+
+  os << "static size_t " << MessageName(message_) << "BinarySize() { return "
+     << MessageName(message_) << "::BinarySize(); }\n\n";
+
+  os << "static ::phaser::BankInfo " << MessageName(message_)
+     << "BankInfo = {\n";
+  os << "  .stream_to = " << MessageName(message_) << "StreamTo,\n";
+  os << "  .serialize_to_buffer = " << MessageName(message_)
+     << "SerializeToBuffer,\n";
+  os << "  .deserialize_from_buffer = " << MessageName(message_)
+     << "DeserializeFromBuffer,\n";
+  os << "  .serialized_size = " << MessageName(message_) << "SerializedSize,\n";
+  os << "  .allocate_at_offset = " << MessageName(message_)
+     << "AllocateAtOffset,\n";
+  os << "  .clear = " << MessageName(message_) << "Clear,\n";
+  os << "  .copy = " << MessageName(message_) << "Copy,\n";
+  os << "  .make_existing = " << MessageName(message_) << "MakeExisting,\n";
+  os << "  .binary_size = " << MessageName(message_) << "BinarySize,\n";
+  os << "};\n\n";
+
+  os << "static struct " << MessageName(message_) << "BankInitializer {\n";
+  os << "  " << MessageName(message_) << "BankInitializer() {\n";
+  os << "    ::phaser::PhaserBankRegisterMessage(" << MessageName(message_)
+     << "::FullName(), " << MessageName(message_) << "BankInfo);\n";
+  os << "  }\n";
+  os << "} " << MessageName(message_) << "BankInitializer;\n";
 }
 
 } // namespace phaser

@@ -18,6 +18,8 @@ struct FieldInfo {
             const std::string &ctype, uint32_t size)
       : field(f), offset(o), id(i), member_name(name), member_type(mtype),
         c_type(ctype), binary_size(size) {}
+  virtual ~FieldInfo() = default;
+  virtual bool IsUnion() const { return false; }
   const google::protobuf::FieldDescriptor *field;
   uint32_t offset;
   uint32_t id;
@@ -33,6 +35,7 @@ struct UnionInfo : public FieldInfo {
             const std::string &name, const std::string &type)
       : FieldInfo(nullptr, 0, 0, name, type, "", 4), oneof(o),
         binary_size(size) {}
+  bool IsUnion() const override { return true; }
   const google::protobuf::OneofDescriptor *oneof;
   std::vector<std::shared_ptr<FieldInfo>> members;
   uint32_t binary_size;
@@ -95,7 +98,9 @@ private:
   void GenerateAnyProtobufAccessors(std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
                                       int union_index, std::ostream &os);
   void GenerateCopy(std::ostream &os, bool decl);
-  
+  void GenerateDebugString(std::ostream& os);
+  void GeneratePhaserBank(std::ostream& os);
+
   std::string EnumName(const google::protobuf::EnumDescriptor *desc);
   // If is_ref is true, it changes how the generator treats google.protobuf.Any.  For
   // a reference to a google.protobuf.Any, we use an internal ::phaser::AnyMessage type.
@@ -114,6 +119,7 @@ private:
   std::map<const google::protobuf::OneofDescriptor *,
            std::shared_ptr<UnionInfo>>
       unions_;
+  std::vector<std::shared_ptr<FieldInfo>> fields_in_order_;
   uint32_t binary_size_ = 4;
   uint32_t presence_mask_size_ = 0;
   std::string added_namespace_;

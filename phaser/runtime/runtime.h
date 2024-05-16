@@ -6,11 +6,11 @@
 #include "phaser/runtime/any.h"
 #include "phaser/runtime/fields.h"
 #include "phaser/runtime/iterators.h"
-#include "toolbelt/payload_buffer.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/union.h"
 #include "phaser/runtime/vectors.h"
 #include "toolbelt/hexdump.h"
+#include "toolbelt/payload_buffer.h"
 
 namespace phaser {
 #define DEFINE_PRIMITIVE_FIELD_STREAMER(cname)                                 \
@@ -31,14 +31,48 @@ DEFINE_PRIMITIVE_FIELD_STREAMER(Bool)
 
 #undef DEFINE_PRIMITIVE_FIELD_STREAMER
 
+inline std::string StringWithOctalNonPrintables(std::string_view str) {
+  std::string result;
+  for (char c : str) {
+    if (c >= 32 && c < 127) {
+      result.push_back(c);
+    } else {
+      unsigned char uc = static_cast<unsigned char>(c);
+      // Protobuf prints some non-printable as C-escape sequences (but only \r, \n and \t).
+      // Everything else is printed as octal (3 digits).
+      switch (uc) {
+      case '\n':
+        result.push_back('\\');
+        result.push_back('n');
+        break;
+      case '\r':
+        result.push_back('\\');
+        result.push_back('r');
+        break;
+      case '\t':
+        result.push_back('\\');
+        result.push_back('t');
+        break;
+      default:
+        result.push_back('\\');
+        result.push_back('0' + ((uc >> 6) & 7));
+        result.push_back('0' + ((uc >> 3) & 7));
+        result.push_back('0' + (uc & 7));
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 inline std::ostream &operator<<(std::ostream &os, const StringField &field) {
-  os << "\"" << field.Get() << "\"";
+  os << "\"" << StringWithOctalNonPrintables(field.Get()) << "\"";
   return os;
 }
 
 inline std::ostream &operator<<(std::ostream &os,
                                 const NonEmbeddedStringField &field) {
-  os << "\"" << field.Get() << "\"";
+  os << "\"" << StringWithOctalNonPrintables(field.Get()) << "\"";
   return os;
 }
 

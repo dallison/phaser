@@ -1,8 +1,14 @@
 syntax = "proto3";
 
-// These messages must match the hand-coded ones in message_test.cc
+// There are tests in message_test.cc that use both the messages hand-coded in there
+// and InnnerMessage and TestMessage defined here.  The messages defined here should
+// be serialization-compatible with the hand-coded messages in message_test.cc.
+// So this means that the field numbers and types should match up.  Also, don't
+// delete fields from these messages, as the tests in message_test.cc rely on them.
+// You can add fields to these messages without also adding them to the hand-coded
+// messages because this is compatible for serialization.
 package foo.bar;
-// import "google.protobuf.any.proto";
+import "google/protobuf/any.proto";
 
 enum EnumTest {
   UNSET = 0; 
@@ -26,7 +32,7 @@ message TestMessage {
   int64 y = 101;
   string s = 102;
   InnerMessage m = 103;
-  //google.protobuf.Any any = 200;
+  google.protobuf.Any any = 200;
 
   // Repeated fields.
   repeated int32 vi32 = 104;
@@ -48,6 +54,7 @@ message TestMessage {
     int64 u3a = 111;
     InnerMessage u3b = 112;
   }
+  bytes buffer = 113;
 }
 
 message TestMessageNewFields {
