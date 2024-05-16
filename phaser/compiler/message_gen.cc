@@ -512,13 +512,14 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   os << "  static std::string Name() { return \"" << message_->name()
      << "\"; }\n\n";
 
-  os << "friend std::ostream &operator<<(std::ostream &os, const "
-     << MessageName(message_) << " &msg);\n";
+  os << "  friend std::ostream &operator<<(std::ostream &os, const "
+     << MessageName(message_) << " &msg);\n\n";
 
-  os << R"XXX(void DebugDump() {
-runtime->pb->Dump(std::cout);
-toolbelt::Hexdump(runtime->pb, runtime->pb->hwm);
-}
+  os << R"XXX(  void DebugDump() {
+    runtime->pb->Dump(std::cout);
+    toolbelt::Hexdump(runtime->pb, runtime->pb->hwm);
+  }
+
 )XXX";
 
   GenerateNestedTypes(os);
@@ -540,9 +541,9 @@ toolbelt::Hexdump(runtime->pb, runtime->pb->hwm);
   // Generate deserializer.
   GenerateDeserializer(os, true);
 
-  os << "private:\n";
+  os << "\nprivate:\n";
   GenerateFieldDeclarations(os);
-  os << "};\n";
+  os << "};\n\n";
 
   // Steamer outside the class.
   GenerateStreamer(os);
@@ -1388,11 +1389,11 @@ void MessageGenerator::GenerateStreamer(std::ostream &os) {
 
 void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
   if (decl) {
-    os << "template <typename T>\n";
-    os << "absl::Status CloneFrom(const T & other);\n\n";
-    os << "void CopyFrom(const " << MessageName(message_) << " & other) {\n";
-    os << "  (void)CloneFrom(other);\n";
-    os << "}\n\n";
+    os << "  template <typename T>\n";
+    os << "  absl::Status CloneFrom(const T & other);\n\n";
+    os << "  void CopyFrom(const " << MessageName(message_) << " & other) {\n";
+    os << "    (void)CloneFrom(other);\n";
+    os << "  }\n\n";
     return;
   }
 
@@ -1448,11 +1449,12 @@ void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
 // DebugString
 void MessageGenerator::GenerateDebugString(std::ostream &os) {
   os << R"XXX(
-std::string DebugString() const {
-  std::ostringstream os;
-  os << *this;
-  return os.str();
-}
+  std::string DebugString() const {
+    std::ostringstream os;
+    os << *this;
+    return os.str();
+  }
+
 )XXX";
 }
 
