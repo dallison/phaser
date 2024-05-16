@@ -53,3 +53,21 @@ phaser_library(
     runtime = "//phaser/runtime:phaser_runtime",
     deps = [":test_proto"],
 )
+
+proto_library(
+    name = "vision_proto",
+    srcs = ["vision.proto"],
+)
+
+cc_proto_library(
+    name = "vision_cc_proto",
+    deps = [":vision_proto"],
+)
+
+phaser_library(
+    name = "vision_phaser",
+    add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":vision_proto"],
+)
+

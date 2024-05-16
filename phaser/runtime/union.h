@@ -66,7 +66,7 @@ protected:
     }                                                                          \
     size_t SerializedSize(int number, std::shared_ptr<MessageRuntime> runtime, \
                           uint32_t abs_offset) const {                         \
-      if (FixedSize) {                                                         \
+      if constexpr (FixedSize) {                                               \
         return ProtoBuffer::TagSize(number,                                    \
                                     ProtoBuffer::FixedWireType<type>()) +      \
                sizeof(type);                                                   \
@@ -79,7 +79,7 @@ protected:
     absl::Status Serialize(int number, ProtoBuffer &buffer,                    \
                            std::shared_ptr<MessageRuntime> runtime,            \
                            uint32_t abs_offset) const {                        \
-      if (FixedSize) {                                                         \
+      if constexpr (FixedSize) {                                               \
         return buffer.SerializeFixed<type>(number, Get(runtime, abs_offset));  \
       } else {                                                                 \
         return buffer.SerializeVarint<type, Signed>(number,                    \
@@ -90,7 +90,7 @@ protected:
                              std::shared_ptr<MessageRuntime> runtime,          \
                              uint32_t abs_offset) {                            \
       absl::StatusOr<type> v;                                                  \
-      if (FixedSize) {                                                         \
+      if constexpr (FixedSize) {                                               \
         v = buffer.DeserializeFixed<type>();                                   \
       } else {                                                                 \
         v = buffer.DeserializeVarint<type, Signed>();                          \
@@ -102,7 +102,7 @@ protected:
       return absl::OkStatus();                                                 \
     }                                                                          \
     constexpr WireType GetWireType() {                                         \
-      if (FixedSize) {                                                         \
+      if constexpr (FixedSize) {                                               \
         return WireType::kFixed64;                                             \
       } else {                                                                 \
         return WireType::kVarint;                                              \
@@ -226,8 +226,8 @@ public:
   absl::Span<char> Allocate(size_t size,
                             std::shared_ptr<MessageRuntime> runtime,
                             uint32_t abs_offset) {
-    return ::toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(runtime), size,
-                                                   abs_offset);
+    return ::toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(runtime),
+                                                     size, abs_offset);
   }
 
   bool Equal(const UnionStringField &other,
@@ -269,7 +269,8 @@ public:
     if (!v.ok()) {
       return v.status();
     }
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v, abs_offset);
+    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v,
+                                         abs_offset);
     return absl::OkStatus();
   }
 
@@ -323,7 +324,8 @@ public:
     // Allocate a new message.
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    ::toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    ::toolbelt::BufferOffset msg_offset =
+        GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
@@ -358,7 +360,8 @@ public:
     // Allocate a new message.
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    ::toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    ::toolbelt::BufferOffset msg_offset =
+        GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
@@ -415,7 +418,8 @@ public:
     }
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize(), 8);
-    ::toolbelt::BufferOffset msg_offset = GetBuffer(runtime)->ToOffset(msg_addr);
+    ::toolbelt::BufferOffset msg_offset =
+        GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;

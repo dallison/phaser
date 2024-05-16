@@ -52,6 +52,9 @@ TEST(PhaserTest, ProtobufCompat) {
 
   msg.set_e(foo::bar::phaser::FOO);
 
+  msg.set_fl(1.3);
+  msg.set_db(2.4);
+  
   std::cout << msg;
 
   ASSERT_EQ(1234, msg.x());

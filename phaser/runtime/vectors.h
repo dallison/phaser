@@ -166,8 +166,8 @@ public:
 #undef CTYPE
 
   void push_back(const T &v) {
-    ::toolbelt::PayloadBuffer::VectorPush<T>(GetBufferAddr(),
-                                           Header(relative_binary_offset_), v);
+    ::toolbelt::PayloadBuffer::VectorPush<T>(
+        GetBufferAddr(), Header(relative_binary_offset_), v);
   }
 
   void reserve(size_t n) {
@@ -182,7 +182,7 @@ public:
 
   void Clear() {
     ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                            Header(relative_binary_offset_));
+                                              Header(relative_binary_offset_));
   }
   void clear() { Clear(); } // STL compatibility.
 
@@ -231,8 +231,8 @@ public:
     size_t length = 0;
 
     // Packed is default in proto3 but optional in proto2.
-    if (Packed) {
-      if (FixedSize) {
+    if constexpr (Packed) {
+      if constexpr (FixedSize) {
         return ProtoBuffer::LengthDelimitedSize(Number(), sz * sizeof(T));
       } else {
         T *base = GetRuntime()->template ToAddress<T>(BaseOffset());
@@ -248,7 +248,7 @@ public:
 
     // Not packed, just a sequence of individual fields, all with the same
     // tag.
-    if (FixedSize) {
+    if constexpr (FixedSize) {
       length += sz * (ProtoBuffer::TagSize(Number(),
                                            ProtoBuffer::FixedWireType<T>()) +
                       sizeof(T));
@@ -277,8 +277,8 @@ public:
       return absl::OkStatus();
     }
     // Packed is default in proto3 but optional in proto2.
-    if (Packed) {
-      if (FixedSize) {
+    if constexpr (Packed) {
+      if constexpr (FixedSize) {
         return buffer.SerializeLengthDelimited(
             Number(), reinterpret_cast<const char *>(base), sz * sizeof(T));
       } else {
@@ -306,7 +306,7 @@ public:
 
     // Not packed, just a sequence of individual fields, all with the same
     // tag.
-    if (FixedSize) {
+    if constexpr (FixedSize) {
       for (size_t i = 0; i < sz; i++) {
         if (absl::Status status = buffer.SerializeFixed<T>(Number(), base[i]);
             !status.ok()) {
@@ -327,13 +327,13 @@ public:
   }
 
   absl::Status Deserialize(ProtoBuffer &buffer) {
-    if (Packed) {
+    if constexpr (Packed) {
       absl::StatusOr<absl::Span<char>> data =
           buffer.DeserializeLengthDelimited();
       if (!data.ok()) {
         return data.status();
       }
-      if (FixedSize) {
+      if constexpr (FixedSize) {
         resize(data->size() / sizeof(T));
         T *base = GetRuntime()->template ToAddress<T>(BaseOffset());
         memcpy(base, data->data(), data->size());
@@ -349,7 +349,7 @@ public:
         }
       }
     } else {
-      if (FixedSize) {
+      if constexpr (FixedSize) {
         absl::StatusOr<T> v = buffer.DeserializeFixed<T>();
         if (!v.ok()) {
           return v.status();
@@ -484,7 +484,7 @@ public:
 
   void Clear() {
     ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                            Header(relative_binary_offset_));
+                                              Header(relative_binary_offset_));
   }
   void clear() { Clear(); } // STL compatibility.
 
@@ -534,7 +534,7 @@ public:
     size_t length = 0;
 
     // Packed is default in proto3 but optional in proto2.
-    if (Packed) {
+    if constexpr (Packed) {
       T *base = GetRuntime()->template ToAddress<T>(BaseOffset());
       if (base == nullptr) {
         return 0;
@@ -570,7 +570,7 @@ public:
       return absl::OkStatus();
     }
     // Packed is default in proto3 but optional in proto2.
-    if (Packed) {
+    if constexpr (Packed) {
       size_t length = 0;
       for (size_t i = 0; i < sz; i++) {
         length += ProtoBuffer::VarintSize<T, false>(base[i]);
@@ -606,7 +606,7 @@ public:
   }
 
   absl::Status Deserialize(ProtoBuffer &buffer) {
-    if (Packed) {
+    if constexpr (Packed) {
       absl::StatusOr<absl::Span<char>> data =
           buffer.DeserializeLengthDelimited();
       if (!data.ok()) {
@@ -673,8 +673,8 @@ private:
   ::toolbelt::BufferOffset relative_binary_offset_;
 };
 
-// The vector contains a set of ::toolbelt::BufferOffsets allocated in the buffer,
-// each of which contains the absolute offset of the message.
+// The vector contains a set of ::toolbelt::BufferOffsets allocated in the
+// buffer, each of which contains the absolute offset of the message.
 template <typename T> class MessageVectorField : public Field {
 public:
   MessageVectorField() = default;
@@ -736,8 +736,8 @@ public:
 
   T *Add() {
     // Allocate a new message.
-    void *binary = ::toolbelt::PayloadBuffer::Allocate(GetBufferAddr(),
-                                                     T::BinarySize(), 8, true);
+    void *binary = ::toolbelt::PayloadBuffer::Allocate(
+        GetBufferAddr(), T::BinarySize(), 8, true);
     ::toolbelt::BufferOffset absolute_binary_offset =
         GetRuntime()->ToOffset(binary);
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
@@ -777,7 +777,8 @@ public:
 
   size_t capacity() const {
     ::toolbelt::BufferOffset *base =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(BaseOffset());
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+            BaseOffset());
 
     if (base == nullptr) {
       return 0;
@@ -1020,8 +1021,7 @@ public:
   NonEmbeddedStringField &back() { return strings_.back(); }
   const NonEmbeddedStringField &back() const { return strings_.back(); }
 
-  template <typename Str>
-  void push_back(Str s) {
+  template <typename Str> void push_back(Str s) {
     // Allocate string header in buffer.
     void *str_hdr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), sizeof(toolbelt::StringHeader), 4);
@@ -1039,13 +1039,11 @@ public:
   }
 
   void Add(const char *s, size_t len) { push_back(std::string(s, len)); }
-  template <typename Str>
-  void Add(Str s) { push_back(s); }
+  template <typename Str> void Add(Str s) { push_back(s); }
 
   std::string_view Get(int index) const { return (*this)[index].Get(); }
 
-  template <typename Str>
-  void Set(int index, Str s) {
+  template <typename Str> void Set(int index, Str s) {
     if (index >= strings_.size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
           GetBufferAddr(), Header(), index + 1);
@@ -1073,7 +1071,8 @@ public:
 
   size_t capacity() const {
     ::toolbelt::BufferOffset *base =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(BaseOffset());
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+            BaseOffset());
 
     if (base == nullptr) {
       return 0;

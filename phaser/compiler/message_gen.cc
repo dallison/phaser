@@ -175,7 +175,7 @@ std::string MessageGenerator::FieldCFieldType(
   case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
     return "DoubleField<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_FLOAT:
-    return "FloatField<true, false";
+    return "FloatField<true, false>";
   case google::protobuf::FieldDescriptor::TYPE_BOOL:
     return "BoolField<false, false>";
   case google::protobuf::FieldDescriptor::TYPE_ENUM:
@@ -864,7 +864,11 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
               field->field->type() ==
                   google::protobuf::FieldDescriptor::TYPE_FIXED32 ||
               field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_FIXED64
+                  google::protobuf::FieldDescriptor::TYPE_FIXED64 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_FLOAT ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_DOUBLE
           ? ", true"
           : ", false";
   std::string signed_string =
@@ -904,6 +908,12 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "  }\n";
       os << "  void clear_" << field_name << "() {\n";
       os << "    " << member_name << ".Clear();\n";
+      os << "  }\n";
+      os << "  void reserve_" << field_name << "(size_t num) {\n";
+      os << "    " << member_name << ".reserve(num);\n";
+      os << "  }\n";
+      os << "  void resize_" << field_name << "(size_t num) {\n";
+      os << "    " << member_name << ".resize(num);\n";
       os << "  }\n";
 
       // Strings have different accessors from primitive fields.
@@ -975,6 +985,12 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
          << sanitized_field_name << "() const {\n";
       os << "    " << member_name << ".Populate();\n";
       os << "    return " << member_name << ";\n";
+      os << "  }\n";
+     os << "  void reserve_" << field_name << "(size_t num) {\n";
+      os << "    " << member_name << ".reserve(num);\n";
+      os << "  }\n";
+      os << "  void resize_" << field_name << "(size_t num) {\n";
+      os << "    " << member_name << ".resize(num);\n";
       os << "  }\n";
       break;
     case google::protobuf::FieldDescriptor::TYPE_GROUP:

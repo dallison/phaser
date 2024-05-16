@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package robot;
+
+message MessageHeader {
+  uint64 timestamp = 1;
+  string frame_id = 2;
+}
+
+message CameraImage {
+  MessageHeader header = 1;
+  int32 rows = 2;
+  int32 cols = 3;
+  bytes image = 4;
+}
+
+message StereoImage {
+  MessageHeader header = 1;
+  CameraImage left = 2;
+  CameraImage right = 3;
+  CameraImage disparity = 4;
+}
+
+message LidarScan {
+  MessageHeader header = 1;
+  repeated double beams = 2;
+}
+
+

@@ -14,3 +14,18 @@ cc_test(
         "@toolbelt//toolbelt",
     ],
 )
+
+cc_test(
+    name = "perf_test",
+    srcs = [
+        "perf_test.cc",
+    ],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:vision_cc_proto",
+        "//phaser/testdata:vision_phaser",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest",
+        "@toolbelt//toolbelt",
+    ],
+)

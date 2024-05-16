@@ -56,6 +56,8 @@ message TestMessage {
   }
   bytes buffer = 113;
   EnumTest e = 114;
+  float fl = 115;
+  double db = 116;
 }
 
 message TestMessageNewFields {
