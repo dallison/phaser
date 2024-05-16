@@ -55,6 +55,7 @@ message TestMessage {
     InnerMessage u3b = 112;
   }
   bytes buffer = 113;
+  EnumTest e = 114;
 }
 
 message TestMessageNewFields {

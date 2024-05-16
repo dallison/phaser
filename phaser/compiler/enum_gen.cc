@@ -18,7 +18,7 @@ void EnumGenerator::GenerateHeader(std::ostream &os) {
     }
     os << "  " << const_name << " = " << value->number() << ",\n";
   }
-  os << "};\n";
+  os << "};\n\n";
 
   // Stringizer
   os << "struct " << name << "Stringizer {\n";
@@ -36,7 +36,7 @@ void EnumGenerator::GenerateHeader(std::ostream &os) {
   os << "    }\n";
   os << "    return \"\";\n";
   os << "  }\n";
-  os << "};\n";
+  os << "};\n\n";
 
   // Parser
   os << "struct " << name << "Parser {\n";
@@ -52,7 +52,19 @@ void EnumGenerator::GenerateHeader(std::ostream &os) {
   }
   os << "    return static_cast<" << name << ">(0);\n";
   os << "  }\n";
-  os << "};\n";
+  os << "};\n\n";
+
+  // Protobuf compatible _Name and _Parse functions.
+  os << "template <typename EnumOrInt>\n";
+  os << "inline std::string " << name << "_Name(EnumOrInt e) {\n";
+  os << "  " << name << "Stringizer s;\n";
+  os << "  return s(static_cast<" << name << ">(e));\n";
+  os << "}\n\n";
+
+  os << "inline void " << name << "_Parse(const std::string &s, " << name << "* value) {\n";
+  os << "  " << name << "Parser p;\n";
+  os << "  *value = p(s);\n";
+  os << "}\n\n";
 }
 
 } // namespace phaser

@@ -46,12 +46,22 @@ TEST(PhaserTest, ProtobufCompat) {
 
   msg.set_buffer(buffer_data);
 
+  msg.set_e(foo::bar::phaser::FOO);
+
   std::cout << msg;
 
   ASSERT_EQ(1234, msg.x());
   ASSERT_EQ(5678, msg.y());
   ASSERT_EQ("hello world", msg.s());
   ASSERT_EQ("Inner message", msg.m().str());
+
+  // Check enum printing and parsing functions.
+  ASSERT_EQ(foo::bar::phaser::FOO, msg.e());
+  ASSERT_EQ("FOO", foo::bar::phaser::EnumTest_Name(msg.e()));
+
+  foo::bar::phaser::EnumTest ee;
+  foo::bar::phaser::EnumTest_Parse("BAR", &ee);
+  ASSERT_EQ(foo::bar::phaser::BAR, ee);
 
   toolbelt::Hexdump(msg.Data(), msg.Size());
 
