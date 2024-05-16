@@ -342,6 +342,7 @@ TEST(PhaserTest, GarbageLoop) {
     std::cout << msg;
   }
 }
+
 TEST(PhaserTest, GarbageWithValidMagic) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {

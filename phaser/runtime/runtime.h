@@ -37,24 +37,23 @@ inline std::string StringWithOctalNonPrintables(std::string_view str) {
     if (c >= 32 && c < 127) {
       result.push_back(c);
     } else {
+      // Cast to unsigned to avoid sign extension.
       unsigned char uc = static_cast<unsigned char>(c);
-      // Protobuf prints some non-printable as C-escape sequences (but only \r, \n and \t).
-      // Everything else is printed as octal (3 digits).
+
+      // Protobuf prints some non-printable as C escape sequences (but only \r,
+      // \n and \t). Everything else is printed as octal (3 digits).
+      result.push_back('\\');
       switch (uc) {
       case '\n':
-        result.push_back('\\');
         result.push_back('n');
         break;
       case '\r':
-        result.push_back('\\');
         result.push_back('r');
         break;
       case '\t':
-        result.push_back('\\');
         result.push_back('t');
         break;
       default:
-        result.push_back('\\');
         result.push_back('0' + ((uc >> 6) & 7));
         result.push_back('0' + ((uc >> 3) & 7));
         result.push_back('0' + (uc & 7));
