@@ -934,9 +934,6 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "    " << member_name << ".Populate();\n";
         os << "    return " << member_name << ";\n";
         os << "  }\n";
-        // os << "  absl::Span<char> Allocate(size_t index, size_t len) {\n";
-        // os << "    return " << member_name << ".Allocate(index, len);\n";
-        // os << "  }\n";
       } else {
         os << "  void add_" << field_name << "(" << field->c_type
            << " value) {\n";
