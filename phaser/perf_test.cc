@@ -18,6 +18,18 @@
 // This test builds a camera image in a fixed size buffer.  The protobuf version
 // has to serialize it into the buffer, but with phaser we build it directly in
 // the buffer memory.
+//
+// All the tests produce a serialized message in a fixed size buffer, suitable
+// for transmission over IPC or a network.
+
+// The tests show that if you just copy the algorithms you use to create messages
+// in protobuf, you will not get the full benefit of phaser.  You need to use
+// the fact that phaser writes directly to the output buffer (and reads from it too)
+// in order to gain the full performance benefits.
+//
+// This can make a huge difference to the performance of your system, especially
+// when combined with a shared memory IPC system like Subspace.
+// Please see https://github.com/dallison/subspace for more information.
 
 TEST(PerfTest, ProtobufCameraImage) {
   std::vector<char> buffer(1024 * 1024 * 30);
@@ -47,33 +59,6 @@ TEST(PerfTest, ProtobufCameraImage) {
   }
   uint64_t end = toolbelt::Now();
   std::cout << absl::StrFormat("Protobuf serialization: %d ns\n", end - start);
-}
-
-TEST(PerfTest, PhaserCameraImageZeroCopy) {
-  std::vector<char> buffer(1024 * 1024 * 30);
-
-  uint64_t start = toolbelt::Now();
-
-  for (int i = 0; i < 1000; i++) {
-    robot::phaser::CameraImage image =
-        robot::phaser::CameraImage::CreateMutable(buffer.data(), buffer.size());
-    image.mutable_header()->set_timestamp(1234567890);
-
-    constexpr int kNumRows = 4096;
-    constexpr int kNumCols = 4096;
-
-    image.set_rows(kNumRows);
-    image.set_cols(kNumCols);
-
-    absl::Span<char> image_data = image.allocate_image(kNumRows * kNumCols);
-    for (int i = 0; i < kNumRows; ++i) {
-      for (int j = 0; j < kNumCols; ++j) {
-        image_data[i * kNumCols + j] = i * kNumCols + j;
-      }
-    }
-  }
-  uint64_t end = toolbelt::Now();
-  std::cout << absl::StrFormat("Phaser zero-copy: %d ns\n", end - start);
 }
 
 // This uses a less optimal way to build the image in the buffer, similar to the
@@ -110,6 +95,35 @@ TEST(PerfTest, PhaserCameraImageCopy) {
   std::cout << absl::StrFormat("Phaser string copy: %d ns\n", end - start);
 }
 
+// Highest performance version.  This builds the image directly in the buffer.
+TEST(PerfTest, PhaserCameraImageZeroCopy) {
+  std::vector<char> buffer(1024 * 1024 * 30);
+
+  uint64_t start = toolbelt::Now();
+
+  for (int i = 0; i < 1000; i++) {
+    robot::phaser::CameraImage image =
+        robot::phaser::CameraImage::CreateMutable(buffer.data(), buffer.size());
+    image.mutable_header()->set_timestamp(1234567890);
+
+    constexpr int kNumRows = 4096;
+    constexpr int kNumCols = 4096;
+
+    image.set_rows(kNumRows);
+    image.set_cols(kNumCols);
+
+    absl::Span<char> image_data = image.allocate_image(kNumRows * kNumCols);
+    for (int i = 0; i < kNumRows; ++i) {
+      for (int j = 0; j < kNumCols; ++j) {
+        image_data[i * kNumCols + j] = i * kNumCols + j;
+      }
+    }
+  }
+  uint64_t end = toolbelt::Now();
+  std::cout << absl::StrFormat("Phaser zero-copy: %d ns\n", end - start);
+}
+
+// Standard protobuf algorithm to create a message with a repeated field.
 TEST(PerfTest, ProtobufLidarScan) {
   std::vector<char> buffer(1024 * 1024 * 30);
 
@@ -131,6 +145,8 @@ TEST(PerfTest, ProtobufLidarScan) {
   std::cout << absl::StrFormat("Protobuf serialization: %d ns\n", end - start);
 }
 
+// Phaser version of the protobuf algorithm, showing compatility with the
+// protobuf API.
 TEST(PerfTest, PhaserLidarScanPush) {
   std::vector<char> buffer(1024 * 1024 * 30);
 
@@ -146,6 +162,7 @@ TEST(PerfTest, PhaserLidarScanPush) {
     for (int i = 0; i < kNumBeams; ++i) {
       scan.add_beams(i);
     }
+    // No serialization step, the message is built directly in the buffer.
   }
 
   uint64_t end = toolbelt::Now();
@@ -165,6 +182,7 @@ TEST(PerfTest, PhaserLidarScanZeroCopy) {
 
     constexpr int kNumBeams = 1000000;
     scan.resize_beams(kNumBeams);
+    // Get access to the actual memory in the buffer.
     absl::Span<double> beams = scan.beams_as_mutable_span();
     for (int i = 0; i < kNumBeams; ++i) {
       beams[i] = i;
@@ -175,6 +193,8 @@ TEST(PerfTest, PhaserLidarScanZeroCopy) {
   std::cout << absl::StrFormat("Phaser zero-copy: %d ns\n", end - start);
 }
 
+// Standard protobuf algorithm to create a message with a repeated field of
+// messages.
 TEST(PerfTest, ProtobufAllLidars) {
   std::vector<char> buffer(1024 * 1024 * 100);
 
@@ -203,7 +223,8 @@ TEST(PerfTest, ProtobufAllLidars) {
 }
 
 // Same as protobuf algorithm, slower than protobuf because the allocator in the
-// payload buffer is not as fast as regular malloc.
+// payload buffer is not as fast as regular malloc.  Not much point in doing this
+// really.
 TEST(PerfTest, PhaserAllLidarsPush) {
   std::vector<char> buffer(1024 * 1024 * 100);
 
@@ -233,7 +254,8 @@ TEST(PerfTest, PhaserAllLidarsPush) {
 }
 
 // Optimized zero-copy version using absl::Span.  Runs much faster than
-// the protobuf algorithm.
+// the protobuf algorithm as it uses phaser-specific features to access the
+// buffer memory directly.
 TEST(PerfTest, PhaserAllLidarsZeroCopy) {
   std::vector<char> buffer(1024 * 1024 * 100);
 
@@ -262,6 +284,7 @@ TEST(PerfTest, PhaserAllLidarsZeroCopy) {
   uint64_t end = toolbelt::Now();
   std::cout << absl::StrFormat("Phaser push: %d ns\n", end - start);
 }
+
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
 

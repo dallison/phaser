@@ -90,7 +90,7 @@ TEST(PhaserTest, ProtobufCompat) {
 }
 
 TEST(PhaserTest, Expansion) {
-  foo::bar::phaser::TestMessage msg;
+  foo::bar::phaser::TestMessage msg;    // 1K buffer by default.
   msg.set_x(1234);
   msg.set_y(5678);
   msg.set_s("hello world");
