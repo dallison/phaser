@@ -370,7 +370,7 @@ public:
 private:
   template <int N> friend class StringArrayField;
 
-  std::shared_ptr<MessageRuntime> GetRuntime() const {
+  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -476,6 +476,7 @@ public:
         msg_(InternalDefault{}) {}
 
   const MessageType &Msg() const { return msg_; }
+  MessageType &MutableMsg() { return msg_; }
 
   const MessageType &Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
@@ -625,7 +626,7 @@ protected:
     return Message::GetBufferAddr(this, source_offset_);
   }
 
-  std::shared_ptr<MessageRuntime> GetRuntime() const {
+  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -670,6 +671,7 @@ public:
   }
 
   const MessageType &Msg() const { return msg_; }
+  MessageType &MutableMsg() { return msg_; }
 
   template <typename T> absl::Status CloneFrom(const T &other) {
     return msg_.CloneFrom(other.msg_);

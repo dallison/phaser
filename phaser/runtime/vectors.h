@@ -190,6 +190,30 @@ public:
   T *data() const { return GetRuntime()->template ToAddress<T>(BaseOffset()); }
   size_t Size() const { return NumElements(); }
 
+  absl::Span<T> AsMutableSpan() {
+    toolbelt::VectorHeader *hdr = Header(relative_binary_offset_);
+    T *base = GetRuntime()->template ToAddress<T>(hdr->data);
+    if (base == nullptr) {
+      return absl::Span<T>();
+    }
+
+    return absl::Span<T>(base, hdr->num_elements);
+  }
+
+  absl::Span<const T> AsSpan() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return absl::Span<T>();
+    }
+    toolbelt::VectorHeader *hdr = Header(offset);
+    const T *base = GetRuntime()->template ToAddress<const T>(hdr->data);
+    if (base == nullptr) {
+      return absl::Span<const T>();
+    }
+
+    return absl::Span<const T>(base, hdr->num_elements);
+  }
+
   bool empty() const { return size() == 0; }
 
   size_t capacity() const {
@@ -401,7 +425,7 @@ private:
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
-  std::shared_ptr<MessageRuntime> GetRuntime() const {
+  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -464,6 +488,30 @@ public:
   DECLARE_ZERO_COPY_VECTOR_BITS(Enum, ITYPE, CTYPE, T)
 #undef ITYPE
 #undef CTYPE
+
+  absl::Span<Enum> AsMutableSpan() {
+    toolbelt::VectorHeader *hdr = Header(relative_binary_offset_);
+    Enum *base = GetRuntime()->template ToAddress<Enum>(hdr->data);
+    if (base == nullptr) {
+      return absl::Span<Enum>();
+    }
+
+    return absl::Span<Enum>(base, hdr->num_elements);
+  }
+
+  absl::Span<const Enum> AsSpan() const {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset < 0) {
+      return absl::Span<Enum>();
+    }
+    toolbelt::VectorHeader *hdr = Header(offset);
+    const Enum *base = GetRuntime()->template ToAddress<const Enum>(hdr->data);
+    if (base == nullptr) {
+      return absl::Span<const Enum>();
+    }
+
+    return absl::Span<const Enum>(base, hdr->num_elements);
+  }
 
   void push_back(const Enum &v) {
     ::toolbelt::PayloadBuffer::VectorPush<T>(
@@ -658,7 +706,7 @@ private:
     return Message::GetBuffer(this, source_offset_);
   }
 
-  std::shared_ptr<MessageRuntime> GetRuntime() const {
+  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -773,6 +821,26 @@ public:
       msgs_[index] = std::move(obj);
     }
     return msgs_[index].Mutable();
+  }
+
+  // Allocate a bunch of empty messages.
+  std::vector<T> Allocate(size_t n) {
+    std::vector<T> result;
+    result.resize(n);
+    msgs_.resize(n);
+    // Allocate memory for n messages in the payload buffer.
+    std::vector<void *> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
+        GetBufferAddr(), T::BinarySize(), n, 8, true);
+
+    // Fill in the msgs_ vector with MessageObject objects referring to the
+    // allocated memory.
+    for (size_t i = 0; i < n; i++) {
+      msgs_[i].MutableMsg().runtime = GetRuntime();
+      msgs_[i].MutableMsg().absolute_binary_offset = GetRuntime()->ToOffset(addrs[i]);
+      msgs_[i].InstallMetadata();
+      result[i] = msgs_[i].Get();
+    }
+    return result;
   }
 
   size_t capacity() const {
@@ -946,7 +1014,7 @@ private:
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
-  std::shared_ptr<MessageRuntime> GetRuntime() const {
+  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -1196,7 +1264,7 @@ private:
         GetMessageBinaryStart() + relative_offset);
   }
 
-  std::shared_ptr<MessageRuntime> GetRuntime() const {
+  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 

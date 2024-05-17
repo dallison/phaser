@@ -26,4 +26,7 @@ message LidarScan {
   repeated double beams = 2;
 }
 
-
+message AllLidars {
+  MessageHeader header = 1;
+  repeated LidarScan scans = 2;
+}

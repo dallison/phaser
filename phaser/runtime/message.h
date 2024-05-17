@@ -160,7 +160,7 @@ struct Message {
     return &(*rt)->pb;
   }
 
-  static std::shared_ptr<MessageRuntime> GetRuntime(void *field,
+  static std::shared_ptr<MessageRuntime>& GetRuntime(void *field,
                                                     uint32_t offset) {
     std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<std::shared_ptr<MessageRuntime> *>(
@@ -168,7 +168,7 @@ struct Message {
     return *rt;
   }
 
-  static std::shared_ptr<MessageRuntime> GetRuntime(const void *field,
+  static const std::shared_ptr<MessageRuntime>& GetRuntime(const void *field,
                                                     uint32_t offset) {
     const std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(

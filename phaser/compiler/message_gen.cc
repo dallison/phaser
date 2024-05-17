@@ -498,8 +498,7 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   CompileUnions();
   FinalizeOffsetsAndSizes();
 
-  os << "class " << MessageName(message_) << " : public ::phaser::Message {\n";
-  os << "public:\n";
+  os << "struct " << MessageName(message_) << " : public ::phaser::Message {\n";
   // Generate constructors.
   GenerateConstructors(os, true);
   // Generate size functions.
@@ -545,7 +544,6 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   // Generate deserializer.
   GenerateDeserializer(os, true);
 
-  os << "\nprivate:\n";
   GenerateFieldDeclarations(os);
   os << "};\n\n";
 
@@ -943,6 +941,14 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << " value) {\n";
         os << "    " << member_name << ".Set(index, value);\n";
         os << "  }\n";
+        os << "  absl::Span<" << field->c_type << ">" << field_name
+           << "_as_mutable_span() {\n";
+        os << "    return " << member_name << ".AsMutableSpan();\n";
+        os << "  }\n";
+        os << "  absl::Span<const " << field->c_type << ">" << field_name
+           << "_as_span() const {\n";
+        os << "    return " << member_name << ".AsSpan();\n";
+        os << "  }\n";
         if (field->field->type() ==
             google::protobuf::FieldDescriptor::TYPE_ENUM) {
           os << "  const ::phaser::EnumVectorField<" << field->c_type << ", "
@@ -983,11 +989,15 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "    " << member_name << ".Populate();\n";
       os << "    return " << member_name << ";\n";
       os << "  }\n";
-     os << "  void reserve_" << field_name << "(size_t num) {\n";
+      os << "  void reserve_" << field_name << "(size_t num) {\n";
       os << "    " << member_name << ".reserve(num);\n";
       os << "  }\n";
       os << "  void resize_" << field_name << "(size_t num) {\n";
       os << "    " << member_name << ".resize(num);\n";
+      os << "  }\n";
+      os << "  std::vector<" << field->c_type << "> allocate_" << field_name
+         << "(size_t n) {\n";
+      os << "    return " << member_name << ".Allocate(n);\n";
       os << "  }\n";
       break;
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
