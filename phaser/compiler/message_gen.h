@@ -47,11 +47,14 @@ struct UnionInfo : public FieldInfo {
 
 class MessageGenerator {
 public:
-  MessageGenerator(const google::protobuf::Descriptor *message, const std::string& added_namespace, const std::string& package_name)
-      : message_(message), added_namespace_(added_namespace), package_name_(package_name) {
+  MessageGenerator(const google::protobuf::Descriptor *message,
+                   const std::string &added_namespace,
+                   const std::string &package_name)
+      : message_(message), added_namespace_(added_namespace),
+        package_name_(package_name) {
     for (int i = 0; i < message_->nested_type_count(); i++) {
-      nested_message_gens_.push_back(
-          std::make_unique<MessageGenerator>(message_->nested_type(i), added_namespace, package_name));
+      nested_message_gens_.push_back(std::make_unique<MessageGenerator>(
+          message_->nested_type(i), added_namespace, package_name));
     }
     // Enums
     for (int i = 0; i < message_->enum_type_count(); i++) {
@@ -99,22 +102,30 @@ private:
   void GenerateStreamer(std::ostream &os);
   bool IsAny(const google::protobuf::Descriptor *desc);
   bool IsAny(const google::protobuf::FieldDescriptor *field);
-  void GenerateAnyProtobufAccessors(std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
-                                      int union_index, std::ostream &os);
+  void GenerateAnyProtobufAccessors(std::shared_ptr<FieldInfo> field,
+                                    std::shared_ptr<UnionInfo> union_field,
+                                    int union_index, std::ostream &os);
   void GenerateCopy(std::ostream &os, bool decl);
-  void GenerateDebugString(std::ostream& os);
-  void GeneratePhaserBank(std::ostream& os);
+  void GenerateDebugString(std::ostream &os);
+  void GeneratePhaserBank(std::ostream &os);
+  void GenerateMessageInfo(std::ostream &os, bool decl);
+  void GenerateFieldInfo(int index, std::shared_ptr<FieldInfo> field,
+                         std::shared_ptr<UnionInfo> union_field,
+                         int union_index, std::ostream &os);
 
   std::string EnumName(const google::protobuf::EnumDescriptor *desc);
-  // If is_ref is true, it changes how the generator treats google.protobuf.Any.  For
-  // a reference to a google.protobuf.Any, we use an internal ::phaser::AnyMessage type.
-  std::string MessageName(const google::protobuf::Descriptor *desc, bool is_ref = false);
+  // If is_ref is true, it changes how the generator treats google.protobuf.Any.
+  // For a reference to a google.protobuf.Any, we use an internal
+  // ::phaser::AnyMessage type.
+  std::string MessageName(const google::protobuf::Descriptor *desc,
+                          bool is_ref = false);
   std::string FieldCFieldType(const google::protobuf::FieldDescriptor *field);
   std::string FieldCType(const google::protobuf::FieldDescriptor *field);
   std::string
   FieldRepeatedCType(const google::protobuf::FieldDescriptor *field);
   std::string FieldUnionCType(const google::protobuf::FieldDescriptor *field);
   uint32_t FieldBinarySize(const google::protobuf::FieldDescriptor *field);
+  std::string FieldInfoType(const google::protobuf::FieldDescriptor *field);
 
   const google::protobuf::Descriptor *message_;
   std::vector<std::unique_ptr<MessageGenerator>> nested_message_gens_;

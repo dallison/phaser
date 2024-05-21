@@ -107,7 +107,8 @@ class ProtoBuffer;
 // This is a variable length vector of T.  It looks like a std::vector<T>.
 // The binary message contains a toolbelt::VectorHeader at the binary offset.
 // This contains the number of elements and the base offset for the data.
-template <typename T, bool FixedSize, bool Signed, bool Packed>
+template <typename T, bool FixedSize = false, bool Signed = false,
+          bool Packed = true>
 class PrimitiveVectorField : public Field {
 public:
   PrimitiveVectorField() = default;
@@ -118,17 +119,19 @@ public:
         relative_binary_offset_(relative_binary_offset) {}
 
   const T &operator[](int index) {
+    static T empty;
     T *base = GetRuntime()->template ToAddress<T>(BaseOffset());
     if (base == nullptr) {
-      return T();
+      return empty;
     }
     return base[index];
   }
 
   T operator[](int index) const {
+    static T empty;
     T *base = GetRuntime()->template ToAddress<T>(BaseOffset());
     if (base == nullptr) {
-      return T();
+      return empty;
     }
     return base[index];
   }
@@ -433,7 +436,8 @@ private:
   ::toolbelt::BufferOffset relative_binary_offset_;
 };
 
-template <typename Enum, typename Stringizer, typename Parser, bool Packed>
+template <typename Enum = int, typename Stringizer = InternalIntStringizer,
+          typename Parser = InternalIntParser, bool Packed = true>
 class EnumVectorField : public Field {
 public:
   EnumVectorField() = default;
@@ -836,7 +840,8 @@ public:
     // allocated memory.
     for (size_t i = 0; i < n; i++) {
       msgs_[i].MutableMsg().runtime = GetRuntime();
-      msgs_[i].MutableMsg().absolute_binary_offset = GetRuntime()->ToOffset(addrs[i]);
+      msgs_[i].MutableMsg().absolute_binary_offset =
+          GetRuntime()->ToOffset(addrs[i]);
       msgs_[i].InstallMetadata();
       result[i] = msgs_[i].Get();
     }

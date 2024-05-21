@@ -3,11 +3,11 @@
 // See LICENSE file for licensing information.
 
 #include "absl/strings/str_format.h"
-#include "toolbelt/payload_buffer.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "toolbelt/hexdump.h"
+#include "toolbelt/payload_buffer.h"
 #include <gtest/gtest.h>
 #include <sstream>
 
@@ -91,6 +91,61 @@ struct InnerMessage : public Message {
   static std::string FullName() { return "foo.bar.InnerMessage"; }
 
   friend std::ostream &operator<<(std::ostream &os, const InnerMessage &msg);
+
+  static const ::phaser::MessageInfo *GetMessageInfo() {
+    static phaser::MessageInfo info;
+    if (!info.full_name.empty()) {
+      return &info;
+    }
+    // Initialize once.
+    info.full_name = "foo.bar.InnerMessage";
+    info.fields_in_order.resize(5);
+    info.fields_in_order[0] = std::make_shared<phaser::PrimitiveFieldInfo>(
+        "str", phaser::FieldType::kFieldString, 10,
+        offsetof(InnerMessage, str_));
+    info.fields_in_order[1] = std::make_shared<phaser::PrimitiveFieldInfo>(
+        "f", phaser::FieldType::kFieldUInt64, 20, offsetof(InnerMessage, f_));
+    info.fields_in_order[2] = std::make_shared<phaser::PrimitiveFieldInfo>(
+        "e", phaser::FieldType::kFieldEnum, 30, offsetof(InnerMessage, e_));
+    info.fields_in_order[3] = std::make_shared<phaser::PrimitiveFieldInfo>(
+        "ev", phaser::FieldType::kFieldEnum, 40, offsetof(InnerMessage, ev_),
+        "EnumTest", true);
+    info.fields_in_order[4] =
+        std::make_shared<phaser::UnionInfo>("uv", offsetof(InnerMessage, uv_));
+
+    // Add to fields maps.
+    for (auto &f : info.fields_in_order) {
+      info.fields_by_number[f->number] = f;
+      info.fields_by_name[f->name] = f;
+    }
+
+    {
+      auto u =
+          std::static_pointer_cast<phaser::UnionInfo>(info.fields_in_order[4]);
+      u->fields_in_order.resize(2);
+      u->fields_in_order[0] = std::make_shared<phaser::UnionFieldInfo>(
+          "uva", phaser::FieldType::kFieldUInt32, 50, u->offset, 0);
+      u->fields_in_order[1] = std::make_shared<phaser::UnionFieldInfo>(
+          "uvb", phaser::FieldType::kFieldEnum, 60, u->offset, 1);
+      // Add to fields map.
+      for (auto &f : u->fields_in_order) {
+        info.fields_by_number[f->number] = f;
+        info.fields_by_name[f->name] = f;
+      }
+    }
+
+    return &info;
+  }
+
+  static InnerMessage CreateMutable(void *addr, size_t size) {
+    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(size);
+    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+                                                   InnerMessage::BinarySize());
+    auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
+    auto msg = InnerMessage(runtime, pb->message);
+    msg.InstallMetadata<InnerMessage>();
+    return msg;
+  }
 
   void Indent(int indent) {
     str_.Indent(indent);
@@ -315,7 +370,8 @@ inline std::ostream &operator<<(std::ostream &os, const InnerMessage &msg) {
   return os;
 }
 
-static void InnerMessageStreamTo(const Message &msg, std::ostream &os, int indent) {
+static void InnerMessageStreamTo(const Message &msg, std::ostream &os,
+                                 int indent) {
   const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
   os << *m;
 }
@@ -338,7 +394,8 @@ static size_t InnerMessageSerializedSize(const Message &msg) {
 }
 
 static Message *
-InnerMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, toolbelt::BufferOffset offset) {
+InnerMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
+                             toolbelt::BufferOffset offset) {
   auto msg = new InnerMessage(runtime, offset);
   msg->InstallMetadata<InnerMessage>();
   return msg;
@@ -355,12 +412,65 @@ static absl::Status InnerMessageCopy(const Message &src, Message &dst) {
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message *InnerMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
-const void *data) {
+static const Message *
+InnerMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
+                         const void *data) {
   return new InnerMessage(runtime, runtime->pb->ToOffset(data));
 }
 
 static size_t InnerMessageBinarySize() { return InnerMessage::BinarySize(); }
+
+static const phaser::MessageInfo *InnerMessageMessageInfo() {
+  return InnerMessage::GetMessageInfo();
+}
+
+static bool InnerMessageHasField(const phaser::Message &msg, int number) {
+  const InnerMessage *m =
+      static_cast<const InnerMessage *>(&msg);
+  switch (number) {
+  case 10:
+    return m->str_.IsPresent();
+  case 20:
+    return m->f_.IsPresent();
+  case 30:
+    return m->e_.IsPresent();
+  case 40:
+    return m->ev_.size() > 0;
+  case 50:
+    return m->uv_.Discriminator() == 50;
+  case 60:
+    return m->uv_.Discriminator() == 60;
+  }
+  return false;
+}
+
+static void *InnerMessageFindFieldByNumber(Message &msg, int number) {
+  if (!InnerMessageHasField(msg, number)) {
+    return nullptr;
+  }
+  const phaser::MessageInfo *info = InnerMessage::GetMessageInfo();
+  auto it = info->fields_by_number.find(number);
+  if (it != info->fields_by_number.end()) {
+    char *m = reinterpret_cast<char *>(&msg);
+    return m + it->second->offset;
+  }
+  return nullptr;
+}
+
+static void *InnerMessageFindFieldByName(Message &msg,
+                                         const std::string &name) {
+  const phaser::MessageInfo *info = InnerMessage::GetMessageInfo();
+  auto it = info->fields_by_name.find(name);
+  if (it != info->fields_by_name.end()) {
+    if (!InnerMessageHasField(msg, it->second->number)) {
+      return nullptr;
+    }
+
+    char *m = reinterpret_cast<char *>(&msg);
+    return m + it->second->offset;
+  }
+  return nullptr;
+}
 
 static phaser::BankInfo innerMessageBackInfo{
     .stream_to = InnerMessageStreamTo,
@@ -372,6 +482,10 @@ static phaser::BankInfo innerMessageBackInfo{
     .copy = InnerMessageCopy,
     .make_existing = InnerMessageMakeExisting,
     .binary_size = InnerMessageBinarySize,
+    .message_info = InnerMessageMessageInfo,
+    .has_field = InnerMessageHasField,
+    .get_field_by_name = InnerMessageFindFieldByName,
+    .get_field_by_number = InnerMessageFindFieldByNumber,
 };
 
 static struct InnerMessageBankRegister {
@@ -414,7 +528,7 @@ struct TestMessage : public Message {
   static TestMessage CreateMutable(void *addr, size_t size) {
     ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
-                                                 TestMessage::BinarySize());
+                                                   TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
@@ -431,7 +545,7 @@ struct TestMessage : public Message {
   static TestMessage CreateDynamicMutable(size_t initial_size = 1024) {
     ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
-                                                 TestMessage::BinarySize());
+                                                   TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
@@ -441,7 +555,7 @@ struct TestMessage : public Message {
   void InitDynamicMutable(size_t initial_size = 1024) {
     ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
-                                                 TestMessage::BinarySize());
+                                                   TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
     this->runtime = runtime;
     this->absolute_binary_offset = pb->message;
@@ -1032,7 +1146,8 @@ inline std::ostream &operator<<(std::ostream &os, const TestMessage &msg) {
   return os;
 }
 
-static void TestMessageStreamTo(const Message &msg, std::ostream &os, int indent) {
+static void TestMessageStreamTo(const Message &msg, std::ostream &os,
+                                int indent) {
   const TestMessage *m = static_cast<const TestMessage *>(&msg);
   os << *m;
 }
@@ -1055,7 +1170,8 @@ static size_t TestMessageSerializedSize(const Message &msg) {
 }
 
 static Message *
-TestMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, toolbelt::BufferOffset offset) {
+TestMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
+                            toolbelt::BufferOffset offset) {
   auto msg = new TestMessage(runtime, offset);
   msg->InstallMetadata<TestMessage>();
   return msg;
@@ -1072,8 +1188,9 @@ static absl::Status TestMessageCopy(const Message &src, Message &dst) {
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message *TestMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
-const void *data) {
+static const Message *
+TestMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
+                        const void *data) {
   return new TestMessage(runtime, runtime->pb->ToOffset(data));
 }
 
@@ -1818,6 +1935,17 @@ TEST(MessageTest, Print) {
       PhaserBankDebugString("foo.bar.TestMessage", msg);
   ASSERT_TRUE(ds.ok());
   std::cout << *ds << std::endl;
+}
+
+TEST(MessageTest, MessageInfo) {
+  char *buffer = (char *)malloc(4096);
+  InnerMessage msg = InnerMessage::CreateMutable(buffer, 4096);
+  const ::phaser::MessageInfo *info = msg.GetMessageInfo();
+  ASSERT_EQ("foo.bar.InnerMessage", info->full_name);
+  ASSERT_EQ(5, info->fields_in_order.size());
+  ASSERT_EQ("str", info->fields_in_order[0]->name);
+  ASSERT_EQ(10, info->fields_in_order[0]->number);
+  free(buffer);
 }
 
 int main(int argc, char **argv) {

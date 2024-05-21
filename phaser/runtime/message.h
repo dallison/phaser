@@ -7,6 +7,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "toolbelt/payload_buffer.h"
 #include <memory>
+#include <optional>
 #include <stdint.h>
 #include <string>
 
@@ -28,6 +29,65 @@ struct FieldData {
     uint32_t offset : 24; // Offset into message.
     uint32_t id : 8;      // Field id for presence bit mask.
   } fields[];
+};
+
+enum class FieldType {
+  kFieldInt32,
+  kFieldInt64,
+  kFieldUInt32,
+  kFieldUInt64,
+  kFieldString,
+  kFieldMessage,
+  kFieldBytes,
+  kFieldFloat,
+  kFieldDouble,
+  kFieldBool,
+  kFieldEnum,
+  kFieldOneof,
+};
+
+struct FieldInfo {
+  FieldInfo(const std::string &n, FieldType t, int num, off_t off)
+      : name(n), type(t), number(num), offset(off) {}
+  std::string name;
+  FieldType type;
+  int number;
+  off_t offset;     // Offset into source message (not binary).
+};
+
+struct PrimitiveFieldInfo : public FieldInfo {
+  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off, bool f = false, bool s = false,
+                    bool r = false, bool p = false)
+      : FieldInfo(n, t, num, off), is_fixed(f), is_repeated(r), is_packed(p) {}
+ PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off, const std::string &m,
+                    bool r = false, bool p = false)
+      : FieldInfo(n, t, num, off), is_repeated(r), is_packed(p), message_or_enum_name(m) {}  
+      
+  bool is_fixed = false;
+  bool is_signed = false;
+  bool is_repeated = false;
+  bool is_packed = true;
+  std::optional<std::string> message_or_enum_name;
+};
+
+struct UnionFieldInfo : public PrimitiveFieldInfo {
+  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i, const std::string &m)
+      : PrimitiveFieldInfo(n, t, num, off, m), id(i) {}
+  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i, bool f = false, bool s = false)
+      : PrimitiveFieldInfo(n, t, num, off, f, s), id(i) {}
+  int id; // Field id within union.
+};
+
+struct UnionInfo : public FieldInfo {
+  UnionInfo(const std::string &n, off_t off) : FieldInfo(n, FieldType::kFieldOneof, 0, off) {}
+  std::vector<std::shared_ptr<UnionFieldInfo>> fields_in_order;
+};
+
+struct MessageInfo {
+  std::string full_name;
+  absl::flat_hash_map<std::string, std::shared_ptr<FieldInfo>> fields_by_name;
+  absl::flat_hash_map<int, std::shared_ptr<FieldInfo>> fields_by_number;
+  std::vector<std::shared_ptr<FieldInfo>> fields_in_order;
 };
 
 // Each message contains a std::shared_ptr to one of these, allocated from
@@ -160,16 +220,16 @@ struct Message {
     return &(*rt)->pb;
   }
 
-  static std::shared_ptr<MessageRuntime>& GetRuntime(void *field,
-                                                    uint32_t offset) {
+  static std::shared_ptr<MessageRuntime> &GetRuntime(void *field,
+                                                     uint32_t offset) {
     std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<std::shared_ptr<MessageRuntime> *>(
             reinterpret_cast<char *>(field) - offset);
     return *rt;
   }
 
-  static const std::shared_ptr<MessageRuntime>& GetRuntime(const void *field,
-                                                    uint32_t offset) {
+  static const std::shared_ptr<MessageRuntime> &GetRuntime(const void *field,
+                                                           uint32_t offset) {
     const std::shared_ptr<MessageRuntime> *rt =
         reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
             reinterpret_cast<const char *>(field) - offset);
@@ -193,6 +253,14 @@ struct Message {
     const Message *msg = reinterpret_cast<const Message *>(
         reinterpret_cast<const char *>(field) - offset);
     return msg->absolute_binary_offset;
+  }
+
+  void SetUserMetadata(void *metadata) {
+    runtime->pb->metadata = runtime->pb->ToOffset(metadata);
+  }
+
+  void *GetUserMetadata() {
+    return runtime->pb->ToAddress(runtime->pb->metadata);
   }
 
   template <typename MessageType> void InstallMetadata() {

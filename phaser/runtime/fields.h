@@ -88,7 +88,7 @@ protected:
 };
 
 #define DEFINE_PRIMITIVE_FIELD(cname, type)                                    \
-  template <bool FixedSize, bool Signed> class cname##Field : public Field {   \
+  template <bool FixedSize=false, bool Signed=false> class cname##Field : public Field {   \
   public:                                                                      \
     cname##Field() = default;                                                  \
     explicit cname##Field(uint32_t boff, uint32_t offset, int id, int number)  \
@@ -175,7 +175,15 @@ DEFINE_PRIMITIVE_FIELD(Bool, bool)
 
 #undef DEFINE_PRIMITIVE_FIELD
 
-template <typename Enum, typename Stringizer, typename Parser>
+struct InternalIntStringizer {
+  std::string operator()(int i) const { return std::to_string(i); }
+};
+
+struct InternalIntParser {
+  int operator()(const std::string &s) const { return std::stoi(s); }
+};
+
+template <typename Enum=int, typename Stringizer = InternalIntStringizer, typename Parser = InternalIntParser>
 class EnumField : public Field {
 public:
   using T = typename std::underlying_type<Enum>::type;

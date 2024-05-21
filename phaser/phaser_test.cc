@@ -54,7 +54,7 @@ TEST(PhaserTest, ProtobufCompat) {
 
   msg.set_fl(1.3);
   msg.set_db(2.4);
-  
+
   std::cout << msg;
 
   ASSERT_EQ(1234, msg.x());
@@ -90,7 +90,7 @@ TEST(PhaserTest, ProtobufCompat) {
 }
 
 TEST(PhaserTest, Expansion) {
-  foo::bar::phaser::TestMessage msg;    // 1K buffer by default.
+  foo::bar::phaser::TestMessage msg; // 1K buffer by default.
   msg.set_x(1234);
   msg.set_y(5678);
   msg.set_s("hello world");
@@ -455,6 +455,87 @@ TEST(PhaserTest, GarbageWithTailoring) {
   ASSERT_EQ(0, msg.any().value().size());
 
   std::cout << msg;
+}
+
+TEST(PhaserTest, Reflection) {
+  foo::bar::phaser::TestMessage msg;
+  msg.set_x(1234);
+  msg.set_y(5678);
+  msg.set_s("hello world");
+
+  auto m = msg.mutable_m();
+  m->set_str("Inner message");
+
+  msg.add_vi32(1);
+  msg.add_vi32(2);
+  msg.add_vi32(3);
+
+  msg.add_vstr("one");
+  msg.add_vstr("two");
+  msg.add_vstr("three");
+
+  msg.set_u1a(4321);
+  msg.set_u2a(8765);
+
+  absl::StatusOr<const ::phaser::MessageInfo *> info =
+      ::phaser::PhaserBankMessageInfo("foo.bar.TestMessage");
+  ASSERT_TRUE(info.ok());
+  ASSERT_NE(nullptr, *info);
+  ASSERT_EQ(15, (*info)->fields_in_order.size());
+
+  std::shared_ptr<::phaser::FieldInfo> field_x = (*info)->fields_in_order[0];
+  ASSERT_EQ("x", field_x->name);
+  ASSERT_EQ(100, field_x->number);
+  ASSERT_EQ(::phaser::FieldType::kFieldInt32, field_x->type);
+
+  ::phaser::PrimitiveFieldInfo *pf_x =
+      static_cast<::phaser::PrimitiveFieldInfo *>(field_x.get());
+  ASSERT_NE(nullptr, pf_x);
+  ASSERT_FALSE(pf_x->is_repeated);
+  ASSERT_FALSE(pf_x->is_packed);
+  ASSERT_FALSE(pf_x->is_signed);
+  ASSERT_FALSE(pf_x->is_fixed);
+
+  auto it = (*info)->fields_by_name.find("x");
+  ASSERT_NE((*info)->fields_by_name.end(), it);
+  ASSERT_EQ(field_x, it->second);
+  ASSERT_EQ(100, it->second->number);
+
+  int x_number = it->second->number;
+
+  // Let's print all the fields.
+  for (const auto &field : (*info)->fields_in_order) {
+    std::cout << field->name << " " << field->number << " " << (int)field->type
+              << " " << field->offset << std::endl;
+  }
+  absl::StatusOr<bool> has_x =
+      ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);
+  ASSERT_TRUE(has_x.ok());
+
+  absl::StatusOr<::phaser::Int32Field<> *> x =
+      ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
+          "foo.bar.TestMessage", msg, 100);
+  ASSERT_TRUE(x.ok());
+  ASSERT_NE(nullptr, *x);
+  ASSERT_EQ(1234, (*x)->Get());
+
+  // Repeated field
+  absl::StatusOr<bool> has_vi32 =
+      ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, 104);
+  ASSERT_TRUE(has_vi32.ok());
+
+  auto vi32 = ::phaser::PhaserBankGetFieldByNumber<
+      ::phaser::PrimitiveVectorField<int32_t>>("foo.bar.TestMessage", msg, 104);
+  ASSERT_TRUE(vi32.ok());
+  ASSERT_NE(nullptr, *vi32);
+
+  ::phaser::PrimitiveVectorField<int32_t> &vi32r = **vi32;
+  ASSERT_EQ(3, vi32r.Size());
+  ASSERT_EQ(1, vi32r[0]);
+
+  for (auto &v : vi32r) {
+    std::cout << v << std::endl;
+  }
 }
 
 int main(int argc, char **argv) {

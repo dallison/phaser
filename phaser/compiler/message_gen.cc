@@ -198,6 +198,50 @@ std::string MessageGenerator::FieldCFieldType(
   }
 }
 
+std::string MessageGenerator::FieldInfoType(
+    const google::protobuf::FieldDescriptor *field) {
+  switch (field->type()) {
+  case google::protobuf::FieldDescriptor::TYPE_INT32:
+    return "::phaser::FieldType::kFieldInt32";
+  case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    return "::phaser::FieldType::kFieldInt32";
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+    return "::phaser::FieldType::kFieldInt32";
+  case google::protobuf::FieldDescriptor::TYPE_INT64:
+    return "::phaser::FieldType::kFieldInt64";
+  case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    return "::phaser::FieldType::kFieldInt64";
+  case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+    return "::phaser::FieldType::kFieldInt64";
+  case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    return "::phaser::FieldType::kFieldInt32";
+  case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+    return "::phaser::FieldType::kFieldInt32";
+  case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    return "::phaser::FieldType::kFieldInt64";
+  case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+    return "::phaser::FieldType::kFieldInt64";
+  case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+    return "::phaser::FieldType::kFieldDouble";
+  case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+    return "::phaser::FieldType::kFieldFloat";
+  case google::protobuf::FieldDescriptor::TYPE_BOOL:
+    return "::phaser::FieldType::kFieldBool";
+  case google::protobuf::FieldDescriptor::TYPE_ENUM:
+    return "::phaser::FieldType::kFieldEnum";
+  case google::protobuf::FieldDescriptor::TYPE_STRING:
+    return "::phaser::FieldType::kFieldString";
+  case google::protobuf::FieldDescriptor::TYPE_BYTES:
+    return "::phaser::FieldType::kFieldBytes";
+  case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+    return "::phaser::FieldType::kFieldMessage";
+
+  case google::protobuf::FieldDescriptor::TYPE_GROUP:
+    std::cerr << "Groups are not supported\n";
+    exit(1);
+  }
+}
+
 std::string
 MessageGenerator::FieldCType(const google::protobuf::FieldDescriptor *field) {
   switch (field->type()) {
@@ -498,7 +542,8 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   CompileUnions();
   FinalizeOffsetsAndSizes();
 
-  os << "struct " << MessageName(message_) << " : public ::phaser::Message {\n";
+  os << "class " << MessageName(message_) << " : public ::phaser::Message {\n";
+  os << " public:\n";
   // Generate constructors.
   GenerateConstructors(os, true);
   // Generate size functions.
@@ -528,6 +573,8 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   GenerateNestedTypes(os);
   GenerateFieldNumbers(os);
 
+  GenerateMessageInfo(os, true);
+
   GenerateIndent(os);
   GenerateCopy(os, true);
   GenerateDebugString(os);
@@ -544,6 +591,7 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   // Generate deserializer.
   GenerateDeserializer(os, true);
 
+  os << " private:\n";
   GenerateFieldDeclarations(os);
   os << "};\n\n";
 
@@ -563,6 +611,8 @@ void MessageGenerator::GenerateSource(std::ostream &os) {
   GenerateCreators(os, false);
   // Generate clear function.
   GenerateClear(os, false);
+
+  GenerateMessageInfo(os, false);
 
   // Generate serialized size.
   GenerateSerializedSize(os, false);
@@ -1553,6 +1603,69 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "static size_t " << MessageName(message_) << "BinarySize() { return "
      << MessageName(message_) << "::BinarySize(); }\n\n";
 
+  os << "static bool " << MessageName(message_)
+     << "HasField(const ::phaser::Message &msg, int number) {\n";
+  os << "  const " << MessageName(message_) << " *m = static_cast<const "
+     << MessageName(message_) << "*>(&msg);\n";
+  os << "  switch (number) {\n";
+  for (auto &field : fields_) {
+    os << "  case " << field->field->number() << ":\n";
+    if (field->field->is_repeated()) {
+      os << "    return m->" << field->field->name() << "_size() > 0;\n";
+    } else {
+      os << "    return m->has_" << field->field->name() << "();\n";
+    }
+  }
+  for (auto & [ oneof, u ] : unions_) {
+    for (size_t i = 0; i < u->members.size(); i++) {
+      auto &field = u->members[i];
+      os << "  case " << field->field->number() << ":\n";
+      os << "    return m->" << oneof->name()
+         << "_case() == " << field->field->number() << ";\n";
+    }
+  }
+  os << "  }\n";
+  os << "  return false;\n";
+  os << "}\n\n";
+
+  os << "static const ::phaser::MessageInfo* " << MessageName(message_)
+     << "GetMessageInfo() {\n";
+  os << "  return " << MessageName(message_) << "::GetMessageInfo();\n";
+  os << "}\n\n";
+
+  os << "static void *" << MessageName(message_)
+     << "GetFieldByNumber(::phaser::Message &msg, int number) {\n";
+  os << "  if (!" << MessageName(message_) << "HasField(msg, number)) {\n";
+  os << "    return nullptr;\n";
+  os << "  }\n";
+  os << "  const ::phaser::MessageInfo *info = " << MessageName(message_)
+     << "::GetMessageInfo();\n";
+  os << R"XXX(
+  auto it = info->fields_by_number.find(number);
+  if (it != info->fields_by_number.end()) {
+    char *m = reinterpret_cast<char *>(&msg);
+    return m + it->second->offset;
+  }
+  return nullptr;
+  }
+)XXX";
+
+  os << "static void *" << MessageName(message_)
+     << "GetFieldByName(::phaser::Message &msg, const std::string &name) {\n";
+  os << "  const ::phaser::MessageInfo *info = " << MessageName(message_)
+     << "::GetMessageInfo();\n";
+  os << "  auto it = info->fields_by_name.find(name);\n";
+  os << "  if (it != info->fields_by_name.end()) {\n";
+  os << "    if (!" << MessageName(message_)
+     << "HasField(msg, it->second->number)) {\n";
+  os << "      return nullptr;\n";
+  os << "    }\n";
+  os << "    char *m = reinterpret_cast<char *>(&msg);\n";
+  os << "    return m + it->second->offset;\n";
+  os << "  }\n";
+  os << "  return nullptr;\n";
+  os << "}\n\n";
+
   os << "static ::phaser::BankInfo " << MessageName(message_)
      << "BankInfo = {\n";
   os << "  .stream_to = " << MessageName(message_) << "StreamTo,\n";
@@ -1567,6 +1680,12 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "  .copy = " << MessageName(message_) << "Copy,\n";
   os << "  .make_existing = " << MessageName(message_) << "MakeExisting,\n";
   os << "  .binary_size = " << MessageName(message_) << "BinarySize,\n";
+  os << "  .message_info = " << MessageName(message_) << "GetMessageInfo,\n";
+  os << "  .has_field = " << MessageName(message_) << "HasField,\n";
+  os << "  .get_field_by_number = " << MessageName(message_)
+     << "GetFieldByNumber,\n";
+  os << "  .get_field_by_name = " << MessageName(message_)
+     << "GetFieldByName,\n";
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";
@@ -1575,6 +1694,135 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
      << "::FullName(), " << MessageName(message_) << "BankInfo);\n";
   os << "  }\n";
   os << "} " << MessageName(message_) << "BankInitializer;\n";
+}
+
+void MessageGenerator::GenerateFieldInfo(int index,
+                                         std::shared_ptr<FieldInfo> field,
+                                         std::shared_ptr<UnionInfo> union_field,
+                                         int union_index, std::ostream &os) {
+  std::string field_type = FieldInfoType(field->field);
+  std::string fixed_size_string =
+      field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_SFIXED32 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_SFIXED64 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_FIXED32 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_FIXED64 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_FLOAT ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_DOUBLE
+          ? ", true"
+          : ", false";
+  std::string signed_string =
+      field->field->type() == google::protobuf::FieldDescriptor::TYPE_SINT32 ||
+              field->field->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_SINT64
+          ? ", true"
+          : ", false";
+  std::string packed_string = field->field->is_packed() ? ", true" : ", false";
+
+  std::string field_info_string =
+      union_index == -1 ? "PrimitiveFieldInfo" : "UnionFieldInfo";
+  if (union_index == -1) {
+    os << "  info.";
+  } else {
+    os << "  u->";
+  }
+  os << "fields_in_order[" << index
+     << "] = std::make_shared<::phaser::" << field_info_string << ">(\""
+     << field->field->name() << "\", " << field_type << ", "
+     << field->field->number();
+  if (union_index != -1) {
+    os << ", offsetof(" << MessageName(message_) << ", "
+       << union_field->member_name << "), " << union_index;
+  } else {
+    os << ", offsetof(" << MessageName(message_) << ", " << field->member_name
+       << ")";
+  }
+  if (field->field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+    os << ", \"" << MessageName(field->field->message_type()) << "\"";
+  } else if (field->field->type() ==
+             google::protobuf::FieldDescriptor::TYPE_ENUM) {
+    os << ", \"" << EnumName(field->field->enum_type()) << "\"";
+  } else {
+    os << fixed_size_string << signed_string;
+  }
+  if (union_index == -1) {
+    if (field->field->is_repeated()) {
+      os << ", true";
+    } else {
+      os << ", false";
+    }
+    os << packed_string;
+  }
+  os << ");\n";
+}
+
+void MessageGenerator::GenerateMessageInfo(std::ostream &os, bool decl) {
+  if (decl) {
+    os << "  static const ::phaser::MessageInfo* GetMessageInfo();\n";
+    return;
+  }
+  os << "const ::phaser::MessageInfo* " << MessageName(message_)
+     << "::GetMessageInfo() {\n";
+  os << "  static ::phaser::MessageInfo info;\n";
+  os << "  if (!info.full_name.empty()) {\n";
+  os << "    return &info;\n";
+  os << "  }\n";
+
+  os << "#pragma clang diagnostic push\n";
+  os << "#pragma clang diagnostic ignored \"-Winvalid-offsetof\"\n";
+
+  // Generate fields_in_order.
+  size_t index = 0;
+  os << "  info.fields_in_order.resize(" << fields_in_order_.size() << ");\n";
+  for (auto &field : fields_in_order_) {
+    if (field->IsUnion()) {
+      auto u = std::static_pointer_cast<UnionInfo>(field);
+      os << "  info.fields_in_order[" << index++
+         << "] = std::make_shared<::phaser::UnionInfo>(\"" << u->oneof->name()
+         << "\", offsetof(" <<  MessageName(message_) << ", " << field->member_name << "));\n";
+      continue;
+    }
+    GenerateFieldInfo(index++, field, nullptr, -1, os);
+  }
+
+  os << R"XXX(  for (auto &f : info.fields_in_order) {
+    info.fields_by_number[f->number] = f;
+    info.fields_by_name[f->name] = f;
+  }
+)XXX";
+  // Generate oneof fields.
+  index = 0;
+  for (auto &field : fields_in_order_) {
+    if (field->IsUnion()) {
+      auto u = std::static_pointer_cast<UnionInfo>(field);
+      os << "  {\n";
+      os << "    auto u = "
+            "std::static_pointer_cast<::phaser::UnionInfo>(info.fields_in_"
+            "order["
+         << index << "]);\n";
+      os << "    u->fields_in_order.resize(" << u->members.size() << ");\n";
+      for (size_t i = 0; i < u->members.size(); i++) {
+        auto &field = u->members[i];
+        GenerateFieldInfo(i, field, u, int(i), os);
+      }
+      os << R"XXX(  for (auto &f : u->fields_in_order) {
+    info.fields_by_number[f->number] = f;
+    info.fields_by_name[f->name] = f;
+  }
+)XXX";
+      os << "  }\n";
+    }
+    index++;
+  }
+
+  os << "  return &info;\n";
+  os << "}\n\n";
+  os << "#pragma clang diagnostic pop\n";
 }
 
 } // namespace phaser
