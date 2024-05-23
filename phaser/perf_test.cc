@@ -21,11 +21,14 @@
 //
 // All the tests produce a serialized message in a fixed size buffer, suitable
 // for transmission over IPC or a network.
-
-// The tests show that if you just copy the algorithms you use to create messages
-// in protobuf, you will not get the full benefit of phaser.  You need to use
-// the fact that phaser writes directly to the output buffer (and reads from it too)
-// in order to gain the full performance benefits.
+//
+// They also read the message back from the buffer and check that the data is
+// correct.
+//
+// The tests show that if you just copy the algorithms you use to create
+// messages in protobuf, you will not get the full benefit of phaser.  You need
+// to use the fact that phaser writes directly to the output buffer (and reads
+// from it too) in order to gain the full performance benefits.
 //
 // This can make a huge difference to the performance of your system, especially
 // when combined with a shared memory IPC system like Subspace.
@@ -36,7 +39,7 @@ TEST(PerfTest, ProtobufCameraImage) {
 
   uint64_t start = toolbelt::Now();
 
-  for (int i = 0; i < 1000; i++) {
+  for (int i = 0; i < 100; i++) {
     robot::CameraImage image;
     image.mutable_header()->set_timestamp(1234567890);
 
@@ -54,8 +57,16 @@ TEST(PerfTest, ProtobufCameraImage) {
       }
     }
     image.set_image(image_data);
-
+    size_t size = image.ByteSizeLong();
     ASSERT_TRUE(image.SerializeToArray(buffer.data(), buffer.size()));
+
+    // Deserialize again and read the image data.
+    robot::CameraImage image2;
+    ASSERT_TRUE(image2.ParseFromArray(buffer.data(), size));
+    ASSERT_EQ(image2.header().timestamp(), 1234567890);
+    ASSERT_EQ(image2.rows(), kNumRows);
+    ASSERT_EQ(image2.cols(), kNumCols);
+    ASSERT_EQ(image2.image(), image_data);
   }
   uint64_t end = toolbelt::Now();
   std::cout << absl::StrFormat("Protobuf serialization: %d ns\n", end - start);
@@ -70,7 +81,7 @@ TEST(PerfTest, PhaserCameraImageCopy) {
 
   uint64_t start = toolbelt::Now();
 
-  for (int i = 0; i < 1000; i++) {
+  for (int i = 0; i < 100; i++) {
     robot::phaser::CameraImage image =
         robot::phaser::CameraImage::CreateMutable(buffer.data(), buffer.size());
     image.mutable_header()->set_timestamp(1234567890);
@@ -89,7 +100,14 @@ TEST(PerfTest, PhaserCameraImageCopy) {
       }
     }
     // This will copy the image into the buffer.
-    image.set_image(std::move(image_data));
+    image.set_image(image_data);
+    size_t size = image.Size();
+    robot::phaser::CameraImage image2 =
+        robot::phaser::CameraImage::CreateReadonly(buffer.data(), size);
+    ASSERT_EQ(image2.header().timestamp(), 1234567890);
+    ASSERT_EQ(image2.rows(), kNumRows);
+    ASSERT_EQ(image2.cols(), kNumCols);
+    ASSERT_EQ(image2.image(), image_data);
   }
   uint64_t end = toolbelt::Now();
   std::cout << absl::StrFormat("Phaser string copy: %d ns\n", end - start);
@@ -101,7 +119,7 @@ TEST(PerfTest, PhaserCameraImageZeroCopy) {
 
   uint64_t start = toolbelt::Now();
 
-  for (int i = 0; i < 1000; i++) {
+  for (int i = 0; i < 100; i++) {
     robot::phaser::CameraImage image =
         robot::phaser::CameraImage::CreateMutable(buffer.data(), buffer.size());
     image.mutable_header()->set_timestamp(1234567890);
@@ -118,6 +136,18 @@ TEST(PerfTest, PhaserCameraImageZeroCopy) {
         image_data[i * kNumCols + j] = i * kNumCols + j;
       }
     }
+    size_t size = image.Size();
+
+    robot::phaser::CameraImage image2 =
+        robot::phaser::CameraImage::CreateReadonly(buffer.data(), size);
+    ASSERT_EQ(image2.header().timestamp(), 1234567890);
+    ASSERT_EQ(image2.rows(), kNumRows);
+    ASSERT_EQ(image2.cols(), kNumCols);
+
+    // Comparing against absl::Span<char> seems to be much slower than comparing
+    // a std::string_view, so we convert the image data to a string_view.
+    ASSERT_EQ(image2.image(),
+              std::string_view(image_data.data(), image_data.size()));
   }
   uint64_t end = toolbelt::Now();
   std::cout << absl::StrFormat("Phaser zero-copy: %d ns\n", end - start);
@@ -129,7 +159,7 @@ TEST(PerfTest, ProtobufLidarScan) {
 
   uint64_t start = toolbelt::Now();
 
-  for (int i = 0; i < 1000; i++) {
+  for (int i = 0; i < 100; i++) {
     robot::LidarScan scan;
     scan.mutable_header()->set_timestamp(1234567890);
 
@@ -137,8 +167,18 @@ TEST(PerfTest, ProtobufLidarScan) {
     for (int i = 0; i < kNumBeams; ++i) {
       scan.add_beams(i);
     }
+    size_t size = scan.ByteSizeLong();
 
     ASSERT_TRUE(scan.SerializeToArray(buffer.data(), buffer.size()));
+
+    // Deserialize and compare.
+    robot::LidarScan scan2;
+    ASSERT_TRUE(scan2.ParseFromArray(buffer.data(), size));
+    ASSERT_EQ(scan2.header().timestamp(), 1234567890);
+    ASSERT_EQ(scan2.beams_size(), kNumBeams);
+    for (int i = 0; i < kNumBeams; ++i) {
+      ASSERT_EQ(scan2.beams(i), i);
+    }
   }
 
   uint64_t end = toolbelt::Now();
@@ -152,7 +192,7 @@ TEST(PerfTest, PhaserLidarScanPush) {
 
   uint64_t start = toolbelt::Now();
 
-  for (int i = 0; i < 1000; i++) {
+  for (int i = 0; i < 100; i++) {
     robot::phaser::LidarScan scan =
         robot::phaser::LidarScan::CreateMutable(buffer.data(), buffer.size());
     scan.mutable_header()->set_timestamp(1234567890);
@@ -163,6 +203,14 @@ TEST(PerfTest, PhaserLidarScanPush) {
       scan.add_beams(i);
     }
     // No serialization step, the message is built directly in the buffer.
+
+    robot::phaser::LidarScan scan2 =
+        robot::phaser::LidarScan::CreateReadonly(buffer.data(), scan.Size());
+    ASSERT_EQ(scan2.header().timestamp(), 1234567890);
+    ASSERT_EQ(scan2.beams_size(), kNumBeams);
+    for (int i = 0; i < kNumBeams; ++i) {
+      ASSERT_EQ(scan2.beams(i), i);
+    }
   }
 
   uint64_t end = toolbelt::Now();
@@ -175,7 +223,7 @@ TEST(PerfTest, PhaserLidarScanZeroCopy) {
 
   uint64_t start = toolbelt::Now();
 
-  for (int i = 0; i < 1000; i++) {
+  for (int i = 0; i < 100; i++) {
     robot::phaser::LidarScan scan =
         robot::phaser::LidarScan::CreateMutable(buffer.data(), buffer.size());
     scan.mutable_header()->set_timestamp(1234567890);
@@ -186,6 +234,15 @@ TEST(PerfTest, PhaserLidarScanZeroCopy) {
     absl::Span<double> beams = scan.beams_as_mutable_span();
     for (int i = 0; i < kNumBeams; ++i) {
       beams[i] = i;
+    }
+
+    robot::phaser::LidarScan scan2 =
+        robot::phaser::LidarScan::CreateReadonly(buffer.data(), scan.Size());
+    ASSERT_EQ(scan2.header().timestamp(), 1234567890);
+    ASSERT_EQ(scan2.beams_size(), kNumBeams);
+    absl::Span<const double> beams2 = scan2.beams_as_span();
+    for (int i = 0; i < kNumBeams; ++i) {
+      ASSERT_EQ(beams2[i], i);
     }
   }
 
@@ -205,17 +262,31 @@ TEST(PerfTest, ProtobufAllLidars) {
     lidars.mutable_header()->set_timestamp(1234567890);
 
     constexpr int kNumLidars = 100;
+    constexpr int kNumBeams = 100000;
     for (int j = 0; j < kNumLidars; ++j) {
       robot::LidarScan *scan = lidars.add_scans();
       scan->mutable_header()->set_timestamp(1234567890);
 
-      constexpr int kNumBeams = 100000;
       for (int k = 0; k < kNumBeams; ++k) {
         scan->add_beams(k);
       }
     }
 
     ASSERT_TRUE(lidars.SerializeToArray(buffer.data(), buffer.size()));
+
+    // Deserialize and compare.
+    robot::AllLidars lidars2;
+    ASSERT_TRUE(lidars2.ParseFromArray(buffer.data(), lidars.ByteSizeLong()));
+    ASSERT_EQ(lidars2.header().timestamp(), 1234567890);
+    ASSERT_EQ(lidars2.scans_size(), kNumLidars);
+    for (int j = 0; j < kNumLidars; ++j) {
+      const robot::LidarScan &scan = lidars2.scans(j);
+      ASSERT_EQ(scan.header().timestamp(), 1234567890);
+      ASSERT_EQ(scan.beams_size(), kNumBeams);
+      for (int k = 0; k < kNumBeams; ++k) {
+        ASSERT_EQ(scan.beams(k), k);
+      }
+    }
   }
 
   uint64_t end = toolbelt::Now();
@@ -223,8 +294,8 @@ TEST(PerfTest, ProtobufAllLidars) {
 }
 
 // Same as protobuf algorithm, slower than protobuf because the allocator in the
-// payload buffer is not as fast as regular malloc.  Not much point in doing this
-// really.
+// payload buffer is not as fast as regular malloc.  Not much point in doing
+// this really.
 TEST(PerfTest, PhaserAllLidarsPush) {
   std::vector<char> buffer(1024 * 1024 * 100);
 
@@ -236,15 +307,29 @@ TEST(PerfTest, PhaserAllLidarsPush) {
     lidars.mutable_header()->set_timestamp(1234567890);
 
     constexpr int kNumLidars = 100;
+    constexpr int kNumBeams = 100000;
     lidars.reserve_scans(kNumLidars);
     for (int j = 0; j < kNumLidars; ++j) {
       robot::phaser::LidarScan *scan = lidars.add_scans();
       scan->mutable_header()->set_timestamp(1234567890);
 
-      constexpr int kNumBeams = 100000;
       scan->reserve_beams(kNumBeams);
       for (int k = 0; k < kNumBeams; ++k) {
         scan->add_beams(k);
+      }
+    }
+
+    // No serialization step, the message is built directly in the buffer.
+    robot::phaser::AllLidars lidars2 =
+        robot::phaser::AllLidars::CreateReadonly(buffer.data(), lidars.Size());
+    ASSERT_EQ(lidars2.header().timestamp(), 1234567890);
+    ASSERT_EQ(lidars2.scans_size(), kNumLidars);
+    for (int j = 0; j < kNumLidars; ++j) {
+      const robot::phaser::LidarScan &scan = lidars2.scans(j);
+      ASSERT_EQ(scan.header().timestamp(), 1234567890);
+      ASSERT_EQ(scan.beams_size(), kNumBeams);
+      for (int k = 0; k < kNumBeams; ++k) {
+        ASSERT_EQ(scan.beams(k), k);
       }
     }
   }
@@ -267,22 +352,39 @@ TEST(PerfTest, PhaserAllLidarsZeroCopy) {
     lidars.mutable_header()->set_timestamp(1234567890);
 
     constexpr int kNumLidars = 100;
-    // Allocate all the scans at once.
-    std::vector<robot::phaser::LidarScan> lidar_scans = lidars.allocate_scans(kNumLidars);
-    for (auto& scan : lidar_scans) {
-      scan.mutable_header()->set_timestamp(1234567890);
+    constexpr int kNumBeams = 100000;
 
-      constexpr int kNumBeams = 100000;
-      scan.resize_beams(kNumBeams);
-      absl::Span<double> beams = scan.beams_as_mutable_span();
+    // Allocate all the scans at once.
+    std::vector<robot::phaser::LidarScan *> lidar_scans =
+        lidars.allocate_scans(kNumLidars);
+    for (auto scan : lidar_scans) {
+      scan->mutable_header()->set_timestamp(1234567890);
+
+      scan->resize_beams(kNumBeams);
+      absl::Span<double> beams = scan->beams_as_mutable_span();
       for (int i = 0; i < kNumBeams; ++i) {
         beams[i] = i;
+      }
+    }
+
+    robot::phaser::AllLidars lidars2 =
+        robot::phaser::AllLidars::CreateReadonly(buffer.data(), lidars.Size());
+    ASSERT_EQ(lidars2.header().timestamp(), 1234567890);
+    ASSERT_EQ(lidars2.scans_size(), kNumLidars);
+    auto &scans = lidars2.scans();
+    for (int j = 0; j < kNumLidars; ++j) {
+      const robot::phaser::LidarScan &scan = *(scans[j]);
+      ASSERT_EQ(scan.header().timestamp(), 1234567890);
+      ASSERT_EQ(scan.beams_size(), kNumBeams);
+      absl::Span<const double> beams = scan.beams_as_span();
+      for (int k = 0; k < kNumBeams; ++k) {
+        ASSERT_EQ(beams[k], k);
       }
     }
   }
 
   uint64_t end = toolbelt::Now();
-  std::cout << absl::StrFormat("Phaser push: %d ns\n", end - start);
+  std::cout << absl::StrFormat("Phaser zero-copy: %d ns\n", end - start);
 }
 
 int main(int argc, char **argv) {

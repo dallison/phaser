@@ -663,6 +663,9 @@ void MessageGenerator::GenerateDefaultConstructor(std::ostream &os, bool decl) {
   // Generate field initializers.
   GenerateFieldInitializers(os);
   os << R"XXX({
+  if (BinarySize() > initial_size) {
+    initial_size = BinarySize() * 2;
+  }
   InitDynamicMutable(initial_size);
 }
 
@@ -1023,7 +1026,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "  void clear_" << field_name << "() {\n";
       os << "    " << member_name << ".Clear();\n";
       os << "  }\n";
-      os << "  " << field->c_type << " " << sanitized_field_name
+      os << "  const " << field->c_type << "& " << sanitized_field_name
          << "(size_t index) const {\n";
       os << "    return " << member_name << ".Get(index);\n";
       os << "  }\n";
@@ -1045,7 +1048,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
       os << "  void resize_" << field_name << "(size_t num) {\n";
       os << "    " << member_name << ".resize(num);\n";
       os << "  }\n";
-      os << "  std::vector<" << field->c_type << "> allocate_" << field_name
+      os << "  std::vector<" << field->c_type << "*> allocate_" << field_name
          << "(size_t n) {\n";
       os << "    return " << member_name << ".Allocate(n);\n";
       os << "  }\n";

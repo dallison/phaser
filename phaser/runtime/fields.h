@@ -88,7 +88,8 @@ protected:
 };
 
 #define DEFINE_PRIMITIVE_FIELD(cname, type)                                    \
-  template <bool FixedSize=false, bool Signed=false> class cname##Field : public Field {   \
+  template <bool FixedSize = false, bool Signed = false>                       \
+  class cname##Field : public Field {                                          \
   public:                                                                      \
     cname##Field() = default;                                                  \
     explicit cname##Field(uint32_t boff, uint32_t offset, int id, int number)  \
@@ -183,7 +184,8 @@ struct InternalIntParser {
   int operator()(const std::string &s) const { return std::stoi(s); }
 };
 
-template <typename Enum=int, typename Stringizer = InternalIntStringizer, typename Parser = InternalIntParser>
+template <typename Enum = int, typename Stringizer = InternalIntStringizer,
+          typename Parser = InternalIntParser>
 class EnumField : public Field {
 public:
   using T = typename std::underlying_type<Enum>::type;
@@ -378,7 +380,7 @@ public:
 private:
   template <int N> friend class StringArrayField;
 
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
+  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -634,7 +636,7 @@ protected:
     return Message::GetBufferAddr(this, source_offset_);
   }
 
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
+  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -655,6 +657,10 @@ public:
       : msg_(runtime, absolute_binary_offset) {}
 
   const MessageType &Get() const { return msg_; }
+
+  const MessageType &operator*() const { return msg_; }
+  MessageType &operator*() { return msg_; }
+  MessageType *operator->() { return &msg_; }
 
   MessageType *Mutable() { return &msg_; }
 
