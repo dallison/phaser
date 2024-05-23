@@ -339,7 +339,7 @@ The *_case* function returns the *number* of the field that is present in the
 ### Any fields
 The *proto3* Protocol Buffers IDL variant provides a type called *google.protobuf.Any* that
 can be used to hold any message type.  This is kind of like a `void*` in C with a string
-that tells you what type it is.  Take a gander at (this)[https://protobuf.dev/programming-guides/proto3/#any] for
+that tells you what type it is.  Take a gander at [this](https://protobuf.dev/programming-guides/proto3/#any) for
 details on how it works.
 
 Phaser supports the *google.protobuf.Any* type slightly differently from the
