@@ -22,11 +22,11 @@ absl::StatusOr<BankInfo *> GetPhaserBankInfo(std::string message_type) {
 void PhaserBankRegisterMessage(const std::string &name, const BankInfo &info) {
   if (!phaser_banks_) {
     // Lazy init because we can't guarantee the order of static initialization.
-    phaser_banks_ = std::make_unique<absl::flat_hash_map<std::string, BankInfo>>();
+    phaser_banks_ =
+        std::make_unique<absl::flat_hash_map<std::string, BankInfo>>();
   }
   (*phaser_banks_)[name] = info;
 }
-
 
 absl::Status PhaserStreamTo(const std::string &message_type, const Message &msg,
                             std::ostream &os, int indent) {

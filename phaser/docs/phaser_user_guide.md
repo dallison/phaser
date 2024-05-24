@@ -125,7 +125,72 @@ to the class name to distinguish it from a protobuf class of the same name.  Thi
 allows you to intermix Phaser and protobuf messages.  Generally, this is a good
 idea and I tend to choose the name "phaser" as the namespace.
 
-### Message in a dynamic buffer.
+### What exactly is a message?
+In Phaser a message is a generated class derived from a C++ class of type `::phaser::Message`.  
+This base class contains the following:
+
+```c++
+struct Message {
+  Message() = default;
+  Message(std::shared_ptr<MessageRuntime> rt, ::toolbelt::BufferOffset start)
+      : runtime(rt), absolute_binary_offset(start) {}
+  virtual ~Message() = default;
+
+  virtual const MessageInfo *GetMessageInfo() const { return nullptr; }
+  virtual std::string GetName() const { return "Message"; }
+  virtual std::string GetFullName() const { return "phaser.Message"; }
+  virtual void Clear() {}
+  virtual void CopyFrom(const Message &src) {}
+
+  std::shared_ptr<MessageRuntime> runtime;
+  ::toolbelt::BufferOffset absolute_binary_offset;
+};
+```
+
+The derived message classes contain the actual fields of the message along
+with accessor functions.  It is designed to be as close to protobuf as possible
+to avoid having to learn new classes if you are familar with protobuf.
+
+The virtual functions are overridden by the derived classes.
+
+The member `absolute_binary_offset` is the offset of the message into 
+the `PayloadBuffer` (see below).
+
+The member `runtime` is a pointer to the following struct:
+
+```c++
+// Each message contains a std::shared_ptr to one of these, allocated from
+// the heap.  This is used when creating a message in the payload buffer
+// so that we know where the metadata for each message is stored.  The
+// metadata offset is held in the message header.
+struct MessageRuntime {
+  MessageRuntime(::toolbelt::PayloadBuffer *p) : pb(p) {}
+  MessageRuntime(::toolbelt::PayloadBuffer *p, size_t size)
+      : pb(p), buffer_size(size) {}
+  virtual ~MessageRuntime() = default;
+  ::toolbelt::PayloadBuffer *pb;
+
+  // This is the size of the buffer.  If it is zero, the size is inside
+  // the payload buffer.  If it's non-zero, it's the size of the received
+  // buffer.  We can't rely on the size inside the payload buffer if we
+  // are looking at received data (someone could set it to anything and we
+  // have no way to check it's valid).
+  size_t buffer_size = 0;
+};
+
+```
+The members of this are:
+
+1. `pb`: a pointer to a `PayloadBuffer` object that holds the actual binary for the message data
+2. `buffer_size`: the size of the buffer if it was received
+
+The `PayloadBuffer` is part of my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt) and
+provides a relocatable heap (malloc/free/realloc) inside a variable or fixed buffer.  It
+holds the binary values for all fields in the message in a relocatable form.  Generally,
+you won't have to concern yourself about the `PayloadBuffer`.
+
+
+### Creating a message in a dynamic buffer.
 The simplest way to create a Phaser message is the same as protobuf:
 
 ```c++
@@ -167,7 +232,7 @@ void Foo() {
 }
 ```
 
-### Message in a provided buffer.
+### Creating a message in a provided buffer.
 If you are using an IPC system that provides shared memory buffers (like [Subspace](https://github.com/dallison/subspace)) you will want to create your message directly in the shared memory.  To do this, use the
 static function *CreateMutable*, as follows:
 
@@ -406,6 +471,298 @@ provided by the regular protobuf messages.  Protobuf provides others (like
 Like protobuf, Phaser provides a *CopyFrom* method to copy messages.
 
 ## The Phaser Bank
+A significant feature that is missing from protobuf implementations (that I
+am aware of anyway) is the ability to do things with messages given only their
+message type name.  Most people end up creating a database of type name versus
+message descriptor and use reflection to handle this.
 
-## Reflection
+Phaser has a builtin feature called the `Phaser Bank`, which, as its name suggest
+is a bank of Phaser messages, indexed by message name.  This allows you to manipulate
+Phaser messages if you just know the message name and nothing else.  The ultimate in
+type-erasure.
+
+The functions provided by the the *PhaserBank* are all free functions in the *::phaser*
+namespace and are:
+
+```c++
+absl::StatusOr<BankInfo *> GetPhaserBankInfo(std::string message_type);
+
+void PhaserBankRegisterMessage(const std::string &name, const BankInfo &info);
+
+absl::Status PhaserStreamTo(const std::string &message_type, const Message &msg,
+                            std::ostream &os, int indent);
+absl::StatusOr<std::string>
+PhaserBankDebugString(const std::string &message_type, const Message &msg);
+
+absl::Status PhaserBankSerializeToBuffer(const std::string &message_type,
+                                         const Message &msg,
+                                         ProtoBuffer &buffer);
+absl::Status PhaserBankDeserializeFromBuffer(const std::string &message_type,
+                                             Message &msg, ProtoBuffer &buffer);
+absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string &message_type,
+                                                const Message &msg);
+
+absl::StatusOr<Message *>
+PhaserBankAllocateAtOffset(const std::string &message_type,
+                           std::shared_ptr<::phaser::MessageRuntime> runtime,
+                           toolbelt::BufferOffset offset);
+
+template <typename T>
+absl::StatusOr<std::pair<T *, toolbelt::BufferOffset>>
+PhaserBankAllocate(const std::string &message_type,
+                   std::shared_ptr<::phaser::MessageRuntime> runtime);
+
+template <>
+absl::StatusOr<std::pair<Message *, toolbelt::BufferOffset>>
+PhaserBankAllocate(const std::string &message_type,
+                   std::shared_ptr<::phaser::MessageRuntime> runtime);              
+
+absl::Status PhaserBankClear(const std::string &message_type, Message &msg);
+
+absl::Status PhaserBankCopy(const std::string &message_type, const Message &src,
+                            Message &dst);
+
+absl::StatusOr<const Message *>
+PhaserBankMakeExisting(const std::string &message_type,
+                       std::shared_ptr<::phaser::MessageRuntime> runtime,
+                       const void *data);
+
+absl::StatusOr<size_t> PhaserBankBinarySize(const std::string &message_type);
+
+absl::StatusOr<const MessageInfo *>
+PhaserBankMessageInfo(const std::string &message_type);
+
+absl::StatusOr<bool> PhaserBankHasField(const std::string &message_type,
+                                        const Message &msg, int number);
+
+template <typename Field>
+absl::StatusOr<Field *>
+PhaserBankGetFieldByName(const std::string &message_type, Message &msg,
+                         const std::string &name);
+
+template <typename Field>
+absl::StatusOr<Field *>
+PhaserBankGetFieldByNumber(const std::string &message_type, Message &msg,
+                           int number);
+```
+
+All the functions take the message type name and return an Abseil Status or
+StatusOr.
+
+For this to work, the Phaser message library for the message must be linked
+into the executable as the PhaserBank is built by static initializers.
+
+### Getting the information for a message given its name
+The `GetPhaserBankInfo` function looks up the information for a message.  This gives
+access to the `BankInfo` object for the message.  The *BankInfo* is like this:
+
+```c++
+struct BankInfo {
+  void (*stream_to)(const Message &msg, std::ostream &os, int indent);
+  absl::Status (*serialize_to_buffer)(const Message &msg, ProtoBuffer &buffer);
+  absl::Status (*deserialize_from_buffer)(Message &msg, ProtoBuffer &buffer);
+  size_t (*serialized_size)(const Message &msg);
+  Message *(*allocate_at_offset)(
+      std::shared_ptr<::phaser::MessageRuntime> runtime,
+      toolbelt::BufferOffset offset);
+  void (*clear)(Message &msg);
+  absl::Status (*copy)(const Message &src, Message &dst);
+  const Message *(*make_existing)(
+      std::shared_ptr<::phaser::MessageRuntime> runtime, const void *data);
+  size_t (*binary_size)();
+  const MessageInfo *(*message_info)();
+  bool (*has_field)(const Message &msg, int number);
+  void *(*get_field_by_name)(Message &msg, const std::string &name);
+  void *(*get_field_by_number)(Message &msg, int number);
+};
+```
+
+The function pointers are populated for each of the messages generated by Phaser and as
+long as the message library is linked in, it will be available.
+
+You can also use the `PhaserBankMessageInfo` function to get reflection data for the message.  I'll
+describe this in the section on message reflection.
+
+### Protobuf transcoding
+You can serialize and deserialize Phaser messages to and from protobuf wireformat using the 
+`PhaserBankSerializeToBuffer`, `PhaserBankDeserializeFromBuffer` and `PhaserBankSerializedSize`
+functions.  The serialization and deserialization use a class called `::phaser::ProtoBuffer`
+to hold the binary data.  This is defined in the file `phaser/runtime/wireformat.h` and provides
+a dynamically (or statically) sized byte buffer.  It's pretty easy to follow.
+
+### Streaming and DebugString
+You can stream a message to `std::ostream` using the `PhaserStreamTo` function.  If you want this
+in a string there's the `PhaserBankDebugString` function to do that for you.
+
+### Allocating messages
+To allocate a new mutable message in a previously allocated binary buffer, you can call
+`PhaserBankAllocate`.  This takes a message type name and a pointer to the `MessageRuntime`
+class that is part of every message.  There is a general template that can be used when
+you know the message type, and a specialized template for when you just want a pointer
+to the `Message` base class.  The result is a pair containing a pointer to the source
+message (allocated using new) and the absolute offset into the buffer of the location
+of the binary message.
+
+For example, to set the field `m` of a message to one allocated from PhaserBank:
+
+```c++
+  TestMessage msg;
+  auto status =
+      ::phaser::PhaserBankAllocate<InnerMessage>("foo.bar.InnerMessage", msg.runtime);
+  // Check status here.
+  auto[inner, offset] = *status;
+  msg.set_m(offset);
+  inner->set_str("Inner message");
+```
+
+There is also a very specialized function `PhaserBankAllocateAtOffset` that is used by the
+*google.protobuf.Any* handler to set the message in the Any's *value* field.
+
+If you want to allocate a message from existing data, such as data received over
+the network, you can use `PhaserBankMakeExisting`.  This is pretty specialized and
+is used by the Any handler.
+
+### Clearing and copying
+The functions `PhaserBankClear` and `PhaserBankCopy` allow you to clear the contents of
+a message or copy it to another message.
+
+### Reflection
+PhaserBank allows you to examine the contents of messages without knowing the message
+type.  You can:
+
+1. See if a field is present in the message
+2. Look up a field in a message by number or name
+
+The result of looking up a field is an instance of an internal field class.  In order
+to use these, please see the files `runtime/fields.h`, `runtime/union.h` and `runtime/vectors.h`.
+It's beyond the scope of this user guide to explain these, but I will provide further
+documentation to cover them.
+
+However, as an example, here's how to access an int32 field called `x` with number 100.
+
+```c++
+  absl::StatusOr<bool> has_x =
+      ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);
+
+  absl::StatusOr<::phaser::Int32Field<> *> x =
+      ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
+          "foo.bar.TestMessage", msg, 100);
+  int x_value = (*x)->Get();
+```
+
+The class `phaser:;Int32Field` is in `runtime/fields.h`.
+
+To access a repeated field:
+
+```c++
+ auto vi32 = ::phaser::PhaserBankGetFieldByNumber<
+      ::phaser::PrimitiveVectorField<int32_t>>("foo.bar.TestMessage", msg, 104);
+```
+
+## Message information
+Protobuf provides various types describing the details of a message.  These are known
+as `Descriptors`.  Phaser provides similar data structures.  There are both a static
+and a virtual function to get the message information from a message:
+
+1. `GetMessageInfo()` - virtual function on `::phaser::Message`
+2. `GetMessageInfoStatic` - static function generated by the compiler for the actual message
+
+The result is a const pointer to `::phaser::MessageInfo`.  This is a class that contains
+maps for all the fields in the message.  It is defined in `runtime/message.h` as:
+
+```c++
+struct MessageInfo {
+  std::string full_name;
+  absl::flat_hash_map<std::string, std::shared_ptr<FieldInfo>> fields_by_name;
+  absl::flat_hash_map<int, std::shared_ptr<FieldInfo>> fields_by_number;
+  std::vector<std::shared_ptr<FieldInfo>> fields_in_order;
+};
+```
+The members are:
+
+1. `full_name`: the full name (with package) of the message
+2. `fields_by_name`: a map of field name vs field information
+3. `fields_by_number`: mapping of field number vs information
+4. `fields_in_order`: all the fields in the message in the order declared in the .proto file
+
+The field information is a base class and two derived classes.  The base class is:
+
+```c++
+enum class FieldType {
+  kFieldInt32,
+  kFieldInt64,
+  kFieldUInt32,
+  kFieldUInt64,
+  kFieldString,
+  kFieldMessage,
+  kFieldBytes,
+  kFieldFloat,
+  kFieldDouble,
+  kFieldBool,
+  kFieldEnum,
+  kFieldOneof,
+};
+
+struct FieldInfo {
+  FieldInfo(const std::string &n, FieldType t, int num, off_t off)
+      : name(n), type(t), number(num), offset(off) {}
+  std::string name;
+  FieldType type;
+  int number;
+  off_t offset; // Offset into source message (not binary).
+};
+
+```
+
+There is a derived class for all primitive fields (non-oneof fields):
+
+```c++
+struct PrimitiveFieldInfo : public FieldInfo {
+  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
+                     bool f = false, bool s = false, bool r = false,
+                     bool p = false)
+      : FieldInfo(n, t, num, off), is_fixed(f), is_repeated(r), is_packed(p) {}
+  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
+                     const std::string &m, bool r = false, bool p = false)
+      : FieldInfo(n, t, num, off), is_repeated(r), is_packed(p),
+        message_or_enum_name(m) {}
+
+  bool is_fixed = false;
+  bool is_signed = false;
+  bool is_repeated = false;
+  bool is_packed = true;
+  std::optional<std::string> message_or_enum_name;
+};
+```
+
+This is used for both singular and repeated fields.
+
+For `oneof` fields, a derived class describes the set of fields within the
+discriminated union:
+
+```c++
+struct UnionFieldInfo : public PrimitiveFieldInfo {
+  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i,
+                 const std::string &m)
+      : PrimitiveFieldInfo(n, t, num, off, m), id(i) {}
+  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i,
+                 bool f = false, bool s = false)
+      : PrimitiveFieldInfo(n, t, num, off, f, s), id(i) {}
+  int id; // Field id within union.
+};
+
+struct UnionInfo : public FieldInfo {
+  UnionInfo(const std::string &n, off_t off)
+      : FieldInfo(n, FieldType::kFieldOneof, 0, off) {}
+  std::vector<std::shared_ptr<UnionFieldInfo>> fields_in_order;
+};
+
+```
+
+The union field (a.k.a. oneof) has a vector of `UnionFieldInfo` objects, each of which
+is a primitive field.  Oneofs can't have repeated fields.  The `id` member of
+`UnionFieldInfo` is a zero-based number representing the position in the `fields_in_order`
+vector and is used to select the index into the `std::tuple` held in the internal
+union field in a message (I'll show how to use this in a details document).
+
 

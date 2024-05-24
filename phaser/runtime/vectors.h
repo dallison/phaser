@@ -827,23 +827,38 @@ public:
     return msgs_[index].Mutable();
   }
 
+  void SetOffset(int index, toolbelt::BufferOffset offset) {
+    if (index >= msgs_.size()) {
+      msgs_.resize(index + 1);
+    }
+    auto hdr = Header();
+    ::toolbelt::BufferOffset *data =
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (!msgs_[index].IsPlaceholder() && data[index] != 0) {
+      // Already set, free the current value.
+      msgs_[index].Clear();
+    }
+    data[index] = offset;
+    msgs_[index] = MessageObject<T>(GetRuntime(), offset);
+  }
+
   // Allocate a bunch of empty messages.
-  std::vector<T*> Allocate(size_t n) {
-    std::vector<T*> result;
+  std::vector<T *> Allocate(size_t n) {
+    std::vector<T *> result;
     result.resize(n);
     this->resize(n);
     // Allocate memory for n messages in the payload buffer.
     std::vector<void *> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
         GetBufferAddr(), T::BinarySize(), n, 8, true);
 
-    toolbelt::VectorHeader* hdr = Header();
+    toolbelt::VectorHeader *hdr = Header();
     ::toolbelt::BufferOffset *data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
 
     // Fill in the msgs_ vector with MessageObject objects referring to the
     // allocated memory.
     for (size_t i = 0; i < n; i++) {
-      auto& msg = msgs_[i].MutableMsg();
+      auto &msg = msgs_[i].MutableMsg();
       msg.runtime = GetRuntime();
       toolbelt::BufferOffset offset = GetRuntime()->ToOffset(addrs[i]);
       msg.absolute_binary_offset = offset;

@@ -54,6 +54,8 @@ protected:
              uint32_t abs_offset) {                                            \
       GetBuffer(runtime)->Set(abs_offset, v);                                  \
     }                                                                          \
+    void SetOffset(const std::shared_ptr<MessageRuntime> &runtime,             \
+                   uint32_t abs_offset, toolbelt::BufferOffset msg_offset) {}  \
                                                                                \
     bool Equal(const Union##cname##Field &other,                               \
                const std::shared_ptr<MessageRuntime> &runtime,                 \
@@ -149,6 +151,9 @@ public:
         ->template Get<typename std::underlying_type<Enum>::type>(abs_offset);
   }
 
+  void SetOffset(const std::shared_ptr<MessageRuntime> &runtime, uint32_t abs_offset,
+           toolbelt::BufferOffset msg_offset) {}
+
   void Set(Enum e, const std::shared_ptr<MessageRuntime> &runtime,
            uint32_t abs_offset) {
     GetBuffer(runtime)->Set(
@@ -221,6 +226,9 @@ public:
         runtime->ToAddress<const ::toolbelt::BufferOffset>(abs_offset);
     return *addr != 0;
   }
+
+  void SetOffset(const std::shared_ptr<MessageRuntime> &runtime,
+                 uint32_t abs_offset, toolbelt::BufferOffset msg_offset) {}
 
   template <typename Str>
   void Set(Str s, const std::shared_ptr<MessageRuntime> &runtime,
@@ -345,6 +353,17 @@ public:
       *addr = msg_offset; // Put message field offset into message.
     }
     return &msg_;
+  }
+
+  void SetOffset(const std::shared_ptr<MessageRuntime> &runtime, uint32_t abs_offset,
+           toolbelt::BufferOffset msg_offset) {
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(runtime, abs_offset);
+    if (addr == nullptr) {
+      return;
+    }
+    *addr = msg_offset;
+    msg_.runtime = runtime;
+    msg_.absolute_binary_offset = msg_offset;
   }
 
   absl::Status SerializeToBuffer(ProtoBuffer &buffer) const {
@@ -656,6 +675,18 @@ public:
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_offset);
     return *discrim == field_numbers_[Id];
+  }
+
+  template <int Id> void SetOffset(toolbelt::BufferOffset offset) {
+    int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
+        GetMessageBinaryStart() + relative_binary_offset_);
+    *discrim = field_numbers_[Id];
+
+    // Get the variant and set its location.  In binary it is
+    // 4 bytes after the discriminator.
+    auto &t = std::get<Id>(value_);
+    return t.SetOffset(GetRuntime(),
+                 GetMessageBinaryStart() + relative_binary_offset_ + 4, offset);
   }
 
 private:

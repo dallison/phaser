@@ -54,12 +54,18 @@ public:
       }};
   static std::string Name() { return "Any"; }
   static std::string FullName() { return "google.protobuf.Any"; }
+  std::string GetName() const override { return Name(); }
+  std::string GetFullName() const override { return FullName(); }
 
   friend std::ostream &operator<<(std::ostream &os, const AnyMessage &msg);
 
   void Indent(int indent) {
     type_url_.Indent(indent);
     value_.Indent(indent);
+  }
+
+  const MessageInfo* GetMessageInfo() const override {
+    return nullptr;   // Implement this.
   }
 
   // Protobuf accessors.
@@ -74,7 +80,7 @@ public:
   void clear_value() { value_.Clear(); }
   bool has_value() const { return value_.IsPresent(); }
 
-  void Clear() {
+  void Clear() override {
     type_url_.Clear();
     value_.Clear();
   }
@@ -191,6 +197,11 @@ public:
     return absl::OkStatus();
   }
 
+  void CopyFrom(const Message& m) override {
+    const AnyMessage& msg = static_cast<const AnyMessage&>(m);
+    (void)CloneFrom(msg);
+  }
+  
   // Create an instance of message T in the value field.  Returns
   // a message whose storage is in the payload buffer inside
   // the value.

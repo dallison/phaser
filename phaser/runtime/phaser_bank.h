@@ -10,8 +10,6 @@
 
 namespace phaser {
 
-
-
 struct BankInfo {
   void (*stream_to)(const Message &msg, std::ostream &os, int indent);
   absl::Status (*serialize_to_buffer)(const Message &msg, ProtoBuffer &buffer);
@@ -20,6 +18,8 @@ struct BankInfo {
   Message *(*allocate_at_offset)(
       std::shared_ptr<::phaser::MessageRuntime> runtime,
       toolbelt::BufferOffset offset);
+  std::pair<Message *, toolbelt::BufferOffset> (*allocate)(
+      std::shared_ptr<::phaser::MessageRuntime> runtime);
   void (*clear)(Message &msg);
   absl::Status (*copy)(const Message &src, Message &dst);
   const Message *(*make_existing)(
@@ -31,7 +31,8 @@ struct BankInfo {
   void *(*get_field_by_number)(Message &msg, int number);
 };
 
-extern std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>> phaser_banks_;
+extern std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>>
+    phaser_banks_;
 
 absl::StatusOr<BankInfo *> GetPhaserBankInfo(std::string message_type);
 
@@ -59,6 +60,29 @@ PhaserBankAllocateAtOffset(const std::string &message_type,
                            std::shared_ptr<::phaser::MessageRuntime> runtime,
                            toolbelt::BufferOffset offset);
 
+template <typename T>
+inline absl::StatusOr<std::pair<T *, toolbelt::BufferOffset>>
+PhaserBankAllocate(const std::string &message_type,
+                   std::shared_ptr<::phaser::MessageRuntime> runtime) {
+  absl::StatusOr<BankInfo *> bank_info = GetPhaserBankInfo(message_type);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  auto[msg, offset] = (*bank_info)->allocate(runtime);
+  return std::make_pair(static_cast<T *>(msg), offset);
+}
+
+template <>
+inline absl::StatusOr<std::pair<Message *, toolbelt::BufferOffset>>
+PhaserBankAllocate(const std::string &message_type,
+                   std::shared_ptr<::phaser::MessageRuntime> runtime) {
+  absl::StatusOr<BankInfo *> bank_info = GetPhaserBankInfo(message_type);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  return (*bank_info)->allocate(runtime);
+}
+
 absl::Status PhaserBankClear(const std::string &message_type, Message &msg);
 
 absl::Status PhaserBankCopy(const std::string &message_type, const Message &src,
@@ -79,7 +103,7 @@ absl::StatusOr<bool> PhaserBankHasField(const std::string &message_type,
 
 template <typename Field>
 absl::StatusOr<Field *>
-PhaserBankGetFieldByName(const std::string &message_type, Message &msg,
+inline PhaserBankGetFieldByName(const std::string &message_type, Message &msg,
                          const std::string &name) {
   absl::StatusOr<BankInfo *> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
@@ -92,7 +116,7 @@ PhaserBankGetFieldByName(const std::string &message_type, Message &msg,
 
 template <typename Field>
 absl::StatusOr<Field *>
-PhaserBankGetFieldByNumber(const std::string &message_type, Message &msg,
+inline PhaserBankGetFieldByNumber(const std::string &message_type, Message &msg,
                            int number) {
   absl::StatusOr<BankInfo *> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {

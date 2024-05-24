@@ -535,6 +535,18 @@ public:
     return &msg_;
   }
 
+  void SetOffset(toolbelt::BufferOffset offset) {
+    ::toolbelt::BufferOffset *addr =
+        GetIndirectAddress(relative_binary_offset_);
+    if (*addr != 0) {
+      // Already set, clear the exising message
+      Clear();
+    }
+    *addr = offset;
+    msg_.runtime = GetRuntime();
+    msg_.absolute_binary_offset = offset;
+  }
+
   void Clear() {
     ::toolbelt::BufferOffset *addr =
         GetIndirectAddress(relative_binary_offset_);

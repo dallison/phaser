@@ -560,6 +560,9 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   os << "  static std::string Name() { return \"" << message_->name()
      << "\"; }\n\n";
 
+  os << "  std::string GetName() const override { return Name(); }\n";
+  os << "  std::string GetFullName() const override { return FullName(); }\n";
+
   os << "  friend std::ostream &operator<<(std::ostream &os, const "
      << MessageName(message_) << " &msg);\n\n";
 
@@ -862,7 +865,7 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream &os) {
 
 void MessageGenerator::GenerateClear(std::ostream &os, bool decl) {
   if (decl) {
-    os << "  void Clear();\n";
+    os << "  void Clear() override;\n";
     return;
   }
   os << "void " << MessageName(message_) << "::Clear() {\n";
@@ -1138,6 +1141,10 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
       os << "  void clear_" << field_name << "() {\n";
       os << "    " << member_name << ".Clear" << suffix << "();\n";
+      os << "  }\n";
+      os << "  void set_" << field_name
+         << "(toolbelt::BufferOffset offset) {\n";
+      os << "    " << member_name << ".SetOffset" << suffix << "(offset);\n";
       os << "  }\n";
 
       if (union_index == -1) {
@@ -1471,8 +1478,9 @@ void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
   if (decl) {
     os << "  template <typename T>\n";
     os << "  absl::Status CloneFrom(const T & other);\n\n";
-    os << "  void CopyFrom(const " << MessageName(message_) << " & other) {\n";
-    os << "    (void)CloneFrom(other);\n";
+    os << "  void CopyFrom(const ::phaser::Message& other) override{\n";
+    os << "    const " << MessageName(message_) << "& m = static_cast<const " << MessageName(message_) << "&>(other);\n";
+    os << "    (void)CloneFrom(m);\n";
     os << "  }\n\n";
     return;
   }
@@ -1580,6 +1588,17 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "  return msg;\n";
   os << "}\n\n";
 
+  os << "static std::pair<::phaser::Message *, toolbelt::BufferOffset>\n";
+  os << MessageName(message_)
+     << "Allocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {\n";
+  os << "  void *addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb, "
+     << MessageName(message_) << "::BinarySize(), 8, true);\n";
+  os << "  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);\n";
+  os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
+  os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
+  os << "  return std::make_pair(msg, offset);\n";
+  os << "}\n\n";
+
   os << "static void " << MessageName(message_)
      << "Clear(::phaser::Message &msg) {\n";
   os << "  " << MessageName(message_) << " *m = static_cast<"
@@ -1633,7 +1652,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
 
   os << "static const ::phaser::MessageInfo* " << MessageName(message_)
      << "GetMessageInfo() {\n";
-  os << "  return " << MessageName(message_) << "::GetMessageInfo();\n";
+  os << "  return " << MessageName(message_) << "::GetMessageInfoStatic();\n";
   os << "}\n\n";
 
   os << "static void *" << MessageName(message_)
@@ -1642,7 +1661,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "    return nullptr;\n";
   os << "  }\n";
   os << "  const ::phaser::MessageInfo *info = " << MessageName(message_)
-     << "::GetMessageInfo();\n";
+     << "::GetMessageInfoStatic();\n";
   os << R"XXX(
   auto it = info->fields_by_number.find(number);
   if (it != info->fields_by_number.end()) {
@@ -1656,7 +1675,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "static void *" << MessageName(message_)
      << "GetFieldByName(::phaser::Message &msg, const std::string &name) {\n";
   os << "  const ::phaser::MessageInfo *info = " << MessageName(message_)
-     << "::GetMessageInfo();\n";
+     << "::GetMessageInfoStatic();\n";
   os << "  auto it = info->fields_by_name.find(name);\n";
   os << "  if (it != info->fields_by_name.end()) {\n";
   os << "    if (!" << MessageName(message_)
@@ -1679,6 +1698,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "  .serialized_size = " << MessageName(message_) << "SerializedSize,\n";
   os << "  .allocate_at_offset = " << MessageName(message_)
      << "AllocateAtOffset,\n";
+  os << "  .allocate = " << MessageName(message_) << "Allocate,\n";
   os << "  .clear = " << MessageName(message_) << "Clear,\n";
   os << "  .copy = " << MessageName(message_) << "Copy,\n";
   os << "  .make_existing = " << MessageName(message_) << "MakeExisting,\n";
@@ -1766,11 +1786,14 @@ void MessageGenerator::GenerateFieldInfo(int index,
 
 void MessageGenerator::GenerateMessageInfo(std::ostream &os, bool decl) {
   if (decl) {
-    os << "  static const ::phaser::MessageInfo* GetMessageInfo();\n";
+    os << "  static const ::phaser::MessageInfo* GetMessageInfoStatic();\n";
+    os << "  const ::phaser::MessageInfo* GetMessageInfo() const override {\n";
+    os << "    return GetMessageInfoStatic();\n";
+    os << "  }\n";
     return;
   }
   os << "const ::phaser::MessageInfo* " << MessageName(message_)
-     << "::GetMessageInfo() {\n";
+     << "::GetMessageInfoStatic() {\n";
   os << "  static ::phaser::MessageInfo info;\n";
   os << "  if (!info.full_name.empty()) {\n";
   os << "    return &info;\n";
@@ -1787,7 +1810,8 @@ void MessageGenerator::GenerateMessageInfo(std::ostream &os, bool decl) {
       auto u = std::static_pointer_cast<UnionInfo>(field);
       os << "  info.fields_in_order[" << index++
          << "] = std::make_shared<::phaser::UnionInfo>(\"" << u->oneof->name()
-         << "\", offsetof(" <<  MessageName(message_) << ", " << field->member_name << "));\n";
+         << "\", offsetof(" << MessageName(message_) << ", "
+         << field->member_name << "));\n";
       continue;
     }
     GenerateFieldInfo(index++, field, nullptr, -1, os);

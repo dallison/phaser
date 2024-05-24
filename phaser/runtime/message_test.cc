@@ -89,10 +89,16 @@ struct InnerMessage : public Message {
       }};
   static std::string Name() { return "InnerMessage"; }
   static std::string FullName() { return "foo.bar.InnerMessage"; }
+  std::string GetName() const override { return Name(); }
+  std::string GetFullName() const override { return FullName(); }
 
   friend std::ostream &operator<<(std::ostream &os, const InnerMessage &msg);
 
-  static const ::phaser::MessageInfo *GetMessageInfo() {
+  const ::phaser::MessageInfo *GetMessageInfo() const override {
+    return InnerMessage::GetMessageInfoStatic();
+  }
+
+  static const ::phaser::MessageInfo *GetMessageInfoStatic() {
     static phaser::MessageInfo info;
     if (!info.full_name.empty()) {
       return &info;
@@ -161,6 +167,11 @@ struct InnerMessage : public Message {
     return os.str();
   }
 
+  void CopyFrom(const Message &m) override {
+    const InnerMessage &other = static_cast<const InnerMessage &>(m);
+    (void)CloneFrom(other);
+  }
+
   absl::Status CloneFrom(const InnerMessage &other) {
     if (other.str_.IsPresent()) {
       str_.Set(other.str_.Get());
@@ -193,7 +204,8 @@ struct InnerMessage : public Message {
 
   // Protobuf accessors.
   std::string_view str() const { return str_.Get(); }
-  void set_str(const std::string &str) { str_.Set(str); }
+  template <typename Str> void set_str(Str str) { str_.Set(str); }
+
   void clear_str() { str_.Clear(); }
   bool has_str() const { return str_.IsPresent(); }
 
@@ -207,7 +219,7 @@ struct InnerMessage : public Message {
   void clear_e() { e_.Clear(); }
   bool has_e() const { return e_.IsPresent(); }
 
-  void Clear() {
+  void Clear() override {
     str_.Clear();
     f_.Clear();
     e_.Clear();
@@ -401,6 +413,16 @@ InnerMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
   return msg;
 }
 
+static std::pair<Message *, toolbelt::BufferOffset>
+InnerMessageAllocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {
+  void *addr = toolbelt::PayloadBuffer::Allocate(
+      &runtime->pb, InnerMessage::BinarySize(), 8, true);
+  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
+  auto msg = new InnerMessage(runtime, offset);
+  msg->InstallMetadata<InnerMessage>();
+  return std::make_pair(msg, offset);
+}
+
 static void InnerMessageClear(Message &msg) {
   InnerMessage *m = static_cast<InnerMessage *>(&msg);
   m->Clear();
@@ -421,12 +443,11 @@ InnerMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
 static size_t InnerMessageBinarySize() { return InnerMessage::BinarySize(); }
 
 static const phaser::MessageInfo *InnerMessageMessageInfo() {
-  return InnerMessage::GetMessageInfo();
+  return InnerMessage::GetMessageInfoStatic();
 }
 
 static bool InnerMessageHasField(const phaser::Message &msg, int number) {
-  const InnerMessage *m =
-      static_cast<const InnerMessage *>(&msg);
+  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
   switch (number) {
   case 10:
     return m->str_.IsPresent();
@@ -448,7 +469,7 @@ static void *InnerMessageFindFieldByNumber(Message &msg, int number) {
   if (!InnerMessageHasField(msg, number)) {
     return nullptr;
   }
-  const phaser::MessageInfo *info = InnerMessage::GetMessageInfo();
+  const phaser::MessageInfo *info = InnerMessage::GetMessageInfoStatic();
   auto it = info->fields_by_number.find(number);
   if (it != info->fields_by_number.end()) {
     char *m = reinterpret_cast<char *>(&msg);
@@ -459,7 +480,7 @@ static void *InnerMessageFindFieldByNumber(Message &msg, int number) {
 
 static void *InnerMessageFindFieldByName(Message &msg,
                                          const std::string &name) {
-  const phaser::MessageInfo *info = InnerMessage::GetMessageInfo();
+  const phaser::MessageInfo *info = InnerMessage::GetMessageInfoStatic();
   auto it = info->fields_by_name.find(name);
   if (it != info->fields_by_name.end()) {
     if (!InnerMessageHasField(msg, it->second->number)) {
@@ -478,6 +499,7 @@ static phaser::BankInfo innerMessageBackInfo{
     .deserialize_from_buffer = InnerMessageDeserializeFromBuffer,
     .serialized_size = InnerMessageSerializedSize,
     .allocate_at_offset = InnerMessageAllocateAtOffset,
+    .allocate = InnerMessageAllocate,
     .clear = InnerMessageClear,
     .copy = InnerMessageCopy,
     .make_existing = InnerMessageMakeExisting,
@@ -604,8 +626,15 @@ struct TestMessage : public Message {
       }};
   static std::string Name() { return "TestMessage"; }
   static std::string FullName() { return "foo.bar.TestMessage"; }
+  std::string GetName() const override { return Name(); }
+  std::string GetFullName() const override { return FullName(); }
 
-  void Clear() {
+  void CopyFrom(const Message &m) override {
+    const TestMessage &other = static_cast<const TestMessage &>(m);
+    (void)CloneFrom(other);
+  }
+
+  void Clear() override {
     x_.Clear();
     y_.Clear();
     s_.Clear();
@@ -619,6 +648,10 @@ struct TestMessage : public Message {
     u2_.Clear<1>();
     u3_.Clear<0>();
     u3_.Clear<1>();
+  }
+
+  const ::phaser::MessageInfo *GetMessageInfo() const override {
+    return nullptr;
   }
 
   std::string DebugString() const {
@@ -949,7 +982,7 @@ struct TestMessage : public Message {
   InnerMessage *mutable_m() { return m_.Mutable(); }
   void clear_m() { m_.Clear(); }
   bool has_m() const { return m_.IsPresent(); }
-
+  void set_m(toolbelt::BufferOffset offset) { m_.SetOffset(offset); }
   // Repeated accessors.
   size_t vi32_size() const { return vi32_.size(); }
   int32_t vi32(size_t i) const { return vi32_.Get(i); }
@@ -1177,6 +1210,16 @@ TestMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
   return msg;
 }
 
+static std::pair<Message *, toolbelt::BufferOffset>
+TestMessageAllocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {
+  void *addr = toolbelt::PayloadBuffer::Allocate(
+      &runtime->pb, TestMessage::BinarySize(), 8, true);
+  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
+  auto msg = new TestMessage(runtime, offset);
+  msg->InstallMetadata<TestMessage>();
+  return std::make_pair(msg, offset);
+}
+
 static void TestMessageClear(Message &msg) {
   TestMessage *m = static_cast<TestMessage *>(&msg);
   m->Clear();
@@ -1202,6 +1245,7 @@ static phaser::BankInfo kTestMessageBackInfo{
     .deserialize_from_buffer = TestMessageDeserializeFromBuffer,
     .serialized_size = TestMessageSerializedSize,
     .allocate_at_offset = TestMessageAllocateAtOffset,
+    .allocate = TestMessageAllocate,
     .clear = TestMessageClear,
     .copy = TestMessageCopy,
     .make_existing = TestMessageMakeExisting,
@@ -1218,7 +1262,8 @@ static struct TestMessageBankRegister {
 TEST(MessageTest, Basic) {
   char *buffer = (char *)malloc(4096);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
-
+  msg.DebugDump();
+  
   msg.x_.Set(1234);
   msg.y_.Set(0xffff);
   msg.s_.Set("Hello, world!");
@@ -1946,6 +1991,19 @@ TEST(MessageTest, MessageInfo) {
   ASSERT_EQ("str", info->fields_in_order[0]->name);
   ASSERT_EQ(10, info->fields_in_order[0]->number);
   free(buffer);
+}
+
+TEST(MessageTest, PhaserBank) {
+  char *buffer = (char *)malloc(4096);
+  TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
+  auto status = ::phaser::PhaserBankAllocate<InnerMessage>(
+      "foo.bar.InnerMessage", msg.runtime);
+  ASSERT_TRUE(status.ok());
+  auto[inner, offset] = *status;
+  msg.set_m(offset);
+  inner->set_str("Inner message");
+
+  ASSERT_EQ("Inner message", msg.m().str());
 }
 
 int main(int argc, char **argv) {

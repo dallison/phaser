@@ -52,17 +52,19 @@ struct FieldInfo {
   std::string name;
   FieldType type;
   int number;
-  off_t offset;     // Offset into source message (not binary).
+  off_t offset; // Offset into source message (not binary).
 };
 
 struct PrimitiveFieldInfo : public FieldInfo {
-  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off, bool f = false, bool s = false,
-                    bool r = false, bool p = false)
+  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
+                     bool f = false, bool s = false, bool r = false,
+                     bool p = false)
       : FieldInfo(n, t, num, off), is_fixed(f), is_repeated(r), is_packed(p) {}
- PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off, const std::string &m,
-                    bool r = false, bool p = false)
-      : FieldInfo(n, t, num, off), is_repeated(r), is_packed(p), message_or_enum_name(m) {}  
-      
+  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
+                     const std::string &m, bool r = false, bool p = false)
+      : FieldInfo(n, t, num, off), is_repeated(r), is_packed(p),
+        message_or_enum_name(m) {}
+
   bool is_fixed = false;
   bool is_signed = false;
   bool is_repeated = false;
@@ -71,15 +73,18 @@ struct PrimitiveFieldInfo : public FieldInfo {
 };
 
 struct UnionFieldInfo : public PrimitiveFieldInfo {
-  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i, const std::string &m)
+  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i,
+                 const std::string &m)
       : PrimitiveFieldInfo(n, t, num, off, m), id(i) {}
-  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i, bool f = false, bool s = false)
+  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i,
+                 bool f = false, bool s = false)
       : PrimitiveFieldInfo(n, t, num, off, f, s), id(i) {}
   int id; // Field id within union.
 };
 
 struct UnionInfo : public FieldInfo {
-  UnionInfo(const std::string &n, off_t off) : FieldInfo(n, FieldType::kFieldOneof, 0, off) {}
+  UnionInfo(const std::string &n, off_t off)
+      : FieldInfo(n, FieldType::kFieldOneof, 0, off) {}
   std::vector<std::shared_ptr<UnionFieldInfo>> fields_in_order;
 };
 
@@ -198,6 +203,14 @@ struct Message {
   Message() = default;
   Message(std::shared_ptr<MessageRuntime> rt, ::toolbelt::BufferOffset start)
       : runtime(rt), absolute_binary_offset(start) {}
+  virtual ~Message() = default;
+
+  virtual const MessageInfo *GetMessageInfo() const { return nullptr; }
+  virtual std::string GetName() const { return "Message"; }
+  virtual std::string GetFullName() const { return "phaser.Message"; }
+  virtual void Clear() {}
+  virtual void CopyFrom(const Message &src) {}
+
   std::shared_ptr<MessageRuntime> runtime;
   ::toolbelt::BufferOffset absolute_binary_offset;
 
@@ -206,34 +219,30 @@ struct Message {
   // std::shared_ptr to the pointer to the ::toolbelt::PayloadBuffer.
   static ::toolbelt::PayloadBuffer *GetBuffer(const void *field,
                                               uint32_t offset) {
-    const std::shared_ptr<MessageRuntime> *rt =
-        reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
-            reinterpret_cast<const char *>(field) - offset);
-    return (*rt)->pb;
+    const Message *msg = reinterpret_cast<const Message *>(
+        reinterpret_cast<const char *>(field) - offset);
+    return msg->runtime->pb;
   }
 
   static ::toolbelt::PayloadBuffer **GetBufferAddr(const void *field,
                                                    uint32_t offset) {
-    const std::shared_ptr<MessageRuntime> *rt =
-        reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
-            reinterpret_cast<const char *>(field) - offset);
-    return &(*rt)->pb;
+    const Message *msg = reinterpret_cast<const Message *>(
+        reinterpret_cast<const char *>(field) - offset);
+    return &msg->runtime->pb;
   }
 
   static std::shared_ptr<MessageRuntime> &GetRuntime(void *field,
                                                      uint32_t offset) {
-    std::shared_ptr<MessageRuntime> *rt =
-        reinterpret_cast<std::shared_ptr<MessageRuntime> *>(
-            reinterpret_cast<char *>(field) - offset);
-    return *rt;
+    Message *msg =
+        reinterpret_cast<Message *>(reinterpret_cast<char *>(field) - offset);
+    return msg->runtime;
   }
 
   static const std::shared_ptr<MessageRuntime> &GetRuntime(const void *field,
                                                            uint32_t offset) {
-    const std::shared_ptr<MessageRuntime> *rt =
-        reinterpret_cast<const std::shared_ptr<MessageRuntime> *>(
-            reinterpret_cast<const char *>(field) - offset);
-    return *rt;
+    const Message *msg = reinterpret_cast<const Message *>(
+        reinterpret_cast<const char *>(field) - offset);
+    return msg->runtime;
   }
 
   static const Message *GetMessage(const void *field, uint32_t offset) {
