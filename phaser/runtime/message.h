@@ -264,12 +264,37 @@ struct Message {
     return msg->absolute_binary_offset;
   }
 
-  void SetUserMetadata(void *metadata) {
-    runtime->pb->metadata = runtime->pb->ToOffset(metadata);
+  absl::Status SetUserMetadata(toolbelt::BufferOffset offset) {
+    if (offset >= runtime->pb->hwm) {
+      return absl::InternalError("Invalid metadata offset");
+    }
+    runtime->pb->metadata = offset;
+    return absl::OkStatus();
   }
 
   void *GetUserMetadata() {
     return runtime->pb->ToAddress(runtime->pb->metadata);
+  }
+
+  void* Allocate(size_t size, size_t alignment=4, bool clear=true) {
+    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, alignment, clear);
+  }
+
+  void Free(void *ptr) {
+    runtime->pb->Free(ptr);
+  }
+
+  void* Realloc(void *ptr, size_t size, size_t alignment=4, bool clear=true) {
+    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, alignment, clear);
+  }
+
+  toolbelt::BufferOffset ToOffset(void *addr) {
+    return runtime->pb->ToOffset(addr);
+  }
+
+  template <typename T>
+  T* ToAddress(toolbelt::BufferOffset offset) {
+    return runtime->pb->ToAddress<T>(offset);
   }
 
   template <typename MessageType> void InstallMetadata() {
