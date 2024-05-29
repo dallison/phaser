@@ -5,6 +5,7 @@
 #pragma once
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "toolbelt/payload_buffer.h"
 #include <memory>
 #include <optional>

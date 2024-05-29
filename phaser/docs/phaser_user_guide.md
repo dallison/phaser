@@ -109,6 +109,105 @@ And, if your robotics nodes are processing only the most recent messages, or sto
 messages in a history buffer, there is no time wasted in deserializing messages that
 you won't use.
 
+## Building a Phaser library
+Phaser was designed to be used with Google's `bazel` build system.  It also uses the
+`Abseil` library and, of course, `protobuf`.
+
+The system is integrated into `bazel` by defining a `Starlark` extension file that
+defines a rule to build a Phaser library.  The file `phaser_library.bzl` contains the
+build rules.
+
+To build a Phaser library, you first need a `proto_libary` target that lists the
+source files and dependencies for the protobuf compiler.  You then define a
+`phaser_library` that has a dependency on the proto library.  This is similar to how
+you would build a regular `cc_proto_library` in Bazel.
+
+For example, here's how you would build a `phaser_library` for a proto library
+containing `Foo.proto`:
+
+```
+load("//phaser:phaser_library.bzl", "phaser_library")
+
+proto_library(
+    name = "foo_proto",
+    srcs = [
+        "Foo.proto",
+    ],
+)
+
+phaser_library(
+    name = "foo_phaser",
+    add_namespace = "phaser",
+    deps = [":foo_proto"],
+)
+```
+
+The result will be a couple of files: `Foo.phaser.h` and `Foo.phaser.cc`.  The names of the message
+classes will have the namespace `phaser` added to them to distinguish them from regular protobuf
+messages (this is optional).  If `Foo.proto` is in the package `foo.bar`, the class names will be in the
+namespace `::foo::bar::phaser`.
+
+If you want to use a different build system, you will need to make all the things that Phaser needs
+available somehow and run the `protoc` command yourself (Abseil, libprotobuf, etc).  
+Phaser runs as a protoc plugin.  To run it use the following command format:
+
+```
+$ protoc --plugin==protoc-gen-phaser=DIR/bin/phaser/compiler/phaser \
+    --phaser_out=add_namespace=NS,package_name=PACKAGE,target_name=TARGET:OUTPUT_DIR \
+    -I IPATH...
+    FILE ...
+```
+You need to specify:
+
+1. DIR: the directory containing the `phaser` plugin binary
+2. NS: optionally the namespace to add
+3. PACKAGE: the name of the package you want to build.  This is the root of the output directory
+4. TARGET: the name of the target being built.
+5. OUTPUT_DIR: the root of the output directory
+6. IPATH: import path (use one -I for each)
+
+If you want to see all the options to `protoc`, run `protoc --help`.
+
+The output will be placed in the path `OUTPUT_DIR/PACKAGE/TARGET`.
+
+For example, if you build the test `phaser_test` using the following command (on a Mac with Apple Silicon):
+
+```
+$ bazel build --config=apple_silicon //phaser:phaser_test -c dbg
+```
+
+the `TestMessage` output files will be:
+
+```
+bazel-out/darwin_arm64-dbg/bin/phaser/testdata/test_message_phaser/phaser/testdata/TestMessage.phaser.h
+bazel-out/darwin_arm64-dbg/bin/phaser/testdata/test_message_phaser/phaser/testdata/TestMessage.phaser.cc
+```
+
+There is also a symbolic link to the header file created in:
+
+```
+bazel-out/darwin_arm64-dbg/bin/phaser/testdata/TestMessage.phaser.h
+```
+
+To allow you to omit the longer path when including the header file.  For example, to include
+`TestMessage.phaser.h` you use:
+
+```c++
+#include "phaser/testdata/TestMessage.phaser.h"
+```
+
+Just like you would in regular protobuf.
+
+The actual command used by Bazel to build the Phaser files is:
+
+```
+(cd /private/var/tmp/_bazel_dallison/c60267365ec0ecff0968b479358562f7/execroot/__main__ && \
+  exec env - \
+  bazel-out/darwin_arm64-opt-exec-2B5CBBC6/bin/external/com_google_protobuf/protoc '--plugin=protoc-gen-phaser=bazel-out/darwin_arm64-opt-exec-2B5CBBC6/bin/phaser/compiler/phaser' '--phaser_out=add_namespace=phaser,package_name=phaser/testdata,target_name=test_message_phaser:bazel-out/darwin_arm64-dbg/bin' phaser/testdata/TestMessage.proto bazel-out/darwin_arm64-dbg/bin/external/com_google_protobuf/_virtual_imports/any_proto/google/protobuf/any.proto -Ibazel-out/darwin_arm64-dbg/bin/external/com_google_protobuf/_virtual_imports/any_proto -I.)
+```
+
+I haven't done this with `cmake` or any other build system but I guess it will be reasonably easy.
+
 ## Creating a message
 In protobuf, you generally create messages on the local stack frame or from the heap. 
 Submessages (fields whose type is a message) are allocated from the heap.
