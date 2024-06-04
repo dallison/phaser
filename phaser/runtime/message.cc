@@ -74,12 +74,35 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
 }
 
 ::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size) {
-  char *buffer = (char *)malloc(initial_size);
-  ::toolbelt::PayloadBuffer *pb = new (buffer)::toolbelt::PayloadBuffer(
-      initial_size, [](::toolbelt::PayloadBuffer **p, size_t new_size) {
-        *p = reinterpret_cast<::toolbelt::PayloadBuffer *>(realloc(*p, new_size));
+  absl::StatusOr<::toolbelt::PayloadBuffer *> r = NewDynamicBuffer(
+      initial_size, [](size_t size) -> void * { return ::malloc(size); },
+      [](void *p, size_t old_size, size_t new_size) -> void * { return ::realloc(p, new_size); });
+  if (!r.ok()) {
+    std::cerr << "Failed to allocate PayloadBuffer of size " << initial_size
+              << std::endl;
+    abort();
+  }
+  return *r;
+}
+
+absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
+    size_t initial_size, std::function<absl::StatusOr<void *>(size_t)> alloc,
+    std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc) {
+  absl::StatusOr<void *> buffer = alloc(initial_size);
+  if (!buffer.ok()) {
+    return buffer.status();
+  }
+  ::toolbelt::PayloadBuffer *pb = new (*buffer)::toolbelt::PayloadBuffer(
+      initial_size, [ initial_size, realloc = std::move(realloc) ](
+                        ::toolbelt::PayloadBuffer * *p, size_t old_size, size_t new_size) {
+        absl::StatusOr<void *> r = realloc(*p, old_size, new_size);
+        if (!r.ok()) {
+          std::cerr << "Failed to resize PayloadBuffer from " << initial_size
+                    << " to " << new_size << std::endl;
+          abort();
+        }
+        *p = reinterpret_cast<::toolbelt::PayloadBuffer *>(*r);
       });
   return pb;
 }
-
 } // namespace phaser

@@ -190,7 +190,7 @@ _split_files = rule(
     implementation = _split_files_impl,
 )
 
-def phaser_library(name, deps = [], runtime = "@phaser//phaser:runtime", add_namespace = ""):
+def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_runtime", add_namespace = ""):
     """
     Generate a cc_libary for protobuf files specified in deps.
 

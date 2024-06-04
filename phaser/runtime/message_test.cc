@@ -568,7 +568,7 @@ struct TestMessage : public Message {
     ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
+    auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
     return msg;
@@ -578,7 +578,7 @@ struct TestMessage : public Message {
     ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb);
+    auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
     this->runtime = runtime;
     this->absolute_binary_offset = pb->message;
     this->InstallMetadata<TestMessage>();
@@ -1263,7 +1263,7 @@ TEST(MessageTest, Basic) {
   char *buffer = (char *)malloc(4096);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   msg.DebugDump();
-  
+
   msg.x_.Set(1234);
   msg.y_.Set(0xffff);
   msg.s_.Set("Hello, world!");

@@ -6,7 +6,9 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "toolbelt/payload_buffer.h"
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdint.h>
@@ -162,9 +164,10 @@ struct MutableMessageRuntime : public MessageRuntime {
 // Dynamically allocated payload buffer.  Must be allocated in memory
 // from malloc using the NewDynamicBuffer function.
 struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
-  DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer *p)
-      : MutableMessageRuntime(p) {}
-  ~DynamicMutableMessageRuntime() override { free(pb); }
+  DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer *p, std::function<void(void*)> free)
+      : MutableMessageRuntime(p), free_(std::move(free)) {}
+  ~DynamicMutableMessageRuntime() override { if (free_ != nullptr) free_(pb); }
+  std::function<void(void*)> free_;
 };
 
 struct InternalDefault {};
@@ -277,24 +280,24 @@ struct Message {
     return runtime->pb->ToAddress(runtime->pb->metadata);
   }
 
-  void* Allocate(size_t size, size_t alignment=4, bool clear=true) {
-    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, alignment, clear);
+  void *Allocate(size_t size, size_t alignment = 4, bool clear = true) {
+    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, alignment,
+                                             clear);
   }
 
-  void Free(void *ptr) {
-    runtime->pb->Free(ptr);
-  }
+  void Free(void *ptr) { runtime->pb->Free(ptr); }
 
-  void* Realloc(void *ptr, size_t size, size_t alignment=4, bool clear=true) {
-    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, alignment, clear);
+  void *Realloc(void *ptr, size_t size, size_t alignment = 4,
+                bool clear = true) {
+    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, alignment,
+                                            clear);
   }
 
   toolbelt::BufferOffset ToOffset(void *addr) {
     return runtime->pb->ToOffset(addr);
   }
 
-  template <typename T>
-  T* ToAddress(toolbelt::BufferOffset offset) {
+  template <typename T> T *ToAddress(toolbelt::BufferOffset offset) {
     return runtime->pb->ToAddress<T>(offset);
   }
 
@@ -336,5 +339,9 @@ struct Message {
 };
 
 ::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size);
+
+absl::StatusOr<::toolbelt::PayloadBuffer *>
+NewDynamicBuffer(size_t initial_size, std::function<absl::StatusOr<void *>(size_t)> alloc,
+                 std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc);
 
 } // namespace phaser

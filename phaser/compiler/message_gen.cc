@@ -566,7 +566,7 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
   os << "  friend std::ostream &operator<<(std::ostream &os, const "
      << MessageName(message_) << " &msg);\n\n";
 
-  os << R"XXX(  void DebugDump() {
+  os << R"XXX(  void DebugDump() const {
     runtime->pb->Dump(std::cout);
     toolbelt::Hexdump(runtime->pb, runtime->pb->hwm);
   }
@@ -741,6 +741,12 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
     os << "  static " << MessageName(message_)
        << " CreateDynamicMutable(size_t initial_size);\n";
     os << "  void InitDynamicMutable(size_t initial_size);\n";
+    os << "  static " << MessageName(message_)
+       << " CreateDynamicMutable(size_t initial_size, "
+          "std::function<absl::StatusOr<void*>(size_t)> alloc, "
+          "std::function<void(void*)> free, "
+          "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> "
+          "realloc);\n";
     return;
   }
   os << "// Create a mutable message in the given memory.\n";
@@ -779,14 +785,22 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
   os << "// Create a message in a dynamically resized buffer allocated from "
         "the heap.\n";
   os << MessageName(message_) << " " << MessageName(message_)
-     << "::CreateDynamicMutable(size_t initial_size = 1024) {\n"
-        "  ::toolbelt::PayloadBuffer *pb = "
-        "::phaser::NewDynamicBuffer(initial_size);\n"
+     << "::CreateDynamicMutable(size_t initial_size, "
+        "std::function<absl::StatusOr<void*>(size_t)> alloc, "
+        "std::function<void(void*)> free,"
+        "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc) "
+        "{\n"
+        "  absl::StatusOr<::toolbelt::PayloadBuffer *> pbs = "
+        "::phaser::NewDynamicBuffer(initial_size, std::move(alloc), "
+        "std::move(realloc));\n"
+        "  if (!pbs.ok()) abort();\n"
+        "  ::toolbelt::PayloadBuffer *pb = *pbs;\n"
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
-        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb);\n"
+        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
+        "std::move(free));\n"
         "  auto msg = "
      << MessageName(message_)
      << "(runtime, pb->message);\n"
@@ -796,6 +810,15 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "  return msg;\n"
         "}\n\n";
 
+  os << MessageName(message_) << " " << MessageName(message_)
+     << "::CreateDynamicMutable(size_t initial_size = 1024) {\n";
+  os << "  return CreateDynamicMutable(initial_size, [](size_t size) -> "
+        "absl::StatusOr<void*>{ return ::malloc(size);},"
+        " ::free,"
+        " [](void* p, size_t old_size, size_t new_size) -> "
+        "absl::StatusOr<void*> { return ::realloc(p, new_size);});\n";
+  os << "}\n\n";
+
   os << "void " << MessageName(message_)
      << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
         "  ::toolbelt::PayloadBuffer *pb = "
@@ -804,7 +827,7 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
-        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb);\n"
+        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, ::free);\n"
         "  this->runtime = runtime;\n"
         "  this->absolute_binary_offset = pb->message;\n"
         "  this->InstallMetadata<"
@@ -1479,7 +1502,8 @@ void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
     os << "  template <typename T>\n";
     os << "  absl::Status CloneFrom(const T & other);\n\n";
     os << "  void CopyFrom(const ::phaser::Message& other) override{\n";
-    os << "    const " << MessageName(message_) << "& m = static_cast<const " << MessageName(message_) << "&>(other);\n";
+    os << "    const " << MessageName(message_) << "& m = static_cast<const "
+       << MessageName(message_) << "&>(other);\n";
     os << "    (void)CloneFrom(m);\n";
     os << "  }\n\n";
     return;
