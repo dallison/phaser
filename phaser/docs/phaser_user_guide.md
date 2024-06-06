@@ -72,7 +72,7 @@ Also, most of the time, inside a robot, you are not using different versions of 
 and therefore, the version compatibility provided by serialization is not needed.  This is
 especially true when you use shared memory for Interprocess Communication (IPC) where processes
 can access the same physical memory directly.  Serializing it into shared memory, just to deserialize
-it again in the subscribers is just a waste of valuable compute cycles.
+it again in all the subscribers is just a waste of valuable compute cycles.
 
 Another problem with serialization, or more accurately, deserialization is that unless you
 are going to process all the messages you receive, you will be spending CPU cycles on
@@ -101,7 +101,7 @@ looping over a set of floating point values, adding each to a vector, you can ge
 to the start of the vector's memory and write directly to it.
 
 Another common message pattern is a repeated field of messages.  In this case you create
-a new object for each element, add it to the vector and fill them in.  With zero-copy
+a new object for each element, add it to the vector and fill it in.  With zero-copy
 you can add a bunch of messages at once, performing only one allocation and then
 fill all of them in.  A huge saving.
 
@@ -126,7 +126,7 @@ For example, here's how you would build a `phaser_library` for a proto library
 containing `Foo.proto`:
 
 ```
-load("//phaser:phaser_library.bzl", "phaser_library")
+load("@phaser//phaser:phaser_library.bzl", "phaser_library")
 
 proto_library(
     name = "foo_proto",
@@ -142,6 +142,19 @@ phaser_library(
 )
 ```
 
+You can get the Phaser code from github by adding this to your WORKSPACE file, changing the
+version numbers and hash as appropriate.
+
+```
+http_archive(
+  name = "phaser",
+  urls = ["https://github.com/dallison/phaser/archive/refs/tags/1.0.0.tar.gz"],
+  strip_prefix = "phaser-1.0.0",
+  sha256 = "086601a2915e4fdfce8d9ff1a6f765c460f582d739cb954c9a2f5bf4c0fa17f3"
+)
+
+```
+
 The result will be a couple of files: `Foo.phaser.h` and `Foo.phaser.cc`.  The names of the message
 classes will have the namespace `phaser` added to them to distinguish them from regular protobuf
 messages (this is optional).  If `Foo.proto` is in the package `foo.bar`, the class names will be in the
@@ -152,7 +165,7 @@ available somehow and run the `protoc` command yourself (Abseil, libprotobuf, et
 Phaser runs as a protoc plugin.  To run it use the following command format:
 
 ```
-$ protoc --plugin==protoc-gen-phaser=DIR/bin/phaser/compiler/phaser \
+$ protoc --plugin=protoc-gen-phaser=DIR/bin/phaser/compiler/phaser \
     --phaser_out=add_namespace=NS,package_name=PACKAGE,target_name=TARGET:OUTPUT_DIR \
     -I IPATH...
     FILE ...
@@ -248,7 +261,7 @@ struct Message {
 
 The derived message classes contain the actual fields of the message along
 with accessor functions.  It is designed to be as close to protobuf as possible
-to avoid having to learn new classes if you are familar with protobuf.
+to avoid having to learn new classes if you are familiar with protobuf.
 
 The virtual functions are overridden by the derived classes.
 
@@ -572,7 +585,7 @@ the `type_url`.  You can then create the message as you would do normally.
 
 ## Serialization and deserialization
 Phaser doesn't do serialization, but protobuf does.  In order to give you a way to convert
-from Phaser wire-format to protobuf, some transcoding serialiation functions are provided.
+from Phaser wire-format to protobuf, some transcoding serialization functions are provided.
 These are:
 
 ```c++
@@ -599,7 +612,7 @@ am aware of anyway) is the ability to do things with messages given only their
 message type name.  Most people end up creating a database of type name versus
 message descriptor and use reflection to handle this.
 
-Phaser has a builtin feature called the `Phaser Bank`, which, as its name suggest
+Phaser has a built-in feature called the `Phaser Bank`, which, as its name suggest
 is a bank of Phaser messages, indexed by message name.  This allows you to manipulate
 Phaser messages if you just know the message name and nothing else.  The ultimate in
 type-erasure.
@@ -908,7 +921,7 @@ Modern heap management facilities that are very fast but don't really care
 about how much memory is used for making it fast.  This system's main
 goal is to minimize the amount of memory used as the whole buffer is
 the thing that is sent over the network as the message.  Therefore, rather
-than using elaborate (and fast) alloction techniques, this heap manager
+than using elaborate (and fast) allocation techniques, this heap manager
 uses a simple free list of 32-bit offsets.  This makes it use less
 memory but also makes is slower and prone to heap fragmentation (has blocks that
 are too small to be of any use).
@@ -953,7 +966,7 @@ struct FreeBlockHeader {
 
 The memory in the buffer is organized as an ordered linked list of free blocks, interspersed
 by allocated blocks.  An allocated block is always prefixed by a 4-byte length, which does not
-include the length field itself.  The allocator does its bese to keep the free list as short as 
+include the length field itself.  The allocator does its best to keep the free list as short as 
 possible to coalescing adjacent free blocks and expanding into blocks if possible.
 
 Finally we have a user-supplied offset to arbitrary `metadata`.  This is not used by
@@ -984,7 +997,7 @@ The rest of the message consists of the fixed size portion of the message.  This
 has space for every field in the message.  Primitive fields (like int32, double, etc.)
 occupy space that is sized and aligned appropriately for the type.  Variable sized
 fields (strings, bytes, messages and repeated fields) consist of a header that
-refers to another location in the PayloadBuffer that contains that actual contents
+refers to another location in the PayloadBuffer that contains the actual contents
 of the field.
 
 ### Strings and bytes
