@@ -1385,8 +1385,9 @@ void MessageGenerator::GenerateDeserializer(std::ostream &os, bool decl) {
 
 void MessageGenerator::GenerateProtobufSerialization(std::ostream &os) {
   os << R"XXX(
+  // This is the size of the message on the wire.  It is not the serialized protobuf size.
   size_t ByteSizeLong() const {
-    return SerializedSize();
+    return ZeroCopySize();
   }
 
   int ByteSize() const {
@@ -1407,7 +1408,7 @@ void MessageGenerator::GenerateProtobufSerialization(std::ostream &os) {
 
   // String serialization.
   bool SerializeToString(std::string* str) const {
-    size_t size = ByteSizeLong();
+    size_t size = SerializedSize();
     str->resize(size);
     return SerializeToArray(&(*str)[0], size);
   }

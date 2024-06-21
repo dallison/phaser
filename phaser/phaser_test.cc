@@ -481,7 +481,7 @@ TEST(PhaserTest, Reflection) {
       ::phaser::PhaserBankMessageInfo("foo.bar.TestMessage");
   ASSERT_TRUE(info.ok());
   ASSERT_NE(nullptr, *info);
-  ASSERT_EQ(15, (*info)->fields_in_order.size());
+  ASSERT_EQ(16, (*info)->fields_in_order.size());
 
   std::shared_ptr<::phaser::FieldInfo> field_x = (*info)->fields_in_order[0];
   ASSERT_EQ("x", field_x->name);

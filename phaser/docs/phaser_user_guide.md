@@ -310,7 +310,7 @@ This diagram shows the general layout of a message.
 
 The source message is located either on the stack frame or on the heap.  It refers to a MessageRuntime
 struct through a `std::shared_ptr` which contains a pointer to a `PayloadBuffer` (where the actual message
-contents are stored).  If the message is **mutable** the a `MutableMessageRuntime` is used instead and that also
+contents are stored).  If the message is **mutable** a `MutableMessageRuntime` is used instead and that also
 contains a map that contains information about the location of the message's `metadata` (where the fields
 are located).
 
@@ -331,7 +331,7 @@ heap.  The initial size of the buffer can be specified as an argument to the
 constructor, but is optional with a default of 1024 bytes (if 1K is big enough, or twice the
 required binary size if not) but will expand as necessary.
 
-To get access to the buffer you can use the `Data()` and `Size()` functions, for
+To get access to the buffer you can use the `Data()` and `ByteSizeLong()` functions, for
 example:
 
 ```c++
@@ -339,7 +339,7 @@ void Foo() {
   foo::bar::phaser::TestMessage msg(4096);
   msg.set_x(1234);
   // ...
-  SendMessage(msg.Data(), msg.Size());
+  SendMessage(msg.Data(), msg.ByteSizeLong());
 }
 ```
 
@@ -368,7 +368,7 @@ void Foo(char* buffer, size_t size) {
 }
 ```
 
-As before, the `Data()` and `Size()` functions are available to get the buffer (although you
+As before, the `Data()` and `ByteSizeLong()` functions are available to get the buffer (although you
 probably already know the buffer's address).
 
 If the buffer is fixed size and you attempt to write beyond the end of the buffer, the
@@ -589,8 +589,7 @@ from Phaser wire-format to protobuf, some transcoding serialization functions ar
 These are:
 
 ```c++
-  size_t ByteSizeLong() const;
-  int ByteSize() const;
+  size_t SerializedSize() const;
   bool SerializeToArray(char* array, size_t size) const;
   bool ParseFromArray(const char* array, size_t size);
   bool SerializeToString(std::string* str) const;
@@ -598,6 +597,10 @@ These are:
   bool ParseFromString(const std::string& str);
 
 ```
+The `ByteSizeLong` and `ByteSize` functions do not return the length of the serialized
+data in Phaser but instead return the length of the zero-copy data.  In you want the length
+of the serialized data, use `SerializedSize` (this is a badly named function in protobuf as it
+doesn't say what it is measuring).
 
 If you familiar with protobuf, you will recognize these and similar to those
 provided by the regular protobuf messages.  Protobuf provides others (like

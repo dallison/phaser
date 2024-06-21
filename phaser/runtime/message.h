@@ -336,6 +336,7 @@ struct Message {
   void *Data() const { return reinterpret_cast<void *>(runtime->pb); }
 
   size_t Size() const { return runtime->pb->Size(); }
+  size_t ZeroCopySize() const { return runtime->pb->Size(); }
 };
 
 ::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size);

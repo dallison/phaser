@@ -58,6 +58,8 @@ message TestMessage {
   EnumTest e = 114;
   float fl = 115;
   double db = 116;
+
+  map<string, int32> values = 117;
 }
 
 message TestMessageNewFields {
