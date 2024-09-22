@@ -8,7 +8,6 @@ build:asan --linkopt -fsanitize=address
 # For all builds, use C++17
 build --cxxopt="-std=c++17"
 build --cxxopt='-Wno-sign-compare'
-build --noenable_bzlmod
 build --host_cxxopt="-std=c++17"
 
 # For Apple Silicon
