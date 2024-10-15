@@ -314,6 +314,32 @@ contents are stored).  If the message is **mutable** a `MutableMessageRuntime` i
 contains a map that contains information about the location of the message's `metadata` (where the fields
 are located).
 
+### Tuning the memory allocator
+The memory for the actual message contents is allocated inside the `PayloadBuffer` using a memory allocator (think malloc and free in a restricted, relocatable area of memory).  There are two modes for this memory allocator:
+
+1. Performance mode
+2. Size mode
+
+In performance mode (the default), two types of allocators are used depending on the size of the
+block being allocated:
+
+1. A bitmap allocator for blocks up to 16, 32, 64 and 128 bytes.
+2. A free-list allocator for all other block sizes
+
+The bitmap allocator is about twice as fast when allocating memory but does use more memory
+in the buffer.  This is most appropriate when you want the maximum performance out of the
+allocator but are not concerned about the size of the message.  If you are putting your
+messages in shared memory or somewhere where the message size isn't a concern, you can gain
+performance by using the bitmap allocator.
+
+However, if you are sending your messages over a network and want to keep them small,
+the size mode might be more appropiate.  It should be noted, though, that if you are concerned
+with message size, perhaps regular protobuf might be more suitable than Phaser
+
+To choose which mode to use, you can pass a `::phaser::Tuning` argument to the message
+constructor or creator.  The default is `::phaser::Tuning::kPerformance` and the other option
+is `::phaser::Tuning::kSize`.
+
 ### Creating a message in a dynamic buffer.
 The simplest way to create a Phaser message is the same as protobuf:
 
@@ -328,8 +354,9 @@ void Foo() {
 The above example creates a Phaser message of the type `TestMessage` on the local stack
 frame.  The binary message will be held in a variable sized buffer allocated from the
 heap.  The initial size of the buffer can be specified as an argument to the
-constructor, but is optional with a default of 1024 bytes (if 1K is big enough, or twice the
+constructor, but is optional with a default of 8192 bytes (if 8K is big enough, or twice the
 required binary size if not) but will expand as necessary.
+
 
 To get access to the buffer you can use the `Data()` and `ByteSizeLong()` functions, for
 example:
@@ -340,6 +367,17 @@ void Foo() {
   msg.set_x(1234);
   // ...
   SendMessage(msg.Data(), msg.ByteSizeLong());
+}
+```
+
+You can also tell it which buffer mode to use using a second parameter.  For example, to tune
+for size with a 4K buffer:
+
+```c++
+void Foo() {
+  foo::bar::phaser::TestMessage msg(4096, ::phaser::Tuning::kSize);
+  msg.set_x(1234);
+  // ...
 }
 ```
 
@@ -355,6 +393,7 @@ void Foo() {
   // ...
 }
 ```
+Tuning is also provided here too.
 
 ### Creating a message in a provided buffer.
 If you are using an IPC system that provides shared memory buffers (like [Subspace](https://github.com/dallison/subspace)) you will want to create your message directly in the shared memory.  To do this, use the
@@ -363,6 +402,16 @@ static function `CreateMutable`, as follows:
 ```c++
 void Foo(char* buffer, size_t size) {
   auto msg = foo::bar::phaser::TestMessage::CreateMutable(buffer, size);
+  msg.set_x(1234);
+  // ...
+}
+```
+
+You can choose the buffer mode by providing a tuning parameter:
+
+```c++
+void Foo(char* buffer, size_t size) {
+  auto msg = foo::bar::phaser::TestMessage::CreateMutable(buffer, size, ::phaser::Tuning::kSize);
   msg.set_x(1234);
   // ...
 }
@@ -783,7 +832,7 @@ However, as an example, here's how to access an int32 field called `x` with numb
 
 ```c++
   absl::StatusOr<bool> has_x =
-      ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);
+      ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, 100);
 
   absl::StatusOr<::phaser::Int32Field<> *> x =
       ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
@@ -920,14 +969,25 @@ the size.
 The `PayloadBuffer` works by creating a simple malloc/free data structure inside the
 memory provided.  It is not a standard heap management system though because 
 of the requirement that it can't use any virtual addresses (pointers).
-Modern heap management facilities that are very fast but don't really care
-about how much memory is used for making it fast.  This system's main
-goal is to minimize the amount of memory used as the whole buffer is
-the thing that is sent over the network as the message.  Therefore, rather
-than using elaborate (and fast) allocation techniques, this heap manager
-uses a simple free list of 32-bit offsets.  This makes it use less
-memory but also makes is slower and prone to heap fragmentation (has blocks that
-are too small to be of any use).
+
+There are two types of allocators in the `PayloadBuffer`, the choice of which
+to use being based on the block being allocated.  If the block is small
+a `bitmap allocator` is used to speed up the allocation.  The definition of
+a small block is one whose size is less than 16, 32, 64 or 128 bytes.  There
+are 4 bitmap allocators, one for each of those block sizes.  Bitmap
+allocators are fast but use more memory because they allocate a set of
+fixed size blocks up front and keep track of them using a bit mask.  This uses
+more memory than a simple free-list allocator.
+
+The second type of allocator is used for all other block sizes above
+128 bytes and is a simple free-list based allocator.  The bitmap allocator
+prevents heap fragmentation by using fixed size blocks, but with the free-list
+allocator, fragmentation is always possible.
+
+You can switch the bitmap allocator off when creating the `PayloadBuffer` using
+its constructor.  This parameter is controlled by Phaser's `Tuning` message
+construction argument.
+
 
 ### PayloadBuffer header
 The start of every PayloadBuffer contains a header, shown in the following diagram:
@@ -945,6 +1005,9 @@ Each member is 4-bytes long.  The first member is the `magic` which is either:
 This serves to identify the buffer as a PayloadBuffer and also whether it is
 movable or fixed.  Movable buffers are only moved when creating the message, however
 all buffers are relocatable in memory.
+
+The bottom bit of the magic field is used to specify whether the `bitmap allocator`
+is on or off (0 = off).
 
 The next member, `message` contains the offset to the root of the message tree
 in the buffer - the top level message.
@@ -972,13 +1035,26 @@ by allocated blocks.  An allocated block is always prefixed by a 4-byte length, 
 include the length field itself.  The allocator does its best to keep the free list as short as 
 possible to coalescing adjacent free blocks and expanding into blocks if possible.
 
-Finally we have a user-supplied offset to arbitrary `metadata`.  This is not used by
+Then we have a user-supplied offset to arbitrary `metadata`.  This is not used by
 Phaser, but can be provided by the user to make additional data available as necessary.
 For example, it could be set to the name of the message, or some other descriptor
 that can be used by a receiver.
 
 There are functions available in the `::phaser::Message` class to allocate, free and set the
 metadata field as needed.
+
+Finally we have 4 offsets for the 4 bitmap run vectors.  Each offset corresponds to a bitmap run for a
+particular size (16, 32, 64 or 128 bytes).  The bitmap runs are held in a vector of offsets to
+`BitMapRun` structs that grows as needed.  Each `BitMapRun` struct holds a bitmask showing
+which blocks are allocated, meta information about the run and the blocks themselves, each
+of which is prefixed by a 4 byte header.  If a block is allocated in a run, its corresponding bit in the
+bitmask is set to 1.
+
+This is shown in the following diagram, for a 32 byte run.
+
+<div>
+<img src="Bitmap run.png"/>
+</div>
 
 The binary version of a message can be seen in the following diagram:
 
