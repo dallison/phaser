@@ -7,6 +7,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "toolbelt/hexdump.h"
 #include "toolbelt/payload_buffer.h"
 #include <functional>
 #include <memory>
@@ -164,13 +165,28 @@ struct MutableMessageRuntime : public MessageRuntime {
 // Dynamically allocated payload buffer.  Must be allocated in memory
 // from malloc using the NewDynamicBuffer function.
 struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
-  DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer *p, std::function<void(void*)> free)
+  DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer *p,
+                               std::function<void(void *)> free)
       : MutableMessageRuntime(p), free_(std::move(free)) {}
-  ~DynamicMutableMessageRuntime() override { if (free_ != nullptr) free_(pb); }
-  std::function<void(void*)> free_;
+  ~DynamicMutableMessageRuntime() override {
+    if (free_ != nullptr)
+      free_(pb);
+  }
+  std::function<void(void *)> free_;
 };
 
 struct InternalDefault {};
+
+// Tuning parameters for messages.  The kPerformance tuning uses a bitmap
+// allocator for block sizes up to 128 bytes.  This is about twice as fast
+// for small blocks but uses more memory.  If you are sending messages
+// using shared memory where size isn't important, you can use kPerformance.
+// If you are sending messages over a network, then you can sacrifice
+// allocation peformance for size and use kSize.
+enum class Tuning {
+  kPerformance, // Use a bitmap allocator for small blocks
+  kSize,        // Use a simple allocator for small blocks
+};
 
 // Payload buffers can move. All messages in a message tree must all use the
 // same payload buffer. We hold a shared pointer to a pointer to the payload
@@ -339,10 +355,12 @@ struct Message {
   size_t ZeroCopySize() const { return runtime->pb->Size(); }
 };
 
-::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size);
+::toolbelt::PayloadBuffer *
+NewDynamicBuffer(size_t initial_size, Tuning tuning = Tuning::kPerformance);
 
-absl::StatusOr<::toolbelt::PayloadBuffer *>
-NewDynamicBuffer(size_t initial_size, std::function<absl::StatusOr<void *>(size_t)> alloc,
-                 std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc);
+absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
+    size_t initial_size, std::function<absl::StatusOr<void *>(size_t)> alloc,
+    std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc,
+    Tuning tuning = Tuning::kPerformance);
 
 } // namespace phaser

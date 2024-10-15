@@ -3,6 +3,7 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/runtime/message.h"
+#include "toolbelt/hexdump.h"
 
 namespace phaser {
 
@@ -73,10 +74,14 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
   return -1;
 }
 
-::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size) {
+::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size,
+                                            Tuning tuning) {
   absl::StatusOr<::toolbelt::PayloadBuffer *> r = NewDynamicBuffer(
       initial_size, [](size_t size) -> void * { return ::malloc(size); },
-      [](void *p, size_t old_size, size_t new_size) -> void * { return ::realloc(p, new_size); });
+      [](void *p, size_t old_size, size_t new_size) -> void * {
+        return ::realloc(p, new_size);
+      },
+      tuning);
   if (!r.ok()) {
     std::cerr << "Failed to allocate PayloadBuffer of size " << initial_size
               << std::endl;
@@ -87,14 +92,16 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
 
 absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
     size_t initial_size, std::function<absl::StatusOr<void *>(size_t)> alloc,
-    std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc) {
+    std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc,
+    Tuning tuning) {
   absl::StatusOr<void *> buffer = alloc(initial_size);
   if (!buffer.ok()) {
     return buffer.status();
   }
   ::toolbelt::PayloadBuffer *pb = new (*buffer)::toolbelt::PayloadBuffer(
-      initial_size, [ initial_size, realloc = std::move(realloc) ](
-                        ::toolbelt::PayloadBuffer * *p, size_t old_size, size_t new_size) {
+      initial_size,
+      [ initial_size, realloc = std::move(realloc) ](
+          ::toolbelt::PayloadBuffer * *p, size_t old_size, size_t new_size) {
         absl::StatusOr<void *> r = realloc(*p, old_size, new_size);
         if (!r.ok()) {
           std::cerr << "Failed to resize PayloadBuffer from " << initial_size
@@ -102,7 +109,8 @@ absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
           abort();
         }
         *p = reinterpret_cast<::toolbelt::PayloadBuffer *>(*r);
-      });
+      },
+      tuning == Tuning::kPerformance);
   return pb;
 }
 } // namespace phaser

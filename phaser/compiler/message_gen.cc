@@ -658,18 +658,20 @@ void MessageGenerator::GenerateConstructors(std::ostream &os, bool decl) {
 
 void MessageGenerator::GenerateDefaultConstructor(std::ostream &os, bool decl) {
   if (decl) {
-    os << "  " << MessageName(message_) << "(size_t initial_size = 1024);\n";
+    os << "  " << MessageName(message_)
+       << "(size_t initial_size = 8192, ::phaser::Tuning tuning = "
+          "::phaser::Tuning::kPerformance);\n";
     return;
   }
   os << MessageName(message_) << "::" << MessageName(message_)
-     << "(size_t initial_size)\n";
+     << "(size_t initial_size, ::phaser::Tuning tuning)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os);
   os << R"XXX({
   if (BinarySize() > initial_size) {
     initial_size = BinarySize() * 2;
   }
-  InitDynamicMutable(initial_size);
+  InitDynamicMutable(initial_size, tuning);
 }
 
 )XXX";
@@ -735,25 +737,30 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream &os,
 void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
   if (decl) {
     os << "  static " << MessageName(message_)
-       << " CreateMutable(void *addr, size_t size);\n";
+       << " CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning = "
+          "::phaser::Tuning::kPerformance);\n";
     os << "  static " << MessageName(message_)
        << " CreateReadonly(const void *addr, size_t size);\n";
     os << "  static " << MessageName(message_)
-       << " CreateDynamicMutable(size_t initial_size);\n";
-    os << "  void InitDynamicMutable(size_t initial_size);\n";
+       << " CreateDynamicMutable(size_t initial_size, ::phaser::Tuning tuning "
+          "= ::phaser::Tuning::kPerformance);\n";
+    os << "  void InitDynamicMutable(size_t initial_size = 8192, "
+          "::phaser::Tuning tuning = ::phaser::Tuning::kPerformance);\n";
     os << "  static " << MessageName(message_)
        << " CreateDynamicMutable(size_t initial_size, "
           "std::function<absl::StatusOr<void*>(size_t)> alloc, "
           "std::function<void(void*)> free, "
           "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> "
-          "realloc);\n";
+          "realloc, ::phaser::Tuning tuning = "
+          "::phaser::Tuning::kPerformance);\n";
     return;
   }
   os << "// Create a mutable message in the given memory.\n";
   os << MessageName(message_) << " " << MessageName(message_)
-     << "::CreateMutable(void *addr, size_t size) {\n"
+     << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
         "  ::toolbelt::PayloadBuffer *pb = new (addr) "
-        "::toolbelt::PayloadBuffer(size);\n"
+        "::toolbelt::PayloadBuffer(size, tuning == "
+        "::phaser::Tuning::kPerformance);\n"
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
@@ -788,11 +795,12 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
      << "::CreateDynamicMutable(size_t initial_size, "
         "std::function<absl::StatusOr<void*>(size_t)> alloc, "
         "std::function<void(void*)> free,"
-        "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc) "
+        "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc, "
+        "::phaser::Tuning tuning) "
         "{\n"
         "  absl::StatusOr<::toolbelt::PayloadBuffer *> pbs = "
         "::phaser::NewDynamicBuffer(initial_size, std::move(alloc), "
-        "std::move(realloc));\n"
+        "std::move(realloc), tuning);\n"
         "  if (!pbs.ok()) abort();\n"
         "  ::toolbelt::PayloadBuffer *pb = *pbs;\n"
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
@@ -811,23 +819,25 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
         "}\n\n";
 
   os << MessageName(message_) << " " << MessageName(message_)
-     << "::CreateDynamicMutable(size_t initial_size = 1024) {\n";
+     << "::CreateDynamicMutable(size_t initial_size = 8192, ::phaser::Tuning "
+        "tuning) {\n";
   os << "  return CreateDynamicMutable(initial_size, [](size_t size) -> "
         "absl::StatusOr<void*>{ return ::malloc(size);},"
         " ::free,"
         " [](void* p, size_t old_size, size_t new_size) -> "
-        "absl::StatusOr<void*> { return ::realloc(p, new_size);});\n";
+        "absl::StatusOr<void*> { return ::realloc(p, new_size);}, tuning);\n";
   os << "}\n\n";
 
   os << "void " << MessageName(message_)
-     << "::InitDynamicMutable(size_t initial_size = 1024) {\n"
+     << "::InitDynamicMutable(size_t initial_size, ::phaser::Tuning tuning) {\n"
         "  ::toolbelt::PayloadBuffer *pb = "
-        "::phaser::NewDynamicBuffer(initial_size);\n"
+        "::phaser::NewDynamicBuffer(initial_size, tuning);\n"
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  auto runtime = "
-        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, ::free);\n"
+        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
+        "::free);\n"
         "  this->runtime = runtime;\n"
         "  this->absolute_binary_offset = pb->message;\n"
         "  this->InstallMetadata<"

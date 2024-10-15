@@ -14,7 +14,7 @@
 //
 #include "phaser/runtime/fields.h"
 #include "phaser/runtime/phaser_bank.h"
-
+#include "toolbelt/hexdump.h"
 #include <stddef.h>
 
 namespace phaser {
@@ -47,7 +47,7 @@ public:
     } fields[2];
   };
   static constexpr FieldData field_data = {
-      .num = 6,
+      .num = 2,
       .fields = {
           {.number = 1, .offset = 4, .id = 0},
           {.number = 2, .offset = 8, .id = 0},
@@ -64,8 +64,8 @@ public:
     value_.Indent(indent);
   }
 
-  const MessageInfo* GetMessageInfo() const override {
-    return nullptr;   // Implement this.
+  const MessageInfo *GetMessageInfo() const override {
+    return nullptr; // Implement this.
   }
 
   // Protobuf accessors.
@@ -192,16 +192,16 @@ public:
       if (absl::Status status = PhaserBankCopy(type, *src, *dest);
           !status.ok()) {
         return status;
-      }   
+      }
     }
     return absl::OkStatus();
   }
 
-  void CopyFrom(const Message& m) override {
-    const AnyMessage& msg = static_cast<const AnyMessage&>(m);
+  void CopyFrom(const Message &m) override {
+    const AnyMessage &msg = static_cast<const AnyMessage &>(m);
     (void)CloneFrom(msg);
   }
-  
+
   // Create an instance of message T in the value field.  Returns
   // a message whose storage is in the payload buffer inside
   // the value.
@@ -250,8 +250,7 @@ public:
   // check that the message is actually of type T, so it's up to you to call
   // the Is<T>() method first.  Caveat programmer.
   template <typename T> const T As() const {
-    const T msg(runtime,
-                runtime->ToOffset(const_cast<char *>(value().data())));
+    const T msg(runtime, runtime->ToOffset(const_cast<char *>(value().data())));
     return msg;
   }
 

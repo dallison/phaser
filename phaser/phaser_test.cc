@@ -230,11 +230,10 @@ TEST(PhaserTest, CopySimple) {
 
 TEST(PhaserTest, Any) {
   foo::bar::phaser::TestMessage msg;
-  foo::bar::phaser::InnerMessage inner;
+  foo::bar::phaser::InnerMessage inner(4096);
   inner.set_str("Any message is inner");
 
   auto any = msg.mutable_any();
-
   ASSERT_TRUE(any->PackFrom(inner));
 
   foo::bar::phaser::TestMessage msg2;
