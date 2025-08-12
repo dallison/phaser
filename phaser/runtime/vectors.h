@@ -849,7 +849,7 @@ public:
     this->resize(n);
     // Allocate memory for n messages in the payload buffer.
     std::vector<void *> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
-        GetBufferAddr(), T::BinarySize(), n, 8, true);
+        GetBufferAddr(), T::BinarySize(), n, true);
 
     toolbelt::VectorHeader *hdr = Header();
     ::toolbelt::BufferOffset *data =
