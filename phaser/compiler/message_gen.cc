@@ -1217,9 +1217,10 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << std::to_string(union_index) << ">();\n";
         os << "  }\n";
       }
-      if (IsAny(field->field)) {
-        GenerateAnyProtobufAccessors(field, union_field, union_index, os);
-      }
+      // Any-typed message fields reuse the standard message accessors above
+      // (mutable_X() returns a phaser::AnyMessage, which exposes the full Any
+      // API: PackFrom/UnpackTo/Is/etc.), so no field-specific generation is
+      // needed here.
 
       break;
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
@@ -1229,11 +1230,6 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
     }
   }
 }
-
-void MessageGenerator::GenerateAnyProtobufAccessors(
-    std::shared_ptr<FieldInfo> /*field*/,
-    std::shared_ptr<UnionInfo> /*union_field*/, int /*union_index*/,
-    std::ostream & /*os*/) {}
 
 void MessageGenerator::GenerateUnionProtobufAccessors(std::ostream &os) {
   for (auto & [ oneof, u ] : unions_) {

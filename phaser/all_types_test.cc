@@ -533,6 +533,42 @@ TEST(AllTypesTest, ProtobufRoundTrip) {
   EXPECT_EQ(pb.f_enum(), static_cast<int>(msg.f_enum()));
 }
 
+// Regression test for the zigzag (sint32/sint64) wire encoding. Small
+// magnitudes happened to encode correctly even with the previous, buggy
+// hard-coded 31-bit sign shift, so the bug only surfaced for values outside
+// the int32 range. Exercise large positive and negative 64-bit values in both
+// serialization directions to confirm wire compatibility with protobuf.
+TEST(AllTypesTest, LargeSintWireCompat) {
+  const int32_t kSint32Values[] = {INT32_MIN, -1000000, -1, 0, 1, 1000000,
+                                    INT32_MAX};
+  const int64_t kSint64Values[] = {
+      INT64_MIN,           int64_t(INT32_MIN) - 1, int64_t(-1) << 40,
+      -1,                  0,                      1,
+      int64_t(1) << 40,    int64_t(INT32_MAX) + 1, INT64_MAX};
+
+  for (int32_t s32 : kSint32Values) {
+    for (int64_t s64 : kSint64Values) {
+      // phaser -> protobuf
+      AllScalars msg;
+      msg.set_f_sint32(s32);
+      msg.set_f_sint64(s64);
+      std::string wire;
+      ASSERT_TRUE(msg.SerializeToString(&wire));
+      ::foo::bar::coverage::AllScalars pb;
+      ASSERT_TRUE(pb.ParseFromString(wire));
+      EXPECT_EQ(s32, pb.f_sint32());
+      EXPECT_EQ(s64, pb.f_sint64());
+
+      // protobuf -> phaser
+      std::string pb_wire = pb.SerializeAsString();
+      AllScalars msg2;
+      ASSERT_TRUE(msg2.ParseFromString(pb_wire));
+      EXPECT_EQ(s32, msg2.f_sint32());
+      EXPECT_EQ(s64, msg2.f_sint64());
+    }
+  }
+}
+
 TEST(AllTypesTest, MapInsertOverwriteAndClear) {
   MapHolder msg;
   auto *e1 = msg.add_values();

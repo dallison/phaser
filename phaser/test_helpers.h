@@ -8,21 +8,35 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <string_view>
 
 namespace phaser::test {
 
 inline void StripProtobufDebugRedaction(std::string &s) {
   // Recent protobuf versions prepend a non-deterministic redaction marker to
   // DebugString() output (e.g. "goo.gle/debugstr", "goo.gle/debugproto",
-  // "goo.gle/debugonly") to discourage parsing the debug format. Strip any
-  // such marker line so comparisons are stable.
-  constexpr const char *kPrefix = "goo.gle/debug";
-  const size_t len = std::strlen(kPrefix);
-  if (s.compare(0, len, kPrefix) == 0) {
-    const auto pos = s.find('\n');
-    if (pos != std::string::npos) {
-      s.erase(0, pos + 1);
+  // "goo.gle/debugonly") to discourage parsing the debug format. The marker is
+  // emitted on its own leading line, sometimes preceded by a random amount of
+  // leading whitespace, so we cannot assume it sits at offset 0. Find the
+  // marker, confirm only whitespace precedes it on the first line, then drop
+  // the whole marker line so comparisons are stable.
+  constexpr std::string_view kMarker = "goo.gle/debug";
+  const size_t marker = s.find(kMarker);
+  if (marker == std::string::npos) {
+    return;
+  }
+  for (size_t i = 0; i < marker; i++) {
+    if (s[i] != ' ' && s[i] != '\t') {
+      // Something other than whitespace precedes the marker, so it is not the
+      // leading redaction prefix; leave the string untouched.
+      return;
     }
+  }
+  const size_t newline = s.find('\n', marker);
+  if (newline == std::string::npos) {
+    s.clear();
+  } else {
+    s.erase(0, newline + 1);
   }
 }
 

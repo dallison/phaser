@@ -69,6 +69,9 @@ cc_test(
     srcs = [
         "perf_test.cc",
     ],
+    # Performance benchmark; excluded from wildcard test runs (e.g. //...).
+    # Run explicitly with `bazel test //phaser:perf_test`.
+    tags = ["manual"],
     copts = PHASER_COPTS,
     deps = [
         "//phaser/runtime:phaser_runtime",

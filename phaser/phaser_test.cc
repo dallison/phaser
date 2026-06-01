@@ -542,6 +542,34 @@ TEST(PhaserTest, Reflection) {
   }
 }
 
+TEST(DebugRedaction, StripsMarkerLine) {
+  std::string s = "goo.gle/debugstr-abc123\nx: 1\ny: 2\n";
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ("x: 1\ny: 2\n", s);
+}
+
+TEST(DebugRedaction, StripsMarkerWithLeadingWhitespace) {
+  // Protobuf may emit a random amount of leading whitespace before the marker.
+  std::string s = "    goo.gle/debugproto\nfield: value\n";
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ("field: value\n", s);
+}
+
+TEST(DebugRedaction, LeavesUnmarkedStringUntouched) {
+  std::string s = "x: 1\ny: 2\n";
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ("x: 1\ny: 2\n", s);
+}
+
+TEST(DebugRedaction, DoesNotStripMidContentMarker) {
+  // A marker that is not the leading prefix (real content precedes it) must be
+  // left alone rather than truncating legitimate output.
+  std::string s = "name: \"goo.gle/debugstr\"\nx: 1\n";
+  std::string original = s;
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ(original, s);
+}
+
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
 

@@ -98,12 +98,22 @@ public:
     end_ = start_;
   }
 
+  // ZigZag maps a signed integer to an unsigned representation in which small
+  // magnitudes (positive or negative) become small values, as required by the
+  // protobuf sint32/sint64 wire types. The math is done on the unsigned type so
+  // it is free of signed overflow/shift undefined behavior and is correct for
+  // any width of T (the previous implementation hard-coded a 31-bit shift and
+  // produced wrong results for 64-bit values).
   template <typename T> static T ZigZag(T value) {
-    return (value << 1) ^ (value >> 31);
+    using U = std::make_unsigned_t<T>;
+    constexpr unsigned kSignShift = sizeof(T) * 8 - 1;
+    const U u = static_cast<U>(value);
+    return static_cast<T>((u << 1) ^ static_cast<U>(-(u >> kSignShift)));
   }
   template <typename T> static T ZagZig(T value) {
-    const uint64_t mask = (1ULL << (sizeof(T) * 8 - 1)) - 1ULL;
-    return ((value >> 1) & static_cast<T>(mask)) ^ -(value & 1);
+    using U = std::make_unsigned_t<T>;
+    const U u = static_cast<U>(value);
+    return static_cast<T>((u >> 1) ^ static_cast<U>(-(u & U(1))));
   }
 
   template <typename T> static constexpr WireType FixedWireType() {
@@ -121,7 +131,7 @@ public:
   }
 
   template <typename T, bool Signed> static uint64_t ToVarintWire(T value) {
-    if (Signed) {
+    if constexpr (Signed) {
       return static_cast<uint64_t>(ZigZag(value));
     }
     if constexpr (std::is_same_v<T, bool>) {

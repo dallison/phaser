@@ -441,12 +441,11 @@ public:
 
   bool IsPlaceholder() const { return msg_ == nullptr; }
 
+  // Number of bytes the raw string occupies on the wire (not including any
+  // field tag or length prefix). Repeated-string serialization is handled by
+  // StringVectorField, which writes the tag/length and bytes directly, so this
+  // type intentionally has no standalone Serialize() of its own.
   size_t SerializedSize() const { return size(); }
-
-  absl::Status Serialize(ProtoBuffer & /*buffer*/) const {
-    // TODO:
-    return absl::OkStatus();
-  }
 
 private:
   ::toolbelt::PayloadBuffer *GetBuffer() const { return msg_->runtime->pb; }

@@ -304,6 +304,10 @@ public:
   bool SerializeToString(std::string *str) const {
     size_t size = SerializedSize();
     str->resize(size);
+    if (size == 0) {
+      // Nothing to serialize; avoid taking the address of a zero-length buffer.
+      return true;
+    }
     return SerializeToArray(&(*str)[0], size);
   }
 
