@@ -24,6 +24,15 @@ single_version_override(
     version = "0.61.0",
 )
 
+# protobuf -> rules_jvm_external pulls rules_android 0.6.4, whose Android SDK
+# toolchain still references the removed @local_config_platform repo. Bazel 9
+# enables --incompatible_disable_native_repo_rules, so resolving that globally
+# registered toolchain breaks every target (even C++). 0.7.2 is Bazel 9 ready.
+single_version_override(
+    module_name = "rules_android",
+    version = "0.7.2",
+)
+
 # For local debugging of toolbelt or coroutines:
 # local_path_override(
 #     module_name = "cpp_toolbelt",
