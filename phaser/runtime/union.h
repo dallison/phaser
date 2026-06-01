@@ -609,6 +609,14 @@ public:
     t.Clear(GetRuntime(),
             GetMessageBinaryStart() + relative_binary_offset_ + 4);
     *discrim = 0;
+    // Reset the buffer-offset word in the shared value slot. Scalar/enum arms
+    // store their value inline here and their Clear() is a no-op, so without
+    // this a later switch to a variable-length arm (string/message) would
+    // misread the leftover scalar bytes as an allocated buffer offset.
+    ::toolbelt::BufferOffset *slot =
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+            GetMessageBinaryStart() + relative_binary_offset_ + 4);
+    *slot = 0;
   }
 
   template <int Id> size_t SerializedSize(int discriminator) const {

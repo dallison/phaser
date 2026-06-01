@@ -1463,6 +1463,64 @@ TEST(MessageTest, UnionField) {
   free(buffer);
 }
 
+// Exercises in-place oneof arm switching on a single, reused message. The other
+// union tests use a fresh message per arm, so they never replace an already-set
+// variable-length arm. Replacing one with a smaller payload reallocates the
+// in-buffer storage to a smaller block, which drives toolbelt's
+// PayloadBuffer::Realloc -> ShrinkBlock path.
+TEST(MessageTest, UnionArmSwitchInPlace) {
+  char *buffer = (char *)calloc(8192, 1);
+  TestMessage msg = TestMessage::CreateMutable(buffer, 8192);
+
+  // Grow then repeatedly shrink the string arm on the same message. Each shrink
+  // reallocates the in-buffer string to a smaller block (ShrinkBlock).
+  msg.set_u2b(std::string(512, 'x'));
+  ASSERT_EQ(110, msg.u2_case());
+  ASSERT_EQ(std::string(512, 'x'), msg.u2b());
+
+  for (int len : {256, 64, 16, 4, 1}) {
+    msg.set_u2b(std::string(len, 'y'));
+    ASSERT_EQ(110, msg.u2_case());
+    ASSERT_EQ(std::string(len, 'y'), msg.u2b());
+  }
+
+  // Switch to the scalar arm and back. The high-level setters clear the
+  // previously-set arm, so the string storage is released rather than leaked.
+  msg.set_u2a(0x1122334455667788);
+  ASSERT_EQ(109, msg.u2_case());
+  ASSERT_EQ(0x1122334455667788, msg.u2a());
+
+  msg.set_u2b("back to a string arm");
+  ASSERT_EQ(110, msg.u2_case());
+  ASSERT_EQ("back to a string arm", msg.u2b());
+
+  // Message arm: populate it, switch to the scalar arm, then back again.
+  {
+    InnerMessage *inner = msg.mutable_u3b();
+    inner->str_.Set("an inner message with a reasonably long string payload");
+    inner->f_.Set(0xfeedface);
+  }
+  ASSERT_EQ(112, msg.u3_case());
+  ASSERT_EQ("an inner message with a reasonably long string payload",
+            msg.u3b().str_.Get());
+
+  msg.set_u3a(0x0102030405060708);
+  ASSERT_EQ(111, msg.u3_case());
+  ASSERT_EQ(0x0102030405060708, msg.u3a());
+
+  // Back to the message arm, then shrink the inner string in place.
+  {
+    InnerMessage *inner = msg.mutable_u3b();
+    inner->str_.Set("longer inner string to allocate a sizeable block here");
+    inner->str_.Set("short");
+  }
+  ASSERT_EQ(112, msg.u3_case());
+  ASSERT_EQ("short", msg.u3b().str_.Get());
+
+  msg.DebugDump();
+  free(buffer);
+}
+
 TEST(MessageTest, ClearBasic) {
   char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
