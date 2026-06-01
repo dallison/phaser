@@ -1,3 +1,6 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//phaser:copts.bzl", "PHASER_COPTS")
+
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
@@ -7,6 +10,7 @@ cc_library(
         "gen.cc",
         "message_gen.cc",
     ],
+    copts = PHASER_COPTS,
     hdrs = [
         "enum_gen.h",
         "gen.h",
@@ -28,6 +32,7 @@ cc_binary(
     srcs = [
         "main.cc",
     ],
+    copts = PHASER_COPTS,
     deps = [
         ":phaser_lib",
         "@com_google_absl//absl/flags:flag",

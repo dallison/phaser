@@ -1,8 +1,9 @@
 
-// Copyright 2024 David Allison
+// Copyright 2024-2026 David Allison
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
+#include "test_helpers.h"
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
@@ -86,6 +87,8 @@ TEST(PhaserTest, ProtobufCompat) {
 
   std::string pb_debug_string = msg2.DebugString();
   std::string phaser_debug_string = msg.DebugString();
+  phaser::test::StripProtobufDebugRedaction(pb_debug_string);
+  phaser::test::StripProtobufDebugRedaction(phaser_debug_string);
   ASSERT_EQ(pb_debug_string, phaser_debug_string);
 }
 
@@ -261,6 +264,8 @@ TEST(PhaserTest, Any) {
 
   std::string pb_debug_string = msg4.DebugString();
   std::string phaser_debug_string = msg.DebugString();
+  phaser::test::StripProtobufDebugRedaction(pb_debug_string);
+  phaser::test::StripProtobufDebugRedaction(phaser_debug_string);
   ASSERT_EQ(pb_debug_string, phaser_debug_string);
 }
 
@@ -535,6 +540,34 @@ TEST(PhaserTest, Reflection) {
   for (auto &v : vi32r) {
     std::cout << v << std::endl;
   }
+}
+
+TEST(DebugRedaction, StripsMarkerLine) {
+  std::string s = "goo.gle/debugstr-abc123\nx: 1\ny: 2\n";
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ("x: 1\ny: 2\n", s);
+}
+
+TEST(DebugRedaction, StripsMarkerWithLeadingWhitespace) {
+  // Protobuf may emit a random amount of leading whitespace before the marker.
+  std::string s = "    goo.gle/debugproto\nfield: value\n";
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ("field: value\n", s);
+}
+
+TEST(DebugRedaction, LeavesUnmarkedStringUntouched) {
+  std::string s = "x: 1\ny: 2\n";
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ("x: 1\ny: 2\n", s);
+}
+
+TEST(DebugRedaction, DoesNotStripMidContentMarker) {
+  // A marker that is not the leading prefix (real content precedes it) must be
+  // left alone rather than truncating legitimate output.
+  std::string s = "name: \"goo.gle/debugstr\"\nx: 1\n";
+  std::string original = s;
+  phaser::test::StripProtobufDebugRedaction(s);
+  ASSERT_EQ(original, s);
 }
 
 int main(int argc, char **argv) {

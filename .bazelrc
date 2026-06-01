@@ -1,18 +1,57 @@
+# AddressSanitizer: bazel test //phaser/... --config=asan
+# Do not pass -fsanitize to host/exec tools (protoc, plugins); that breaks codegen.
+# On Apple Silicon, also pass --config=apple_silicon (it adds -arch arm64, which
+# is macOS-only and must not be applied on Linux).
 build:asan --strip=never
-build:asan --copt -fsanitize=address
-build:asan --copt -DADDRESS_SANITIZER
-build:asan --copt -g
-build:asan --copt -fno-omit-frame-pointer
-build:asan --linkopt -fsanitize=address
+build:asan -c dbg
+build:asan --copt=-fsanitize=address
+build:asan --copt=-fno-omit-frame-pointer
+build:asan --linkopt=-fsanitize=address
+
+test:asan --test_output=errors
+test:asan --test_env=ASAN_OPTIONS=abort_on_error=1:symbolize=1:fast_unwind_on_malloc=0
+
+# Valgrind (memcheck): bazel test //phaser/... --config=valgrind
+# Build with debug symbols (and no optimization) so valgrind reports useful
+# stack traces. Do not combine with --config=asan; the two are incompatible.
+build:valgrind --strip=never
+build:valgrind -c dbg
+build:valgrind --copt=-g
+build:valgrind --copt=-fno-omit-frame-pointer
+
+test:valgrind --test_output=errors
+# Valgrind is slow; give tests plenty of time.
+test:valgrind --test_timeout=900
+# Only fail on definite leaks: protobuf/abseil keep global state that valgrind
+# reports as "possibly lost"/"still reachable", which are benign false positives.
+# The suppressions file silences protobuf resize-uninitialized reads surfaced
+# via debug Hexdump calls.
+test:valgrind --run_under='valgrind --leak-check=full --show-leak-kinds=definite --errors-for-leak-kinds=definite --error-exitcode=1 --num-callers=30 --suppressions=phaser/valgrind.supp'
+
+build --enable_platform_specific_config
 
 # For all builds, use C++17
 build --cxxopt="-std=c++17"
 build --cxxopt='-Wno-sign-compare'
 build --host_cxxopt="-std=c++17"
 
-# For Apple Silicon
+# For Apple Silicon (required when Bazel itself is x86_64 under Rosetta).
 build:apple_silicon --cpu=darwin_arm64 --host_cpu=darwin_arm64 --host_cxxopt="-std=c++17"
+build:apple_silicon --copt=-arch
+build:apple_silicon --copt=arm64
+build:apple_silicon --linkopt=-arch
+build:apple_silicon --linkopt=arm64
+build:apple_silicon --host_copt=-arch
+build:apple_silicon --host_copt=arm64
+build:apple_silicon --host_linkopt=-arch
+build:apple_silicon --host_linkopt=arm64
 build:apple_silicon --features=oso_prefix_is_pwd
+
+# std::filesystem requires macOS 10.15+
+build:macos --cxxopt=-mmacosx-version-min=10.15
+build:macos --linkopt=-mmacosx-version-min=10.15
+build:macos --host_cxxopt=-mmacosx-version-min=10.15
+build:macos --host_linkopt=-mmacosx-version-min=10.15
 
 # Common flags for Clang
 build:clang --action_env=BAZEL_COMPILER=clang

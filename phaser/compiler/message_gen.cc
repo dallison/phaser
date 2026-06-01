@@ -1,4 +1,4 @@
-// Copyright 2024 David Allison
+// Copyright 2024-2026 David Allison
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
@@ -116,9 +116,9 @@ bool IsCppReservedWord(const std::string &s) {
 
 std::string
 MessageGenerator::EnumName(const google::protobuf::EnumDescriptor *desc) {
-  std::string name = desc->name();
+  std::string name(desc->name());
   if (desc->containing_type() != nullptr) {
-    name = desc->containing_type()->name() + "_" + name;
+    name = std::string(desc->containing_type()->name()) + "_" + name;
   }
   return name;
 }
@@ -129,7 +129,7 @@ MessageGenerator::MessageName(const google::protobuf::Descriptor *desc,
   if (is_ref && IsAny(desc)) {
     return "::phaser::AnyMessage";
   }
-  std::string full_name = desc->full_name();
+  std::string full_name(desc->full_name());
   // If the message is in our package, use the short name.
   if (full_name.find(package_name_) == std::string::npos) {
     std::string cpp_name =
@@ -142,9 +142,9 @@ MessageGenerator::MessageName(const google::protobuf::Descriptor *desc,
     return cpp_name.substr(0, pos) + "::" + added_namespace_ +
            cpp_name.substr(pos);
   }
-  std::string name = desc->name();
+  std::string name(desc->name());
   if (desc->containing_type() != nullptr) {
-    name = desc->containing_type()->name() + "_" + name;
+    name = std::string(desc->containing_type()->name()) + "_" + name;
   }
   return name;
 }
@@ -438,7 +438,7 @@ void MessageGenerator::CompileUnions() {
     union_info->member_type += "::phaser::" + field_type;
     uint32_t field_size = FieldBinarySize(field);
     union_info->members.push_back(std::make_shared<FieldInfo>(
-        field, 0, union_info->id, field->name() + "_", field_type,
+        field, 0, union_info->id, std::string(field->name()) + "_", field_type,
         FieldCType(field), field_size));
     union_info->binary_size = std::max(union_info->binary_size, 4 + field_size);
     union_info->id++;
@@ -468,7 +468,7 @@ void MessageGenerator::CompileFields() {
       auto it = unions_.find(oneof);
       if (it == unions_.end()) {
         auto union_info = std::make_shared<UnionInfo>(
-            oneof, 4, oneof->name() + "_", "UnionField");
+            oneof, 4, std::string(oneof->name()) + "_", "UnionField");
         unions_[oneof] = union_info;
         fields_in_order_.push_back(union_info);
       }
@@ -490,7 +490,8 @@ void MessageGenerator::CompileFields() {
     }
     offset = (offset + (field_size - 1)) & ~(field_size - 1);
     fields_.push_back(
-        std::make_shared<FieldInfo>(field, offset, id, field->name() + "_",
+        std::make_shared<FieldInfo>(field, offset, id,
+                                    std::string(field->name()) + "_",
                                     field_type, FieldCType(field), field_size));
     fields_in_order_.push_back(fields_.back());
     offset += field_size;
@@ -929,7 +930,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(std::ostream &os) {
 void MessageGenerator::GenerateFieldProtobufAccessors(
     std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
     int union_index, std::ostream &os) {
-  std::string field_name = field->field->name();
+  std::string field_name(field->field->name());
   std::string sanitized_field_name =
       field_name + +(IsCppReservedWord(field_name) ? "_" : "");
 
@@ -1216,9 +1217,10 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
            << std::to_string(union_index) << ">();\n";
         os << "  }\n";
       }
-      if (IsAny(field->field)) {
-        GenerateAnyProtobufAccessors(field, union_field, union_index, os);
-      }
+      // Any-typed message fields reuse the standard message accessors above
+      // (mutable_X() returns a phaser::AnyMessage, which exposes the full Any
+      // API: PackFrom/UnpackTo/Is/etc.), so no field-specific generation is
+      // needed here.
 
       break;
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
@@ -1228,10 +1230,6 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
     }
   }
 }
-
-void MessageGenerator::GenerateAnyProtobufAccessors(
-    std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
-    int union_index, std::ostream &os) {}
 
 void MessageGenerator::GenerateUnionProtobufAccessors(std::ostream &os) {
   for (auto & [ oneof, u ] : unions_) {
@@ -1268,14 +1266,14 @@ void MessageGenerator::GenerateNestedTypes(std::ostream &os) {
 
 void MessageGenerator::GenerateFieldNumbers(std::ostream &os) {
   for (auto &field : fields_) {
-    std::string name = field->field->camelcase_name();
+    std::string name(field->field->camelcase_name());
     name = absl::StrFormat("k%c%s", toupper(name[0]), name.substr(1));
     os << "  static constexpr int " << name
        << "FieldNumber = " << field->field->number() << ";\n";
   }
   for (auto & [ oneof, u ] : unions_) {
     for (auto &field : u->members) {
-      std::string name = field->field->camelcase_name();
+      std::string name(field->field->camelcase_name());
       name = absl::StrFormat("k%c%s", toupper(name[0]), name.substr(1));
       os << "  static constexpr int " << name
          << "FieldNumber = " << field->field->number() << ";\n";
@@ -1627,7 +1625,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << MessageName(message_)
      << "Allocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {\n";
   os << "  void *addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb, "
-     << MessageName(message_) << "::BinarySize(), 8, true);\n";
+     << MessageName(message_) << "::BinarySize());\n";
   os << "  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);\n";
   os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
   os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
@@ -1662,8 +1660,8 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
 
   os << "static bool " << MessageName(message_)
      << "HasField(const ::phaser::Message &msg, int number) {\n";
-  os << "  const " << MessageName(message_) << " *m = static_cast<const "
-     << MessageName(message_) << "*>(&msg);\n";
+  os << "  [[maybe_unused]] const " << MessageName(message_)
+     << " *m = static_cast<const " << MessageName(message_) << "*>(&msg);\n";
   os << "  switch (number) {\n";
   for (auto &field : fields_) {
     os << "  case " << field->field->number() << ":\n";
@@ -1740,10 +1738,10 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "  .binary_size = " << MessageName(message_) << "BinarySize,\n";
   os << "  .message_info = " << MessageName(message_) << "GetMessageInfo,\n";
   os << "  .has_field = " << MessageName(message_) << "HasField,\n";
-  os << "  .get_field_by_number = " << MessageName(message_)
-     << "GetFieldByNumber,\n";
   os << "  .get_field_by_name = " << MessageName(message_)
      << "GetFieldByName,\n";
+  os << "  .get_field_by_number = " << MessageName(message_)
+     << "GetFieldByNumber,\n";
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";

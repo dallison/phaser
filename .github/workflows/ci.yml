@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build and run every test target except perf_test.
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-test-${{ matrix.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc', '.bazelversion') }}
+          restore-keys: |
+            bazel-disk-test-${{ matrix.os }}-
+
+      # Apple Silicon runners need the apple_silicon config (adds -arch arm64),
+      # which must not be applied on Linux.
+      - name: Select macOS config
+        if: runner.os == 'macOS'
+        run: echo "EXTRA_CONFIG=--config=apple_silicon" >> "$GITHUB_ENV"
+
+      - name: Test (everything except perf_test)
+        run: |
+          bazel test --disk_cache="$HOME/.cache/bazel-disk" $EXTRA_CONFIG \
+            -- //... -//phaser:perf_test
+
+  # AddressSanitizer runs on macOS (Apple Silicon).
+  asan:
+    name: asan (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-asan-macos-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc', '.bazelversion') }}
+          restore-keys: |
+            bazel-disk-asan-macos-
+
+      - name: Test with ASan (everything except perf_test)
+        run: |
+          bazel test --disk_cache="$HOME/.cache/bazel-disk" \
+            --config=asan --config=apple_silicon \
+            -- //... -//phaser:perf_test
+
+  # AddressSanitizer runs on Linux (no apple_silicon config).
+  asan-linux:
+    name: asan (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-asan-linux-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc', '.bazelversion') }}
+          restore-keys: |
+            bazel-disk-asan-linux-
+
+      - name: Test with ASan (everything except perf_test)
+        run: |
+          bazel test --disk_cache="$HOME/.cache/bazel-disk" \
+            --config=asan \
+            -- //... -//phaser:perf_test
+
+  # Valgrind (memcheck) runs on Linux only.
+  valgrind:
+    name: valgrind (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-valgrind-linux-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc', '.bazelversion') }}
+          restore-keys: |
+            bazel-disk-valgrind-linux-
+
+      - name: Test under Valgrind (everything except perf_test)
+        run: |
+          bazel test --disk_cache="$HOME/.cache/bazel-disk" --config=valgrind \
+            -- //... -//phaser:perf_test

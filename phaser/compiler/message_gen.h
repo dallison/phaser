@@ -1,4 +1,4 @@
-// Copyright 2024 David Allison
+// Copyright 2024-2026 David Allison
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
@@ -102,9 +102,6 @@ private:
   void GenerateStreamer(std::ostream &os);
   bool IsAny(const google::protobuf::Descriptor *desc);
   bool IsAny(const google::protobuf::FieldDescriptor *field);
-  void GenerateAnyProtobufAccessors(std::shared_ptr<FieldInfo> field,
-                                    std::shared_ptr<UnionInfo> union_field,
-                                    int union_index, std::ostream &os);
   void GenerateCopy(std::ostream &os, bool decl);
   void GenerateDebugString(std::ostream &os);
   void GeneratePhaserBank(std::ostream &os);

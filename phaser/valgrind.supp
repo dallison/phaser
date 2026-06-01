@@ -1,0 +1,68 @@
+# Valgrind suppressions for known-benign third-party reports.
+#
+# Used by `bazel test --config=valgrind` (see .bazelrc).
+
+# toolbelt::Hexdump rounds the dump length up to a 16-byte row boundary and
+# always reads full rows, so it intentionally over-reads up to 15 bytes past
+# the supplied buffer (it just prints the trailing bytes). When tests dump
+# protobuf's SerializeAsString() output -- a std::string allocated to its exact
+# length via absl/protobuf resize-uninitialized -- this reads just past the end
+# of that allocation and touches bytes protobuf left uninitialised. Both are
+# benign debug-only reads in a third-party utility, so suppress reports
+# originating in Hexdump.
+{
+   toolbelt_hexdump_invalid_read1
+   Memcheck:Addr1
+   ...
+   fun:*Hexdump*
+   ...
+}
+{
+   toolbelt_hexdump_invalid_read2
+   Memcheck:Addr2
+   ...
+   fun:*Hexdump*
+   ...
+}
+{
+   toolbelt_hexdump_invalid_read4
+   Memcheck:Addr4
+   ...
+   fun:*Hexdump*
+   ...
+}
+{
+   toolbelt_hexdump_invalid_read8
+   Memcheck:Addr8
+   ...
+   fun:*Hexdump*
+   ...
+}
+{
+   toolbelt_hexdump_uninitialised_cond
+   Memcheck:Cond
+   ...
+   fun:*Hexdump*
+   ...
+}
+{
+   toolbelt_hexdump_uninitialised_value8
+   Memcheck:Value8
+   ...
+   fun:*Hexdump*
+   ...
+}
+{
+   toolbelt_hexdump_uninitialised_value4
+   Memcheck:Value4
+   ...
+   fun:*Hexdump*
+   ...
+}
+{
+   toolbelt_hexdump_uninitialised_value1
+   Memcheck:Value1
+   ...
+   fun:*Hexdump*
+   ...
+}

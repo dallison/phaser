@@ -1,3 +1,6 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//phaser:copts.bzl", "PHASER_COPTS")
+
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
@@ -6,6 +9,7 @@ cc_library(
         "message.cc",
         "phaser_bank.cc",
     ],
+    copts = PHASER_COPTS,
     hdrs = [
         "any.h",
         "fields.h",
@@ -24,7 +28,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@toolbelt//toolbelt",
+        "@cpp_toolbelt//toolbelt",
     ],
 )
 
@@ -33,12 +37,14 @@ cc_test(
     srcs = [
         "message_test.cc",
     ],
+    copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
         "//phaser/testdata:test_message_cc_proto",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
-        "@toolbelt//toolbelt",
+        "@cpp_toolbelt//toolbelt",
     ],
 )
 
@@ -47,10 +53,12 @@ cc_test(
     srcs = [
         "wireformat_test.cc",
     ],
+    copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
-        "@toolbelt//toolbelt",
+        "@cpp_toolbelt//toolbelt",
     ],
 )

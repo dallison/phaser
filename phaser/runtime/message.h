@@ -1,4 +1,4 @@
-// Copyright 2024 David Allison
+// Copyright 2024-2026 David Allison
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
@@ -26,14 +26,17 @@ namespace phaser {
 
 // FieldData is a structure that contains the field numbers and offsets for a
 // message. It is stored in the payload buffer.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc99-extensions"
 struct FieldData {
   uint32_t num;
   struct {
     uint32_t number;
     uint32_t offset : 24; // Offset into message.
     uint32_t id : 8;      // Field id for presence bit mask.
-  } fields[];
+  } fields[]; // Flexible array member; data lives in the payload buffer.
 };
+#pragma clang diagnostic pop
 
 enum class FieldType {
   kFieldInt32,
@@ -61,7 +64,7 @@ struct FieldInfo {
 
 struct PrimitiveFieldInfo : public FieldInfo {
   PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
-                     bool f = false, bool s = false, bool r = false,
+                     bool f = false, bool /*s*/ = false, bool r = false,
                      bool p = false)
       : FieldInfo(n, t, num, off), is_fixed(f), is_repeated(r), is_packed(p) {}
   PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
@@ -117,9 +120,9 @@ struct MessageRuntime {
   // have no way to check it's valid).
   size_t buffer_size = 0;
 
-  virtual void AddMetadata(const std::string &name,
-                           ::toolbelt::BufferOffset offset) {}
-  virtual ::toolbelt::BufferOffset GetMetadata(const std::string &name) {
+  virtual void AddMetadata(const std::string & /*name*/,
+                           ::toolbelt::BufferOffset /*offset*/) {}
+  virtual ::toolbelt::BufferOffset GetMetadata(const std::string & /*name*/) {
     return 0;
   }
 
@@ -169,8 +172,10 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
                                std::function<void(void *)> free)
       : MutableMessageRuntime(p), free_(std::move(free)) {}
   ~DynamicMutableMessageRuntime() override {
-    if (free_ != nullptr)
+    if (free_ != nullptr) {
+      pb->~PayloadBuffer();
       free_(pb);
+    }
   }
   std::function<void(void *)> free_;
 };
@@ -229,7 +234,7 @@ struct Message {
   virtual std::string GetName() const { return "Message"; }
   virtual std::string GetFullName() const { return "phaser.Message"; }
   virtual void Clear() {}
-  virtual void CopyFrom(const Message &src) {}
+  virtual void CopyFrom(const Message & /*src*/) {}
 
   std::shared_ptr<MessageRuntime> runtime;
   ::toolbelt::BufferOffset absolute_binary_offset;
@@ -297,16 +302,16 @@ struct Message {
   }
 
   void *Allocate(size_t size, size_t alignment = 4, bool clear = true) {
-    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, alignment,
-                                             clear);
+    (void)alignment;
+    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, clear);
   }
 
   void Free(void *ptr) { runtime->pb->Free(ptr); }
 
   void *Realloc(void *ptr, size_t size, size_t alignment = 4,
                 bool clear = true) {
-    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, alignment,
-                                            clear);
+    (void)alignment;
+    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, clear);
   }
 
   toolbelt::BufferOffset ToOffset(void *addr) {
@@ -329,7 +334,7 @@ struct Message {
 
     // Allocate space for field data in the payload buffer and copy it in.
     void *fields = ::toolbelt::PayloadBuffer::Allocate(
-        &runtime->pb, sizeof(MessageType::field_data), 4, false);
+        &runtime->pb, sizeof(MessageType::field_data), false);
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
     ::toolbelt::BufferOffset *header =
         runtime->pb->ToAddress<::toolbelt::BufferOffset>(

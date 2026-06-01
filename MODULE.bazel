@@ -1,47 +1,35 @@
 module(
     name = "phaser",
+    version = "1.1.0"
 )
 
-http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
 
-bazel_dep(name = "bazel_skylib", version = "1.7.1")
-bazel_dep(name = "platforms", version = "0.0.10")
-bazel_dep(name = "abseil-cpp", version = "20230802.0", repo_name = "com_google_absl")
-bazel_dep(name = "googletest", version = "1.14.0", repo_name = "com_google_googletest")
+# Aliased as "com_google_protobuf" to match implicit dependency within bazel_tools.
+# See https://github.com/bazelbuild/bazel/issues/19973
+bazel_dep(name = "protobuf", version = "34.1", repo_name = "com_google_protobuf")
 
-# Note, see https://github.com/bazelbuild/bazel/issues/19973
-# Protobuf must be aliased as "com_google_protobuf" to match implicit dependency within bazel_tools.
-bazel_dep(name = "protobuf", version = "21.7", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_pkg", version = "1.0.1")
+bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
 
-bazel_dep(name = "rules_cc", version = "0.0.9")
-bazel_dep(name = "rules_pkg", version = "0.9.1")
-bazel_dep(name = "zlib", version = "1.3.1.bcr.3")
+bazel_dep(name = "cpp_toolbelt", version = "2.1.2")
+bazel_dep(name = "coroutines", version = "3.3.2")
 
-http_archive(
-    name = "toolbelt",
-    integrity = "sha256-RwYojmkQeMEBe/jDW1BR9BTdGa0CVcxne46X9Qdxvh0=",
-    strip_prefix = "cpp_toolbelt-1.2.9",
-    urls = ["https://github.com/dallison/cpp_toolbelt/archive/refs/tags/1.2.9.tar.gz"],
+# protobuf pulls an older rules_go via gazelle; Bazel 9 needs a current rules_go.
+single_version_override(
+    module_name = "rules_go",
+    version = "0.61.0",
 )
 
-# For local debugging of toolbelt coroutine library.
-# local_repository(
-#     name = "toolbelt",
-#     path = "../cpp_toolbelt",
-# )
-
-# Coroutines
-http_archive(
-    name = "coroutines",
-    integrity = "sha256-cJ3a89VebabjRgLjHNsEsjIQE+hi+5vdtuAh4RfTXCI=",
-    strip_prefix = "co-1.3.7",
-    urls = ["https://github.com/dallison/co/archive/refs/tags/1.3.7.tar.gz"],
+# protobuf -> rules_jvm_external pulls rules_android 0.6.4, whose Android SDK
+# toolchain still references the removed @local_config_platform repo. Bazel 9
+# enables --incompatible_disable_native_repo_rules, so resolving that globally
+# registered toolchain breaks every target (even C++). 0.7.2 is Bazel 9 ready.
+single_version_override(
+    module_name = "rules_android",
+    version = "0.7.2",
 )
-
-# For local debugging of co coroutine library.
-# local_repository(
-#     name = "coroutines",
-#     path = "../co",
-# )
-

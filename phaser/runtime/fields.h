@@ -1,4 +1,4 @@
-// Copyright 2024 David Allison
+// Copyright 2024-2026 David Allison
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
@@ -44,7 +44,7 @@ public:
 
   bool IsPresent(uint32_t field_id, ::toolbelt::PayloadBuffer *buffer,
                  uint32_t binary_offset) const {
-    if (field_id == -1) {
+    if (field_id == static_cast<uint32_t>(-1)) {
       return false;
     }
     return buffer->IsPresent(field_id, binary_offset);
@@ -441,12 +441,11 @@ public:
 
   bool IsPlaceholder() const { return msg_ == nullptr; }
 
+  // Number of bytes the raw string occupies on the wire (not including any
+  // field tag or length prefix). Repeated-string serialization is handled by
+  // StringVectorField, which writes the tag/length and bytes directly, so this
+  // type intentionally has no standalone Serialize() of its own.
   size_t SerializedSize() const { return size(); }
-
-  absl::Status Serialize(ProtoBuffer &buffer) const {
-    // TODO:
-    return absl::OkStatus();
-  }
 
 private:
   ::toolbelt::PayloadBuffer *GetBuffer() const { return msg_->runtime->pb; }
@@ -520,7 +519,7 @@ public:
     }
     // Allocate a new message.
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(), MessageType::BinarySize(), 8);
+        GetBufferAddr(), MessageType::BinarySize());
     ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
@@ -611,7 +610,7 @@ public:
     }
     // Allocate a new message.
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(), MessageType::BinarySize(), 8);
+        GetBufferAddr(), MessageType::BinarySize());
     ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
