@@ -1231,8 +1231,9 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
 }
 
 void MessageGenerator::GenerateAnyProtobufAccessors(
-    std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
-    int union_index, std::ostream &os) {}
+    std::shared_ptr<FieldInfo> /*field*/,
+    std::shared_ptr<UnionInfo> /*union_field*/, int /*union_index*/,
+    std::ostream & /*os*/) {}
 
 void MessageGenerator::GenerateUnionProtobufAccessors(std::ostream &os) {
   for (auto & [ oneof, u ] : unions_) {
@@ -1663,8 +1664,8 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
 
   os << "static bool " << MessageName(message_)
      << "HasField(const ::phaser::Message &msg, int number) {\n";
-  os << "  const " << MessageName(message_) << " *m = static_cast<const "
-     << MessageName(message_) << "*>(&msg);\n";
+  os << "  [[maybe_unused]] const " << MessageName(message_)
+     << " *m = static_cast<const " << MessageName(message_) << "*>(&msg);\n";
   os << "  switch (number) {\n";
   for (auto &field : fields_) {
     os << "  case " << field->field->number() << ":\n";

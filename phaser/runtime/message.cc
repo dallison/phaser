@@ -79,7 +79,7 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
                                             Tuning tuning) {
   absl::StatusOr<::toolbelt::PayloadBuffer *> r = NewDynamicBuffer(
       initial_size, [](size_t size) -> void * { return ::malloc(size); },
-      [](void *p, size_t old_size, size_t new_size) -> void * {
+      [](void *p, size_t /*old_size*/, size_t new_size) -> void * {
         return ::realloc(p, new_size);
       },
       tuning);

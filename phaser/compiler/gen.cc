@@ -18,7 +18,9 @@ WriteToZeroCopyStream(const std::string &data,
   int size;
   size_t offset = 0;
   while (offset < data.size()) {
-    stream->Next(&data_buffer, &size);
+    if (!stream->Next(&data_buffer, &size)) {
+      break;
+    }
     int to_copy = std::min(size, static_cast<int>(data.size() - offset));
     std::memcpy(data_buffer, data.data() + offset, to_copy);
     offset += to_copy;

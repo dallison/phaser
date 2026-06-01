@@ -742,7 +742,7 @@ public:
       return empty_;
     }
     auto hdr = Header(offset);
-    if (index >= hdr->num_elements) {
+    if (static_cast<uint32_t>(index) >= hdr->num_elements) {
       return empty_;
     }
     ::toolbelt::BufferOffset *data =
@@ -750,7 +750,7 @@ public:
     if (data[index] == 0) {
       return empty_;
     }
-    if (index >= msgs_.size()) {
+    if (static_cast<size_t>(index) >= msgs_.size()) {
       msgs_.resize(index + 1);
     }
     if (msgs_[index].empty()) {
@@ -803,7 +803,7 @@ public:
   const T &Get(size_t index) const { return (*this)[index].Get(); }
 
   T *Mutable(int index) {
-    if (index >= msgs_.size()) {
+    if (static_cast<size_t>(index) >= msgs_.size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
           GetBufferAddr(), Header(), index + 1);
       msgs_.resize(index + 1);
@@ -828,7 +828,7 @@ public:
   }
 
   void SetOffset(int index, toolbelt::BufferOffset offset) {
-    if (index >= msgs_.size()) {
+    if (static_cast<size_t>(index) >= msgs_.size()) {
       msgs_.resize(index + 1);
     }
     auto hdr = Header();
@@ -1080,7 +1080,7 @@ public:
       return empty_;
     }
     auto hdr = Header(offset);
-    if (index >= hdr->num_elements) {
+    if (static_cast<uint32_t>(index) >= hdr->num_elements) {
       return empty_;
     }
     ::toolbelt::BufferOffset *data =
@@ -1088,7 +1088,7 @@ public:
     if (data[index] == 0) {
       return empty_;
     }
-    if (index >= strings_.size()) {
+    if (static_cast<size_t>(index) >= strings_.size()) {
       strings_.resize(index + 1);
     }
     if (strings_[index].IsPlaceholder()) {
@@ -1138,7 +1138,7 @@ public:
   std::string_view Get(int index) const { return (*this)[index].Get(); }
 
   template <typename Str> void Set(int index, Str s) {
-    if (index >= strings_.size()) {
+    if (static_cast<size_t>(index) >= strings_.size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
           GetBufferAddr(), Header(), index + 1);
       strings_.resize(index + 1);

@@ -102,7 +102,7 @@ public:
     return (value << 1) ^ (value >> 31);
   }
   template <typename T> static T ZagZig(T value) {
-    const uint64_t mask = (1LL << (sizeof(T) * 8 - 1)) - 1LL;
+    const uint64_t mask = (1ULL << (sizeof(T) * 8 - 1)) - 1ULL;
     return ((value >> 1) & static_cast<T>(mask)) ^ -(value & 1);
   }
 

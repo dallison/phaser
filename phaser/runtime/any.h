@@ -29,7 +29,7 @@ namespace phaser {
 // Hand-coded message class that represents a google.protobuf.Any message.
 class AnyMessage : public Message {
 public:
-  AnyMessage(phaser::InternalDefault d)
+  AnyMessage(phaser::InternalDefault /*d*/)
       : type_url_(offsetof(AnyMessage, type_url_), HeaderSize() + 0, 0, 1),
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
 

@@ -45,7 +45,7 @@ protected:
       }                                                                        \
       return GetBuffer(runtime)->template Get<type>(abs_offset);               \
     }                                                                          \
-    void Print(std::ostream &os, int indent,                                   \
+    void Print(std::ostream &os, int /*indent*/,                               \
                const std::shared_ptr<MessageRuntime> &runtime,                 \
                uint32_t abs_offset) const {                                    \
       os << Get(runtime, abs_offset);                                          \
@@ -54,16 +54,17 @@ protected:
              uint32_t abs_offset) {                                            \
       GetBuffer(runtime)->Set(abs_offset, v);                                  \
     }                                                                          \
-    void SetOffset(const std::shared_ptr<MessageRuntime> &runtime,             \
-                   uint32_t abs_offset, toolbelt::BufferOffset msg_offset) {}  \
+    void SetOffset(const std::shared_ptr<MessageRuntime> & /*runtime*/,        \
+                   uint32_t /*abs_offset*/,                                     \
+                   toolbelt::BufferOffset /*msg_offset*/) {}                   \
                                                                                \
     bool Equal(const Union##cname##Field &other,                               \
                const std::shared_ptr<MessageRuntime> &runtime,                 \
                uint32_t abs_offset) {                                          \
       return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);       \
     }                                                                          \
-    void Clear(const std::shared_ptr<MessageRuntime> &runtime,                 \
-               uint32_t abs_offset) {}                                         \
+    void Clear(const std::shared_ptr<MessageRuntime> & /*runtime*/,            \
+               uint32_t /*abs_offset*/) {}                                     \
     size_t SerializedSize(int number,                                          \
                           const std::shared_ptr<MessageRuntime> &runtime,      \
                           uint32_t abs_offset) const {                         \
@@ -139,7 +140,7 @@ public:
                 abs_offset));
   }
 
-  void Print(std::ostream &os, int indent,
+  void Print(std::ostream &os, int /*indent*/,
              const std::shared_ptr<MessageRuntime> &runtime,
              uint32_t abs_offset) const {
     os << Stringizer()(Get(runtime, abs_offset));
@@ -151,8 +152,9 @@ public:
         ->template Get<typename std::underlying_type<Enum>::type>(abs_offset);
   }
 
-  void SetOffset(const std::shared_ptr<MessageRuntime> &runtime, uint32_t abs_offset,
-           toolbelt::BufferOffset msg_offset) {}
+  void SetOffset(const std::shared_ptr<MessageRuntime> & /*runtime*/,
+                 uint32_t /*abs_offset*/,
+                 toolbelt::BufferOffset /*msg_offset*/) {}
 
   void Set(Enum e, const std::shared_ptr<MessageRuntime> &runtime,
            uint32_t abs_offset) {
@@ -170,8 +172,8 @@ public:
              uint32_t abs_offset) {
     return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);
   }
-  void Clear(const std::shared_ptr<MessageRuntime> &runtime,
-             uint32_t abs_offset) {}
+  void Clear(const std::shared_ptr<MessageRuntime> & /*runtime*/,
+             uint32_t /*abs_offset*/) {}
 
   size_t SerializedSize(int number,
                         const std::shared_ptr<MessageRuntime> &runtime,
@@ -214,7 +216,7 @@ public:
     return GetBuffer(runtime)->GetStringView(abs_offset);
   }
 
-  void Print(std::ostream &os, int indent,
+  void Print(std::ostream &os, int /*indent*/,
              const std::shared_ptr<MessageRuntime> &runtime,
              uint32_t abs_offset) const {
     os << "\"" << std::string(Get(runtime, abs_offset)) << "\"";
@@ -227,8 +229,9 @@ public:
     return *addr != 0;
   }
 
-  void SetOffset(const std::shared_ptr<MessageRuntime> &runtime,
-                 uint32_t abs_offset, toolbelt::BufferOffset msg_offset) {}
+  void SetOffset(const std::shared_ptr<MessageRuntime> & /*runtime*/,
+                 uint32_t /*abs_offset*/,
+                 toolbelt::BufferOffset /*msg_offset*/) {}
 
   template <typename Str>
   void Set(Str s, const std::shared_ptr<MessageRuntime> &runtime,
@@ -632,7 +635,7 @@ public:
   }
 
   template <int Id>
-  absl::Status Deserialize(int discriminator, ProtoBuffer &buffer) {
+  absl::Status Deserialize(int /*discriminator*/, ProtoBuffer &buffer) {
     int32_t relative_offset = Message::GetMessage(this, source_offset_)
                                   ->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) { // Field not present.

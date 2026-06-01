@@ -44,7 +44,7 @@ public:
 
   bool IsPresent(uint32_t field_id, ::toolbelt::PayloadBuffer *buffer,
                  uint32_t binary_offset) const {
-    if (field_id == -1) {
+    if (field_id == static_cast<uint32_t>(-1)) {
       return false;
     }
     return buffer->IsPresent(field_id, binary_offset);
@@ -443,7 +443,7 @@ public:
 
   size_t SerializedSize() const { return size(); }
 
-  absl::Status Serialize(ProtoBuffer &buffer) const {
+  absl::Status Serialize(ProtoBuffer & /*buffer*/) const {
     // TODO:
     return absl::OkStatus();
   }
