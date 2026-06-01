@@ -65,6 +65,27 @@ jobs:
             --config=asan --config=apple_silicon \
             -- //... -//phaser:perf_test
 
+  # AddressSanitizer runs on Linux (no apple_silicon config).
+  asan-linux:
+    name: asan (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-asan-linux-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc', '.bazelversion') }}
+          restore-keys: |
+            bazel-disk-asan-linux-
+
+      - name: Test with ASan (everything except perf_test)
+        run: |
+          bazel test --disk_cache="$HOME/.cache/bazel-disk" \
+            --config=asan \
+            -- //... -//phaser:perf_test
+
   # Valgrind (memcheck) runs on Linux only.
   valgrind:
     name: valgrind (Linux)

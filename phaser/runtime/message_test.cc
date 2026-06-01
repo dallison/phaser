@@ -1087,7 +1087,6 @@ struct TestMessage : public Message {
 
   void DebugDump() {
     runtime->pb->Dump(std::cout);
-    toolbelt::Hexdump(runtime->pb, runtime->pb->hwm);
   }
 };
 
@@ -1621,8 +1620,6 @@ TEST(MessageTest, ProtobufSerializationSizeBasic) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   size_t size = msg.SerializedSize();
   ASSERT_EQ(pb_msg.ByteSizeLong(), size);
   free(buffer);
@@ -1661,8 +1658,6 @@ TEST(MessageTest, ProtobufSerializationSizeUnion) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   size_t size = msg.SerializedSize();
   ASSERT_EQ(pb_msg.ByteSizeLong(), size);
   free(buffer);
@@ -1699,8 +1694,6 @@ TEST(MessageTest, ProtobufSerializationSizeRepeatedPrimitive) {
   pb_msg.add_vstr("two");
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   size_t size = msg.SerializedSize();
   ASSERT_EQ(pb_msg.ByteSizeLong(), size);
   free(buffer);
@@ -1719,8 +1712,6 @@ TEST(MessageTest, ProtobufSerializationBasic) {
   inner->set_f(0xdeadbeef);
 
   ASSERT_TRUE(msg.Serialize(pb).ok());
-  toolbelt::Hexdump(pb.data(), pb.size());
-
   foo::bar::TestMessage pb_msg;
   pb_msg.set_x(1);
   pb_msg.set_y(0xffff);
@@ -1730,8 +1721,6 @@ TEST(MessageTest, ProtobufSerializationBasic) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   std::string pb_str(pb.data(), pb.size());
   ASSERT_EQ(str, pb_str);
   free(buffer);
@@ -1760,8 +1749,6 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
   inner2->set_f(0x1234);
 
   ASSERT_TRUE(msg.Serialize(pb).ok());
-  toolbelt::Hexdump(pb.data(), pb.size());
-
   foo::bar::TestMessage pb_msg;
   pb_msg.add_vi32(1);
   pb_msg.add_vi32(2);
@@ -1781,8 +1768,6 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
   pb_inner2->set_f(0x1234);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   std::string pb_str(pb.data(), pb.size());
   ASSERT_EQ(str, pb_str);
   free(buffer);
@@ -1801,8 +1786,6 @@ TEST(MessageTest, ProtobufSerializationUnion) {
   inner->set_f(0xdeadbeef);
 
   ASSERT_TRUE(msg.Serialize(pb).ok());
-  toolbelt::Hexdump(pb.data(), pb.size());
-
   foo::bar::TestMessage pb_msg;
   pb_msg.set_u1a(1234);
   pb_msg.set_u2b("Hello, world!");
@@ -1812,8 +1795,6 @@ TEST(MessageTest, ProtobufSerializationUnion) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   std::string pb_str(pb.data(), pb.size());
   ASSERT_EQ(str, pb_str);
   free(buffer);
@@ -1831,8 +1812,6 @@ TEST(MessageTest, ProtobufDeserializationBasic) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
@@ -1845,7 +1824,6 @@ TEST(MessageTest, ProtobufDeserializationBasic) {
   status = msg.Serialize(pb);
   ASSERT_TRUE(status.ok());
 
-  toolbelt::Hexdump(pb.data(), pb.size());
   ASSERT_EQ(str, std::string(pb.data(), pb.size()));
   free(buffer);
 }
@@ -1871,8 +1849,6 @@ TEST(MessageTest, ProtobufDeserializationRepeated) {
   pb_inner2->set_f(0x1234);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
@@ -1886,7 +1862,6 @@ TEST(MessageTest, ProtobufDeserializationRepeated) {
   status = msg.Serialize(pb);
   ASSERT_TRUE(status.ok());
 
-  toolbelt::Hexdump(pb.data(), pb.size());
   ASSERT_EQ(str, std::string(pb.data(), pb.size()));
   free(buffer);
 }
@@ -1902,8 +1877,6 @@ TEST(MessageTest, ProtobufDeserializationUnion) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  toolbelt::Hexdump(str.data(), str.size());
-
   char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
@@ -1916,7 +1889,6 @@ TEST(MessageTest, ProtobufDeserializationUnion) {
   status = msg.Serialize(pb);
   ASSERT_TRUE(status.ok());
 
-  toolbelt::Hexdump(pb.data(), pb.size());
   ASSERT_EQ(str, std::string(pb.data(), pb.size()));
   free(buffer);
 }
