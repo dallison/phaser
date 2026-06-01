@@ -12,15 +12,16 @@
 namespace phaser::test {
 
 inline void StripProtobufDebugRedaction(std::string &s) {
-  constexpr const char *kPrefixes[] = {"goo.gle/debugstr", "goo.gle/debugproto"};
-  for (const char *prefix : kPrefixes) {
-    const size_t len = std::strlen(prefix);
-    if (s.compare(0, len, prefix) == 0) {
-      const auto pos = s.find('\n');
-      if (pos != std::string::npos) {
-        s.erase(0, pos + 1);
-      }
-      return;
+  // Recent protobuf versions prepend a non-deterministic redaction marker to
+  // DebugString() output (e.g. "goo.gle/debugstr", "goo.gle/debugproto",
+  // "goo.gle/debugonly") to discourage parsing the debug format. Strip any
+  // such marker line so comparisons are stable.
+  constexpr const char *kPrefix = "goo.gle/debug";
+  const size_t len = std::strlen(kPrefix);
+  if (s.compare(0, len, kPrefix) == 0) {
+    const auto pos = s.find('\n');
+    if (pos != std::string::npos) {
+      s.erase(0, pos + 1);
     }
   }
 }

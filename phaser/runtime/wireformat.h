@@ -41,6 +41,9 @@ public:
     if (start_ == nullptr) {
       abort();
     }
+    // Initialize the buffer so unwritten regions are never read as
+    // uninitialised memory (avoids spurious valgrind reports).
+    memset(start_, 0, size_);
     addr_ = start_;
     end_ = start_ + size_;
   }
@@ -379,6 +382,8 @@ private:
         if (new_start == nullptr) {
           abort();
         }
+        // Zero the newly grown region.
+        memset(new_start + size_, 0, new_size - size_);
         size_t curr_length = addr_ - start_;
         start_ = new_start;
         addr_ = start_ + curr_length;

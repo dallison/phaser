@@ -35,6 +35,7 @@ cc_test(
     srcs = [
         "message_test.cc",
     ],
+    data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
         "//phaser/testdata:test_message_cc_proto",
@@ -49,6 +50,7 @@ cc_test(
     srcs = [
         "wireformat_test.cc",
     ],
+    data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
         "@com_google_absl//absl/strings:str_format",

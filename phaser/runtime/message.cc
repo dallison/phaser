@@ -4,6 +4,7 @@
 
 #include "phaser/runtime/message.h"
 #include "toolbelt/hexdump.h"
+#include <cstring>
 
 namespace phaser {
 
@@ -98,6 +99,10 @@ absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
   if (!buffer.ok()) {
     return buffer.status();
   }
+  // Zero the freshly allocated buffer so that unused padding/free regions are
+  // initialized. This avoids spurious "uninitialised value" reports from tools
+  // like valgrind when the allocator scans or copies free space.
+  memset(*buffer, 0, initial_size);
   ::toolbelt::PayloadBuffer *pb = new (*buffer)::toolbelt::PayloadBuffer(
       initial_size,
       [ initial_size, realloc = std::move(realloc) ](
@@ -107,6 +112,11 @@ absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
           std::cerr << "Failed to resize PayloadBuffer from " << initial_size
                     << " to " << new_size << std::endl;
           abort();
+        }
+        // Zero the newly grown region for the same reason as above.
+        if (new_size > old_size) {
+          memset(reinterpret_cast<char *>(*r) + old_size, 0,
+                 new_size - old_size);
         }
         *p = reinterpret_cast<::toolbelt::PayloadBuffer *>(*r);
       },

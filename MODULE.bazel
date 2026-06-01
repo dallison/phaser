@@ -15,7 +15,7 @@ bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_pkg", version = "1.0.1")
 bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
 
-bazel_dep(name = "cpp_toolbelt", version = "2.0.1", repo_name = "toolbelt")
+bazel_dep(name = "cpp_toolbelt", version = "2.1.2", repo_name = "toolbelt")
 bazel_dep(name = "coroutines", version = "3.3.2")
 
 # protobuf pulls an older rules_go via gazelle; Bazel 9 needs a current rules_go.

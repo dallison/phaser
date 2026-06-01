@@ -2,6 +2,8 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["valgrind.supp"])
+
 cc_library(
     name = "test_helpers",
     hdrs = ["test_helpers.h"],
@@ -15,6 +17,7 @@ cc_test(
     srcs = [
         "phaser_test.cc",
     ],
+    data = ["valgrind.supp"],
     deps = [
         ":test_helpers",
         "//phaser/runtime:phaser_runtime",
@@ -29,6 +32,7 @@ cc_test(
 cc_test(
     name = "all_types_test",
     srcs = ["all_types_test.cc"],
+    data = ["valgrind.supp"],
     deps = [
         ":test_helpers",
         "//phaser/runtime:phaser_runtime",
@@ -44,6 +48,7 @@ cc_test(
     size = "medium",
     timeout = "moderate",
     srcs = ["stress_test.cc"],
+    data = ["valgrind.supp"],
     deps = [
         ":test_helpers",
         "//phaser/runtime:phaser_runtime",

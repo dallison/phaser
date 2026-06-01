@@ -38,7 +38,11 @@ DEFINE_PRIMITIVE_FIELD_STREAMER(Bool)
 inline std::string StringWithOctalNonPrintables(std::string_view str) {
   std::string result;
   for (char c : str) {
-    if (c >= 32 && c < 127) {
+    if (c == '\\' || c == '\'' || c == '"') {
+      // Printable characters that protobuf still escapes with a backslash.
+      result.push_back('\\');
+      result.push_back(c);
+    } else if (c >= 32 && c < 127) {
       result.push_back(c);
     } else {
       // Cast to unsigned to avoid sign extension.

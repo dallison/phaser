@@ -105,6 +105,7 @@ public:
       if (!embedded.ok()) {
         return 0;
       }
+      std::unique_ptr<const Message> embedded_owner(*embedded);
       absl::StatusOr<size_t> inner_size =
           PhaserBankSerializedSize(MessageTypeName(), **embedded);
       if (!inner_size.ok()) {
@@ -126,6 +127,7 @@ public:
       if (!embedded.ok()) {
         return embedded.status();
       }
+      std::unique_ptr<const Message> embedded_owner(*embedded);
       const std::string type = MessageTypeName();
       absl::StatusOr<size_t> inner_size =
           PhaserBankSerializedSize(type, **embedded);
@@ -218,11 +220,13 @@ public:
       if (!dest.ok()) {
         return dest.status();
       }
+      std::unique_ptr<Message> dest_owner(*dest);
       absl::StatusOr<const Message *> src =
           PhaserBankMakeExisting(type, msg.runtime, msg.value().data());
       if (!src.ok()) {
         return src.status();
       }
+      std::unique_ptr<const Message> src_owner(*src);
       return PhaserBankCopy(type, **src, **dest);
     }
     return absl::OkStatus();
@@ -349,6 +353,7 @@ private:
     if (!embedded.ok()) {
       return embedded.status();
     }
+    std::unique_ptr<Message> embedded_owner(*embedded);
     ProtoBuffer sub(wire);
     return PhaserBankDeserializeFromBuffer(type, **embedded, sub);
   }

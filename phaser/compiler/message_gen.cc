@@ -1741,10 +1741,10 @@ void MessageGenerator::GeneratePhaserBank(std::ostream &os) {
   os << "  .binary_size = " << MessageName(message_) << "BinarySize,\n";
   os << "  .message_info = " << MessageName(message_) << "GetMessageInfo,\n";
   os << "  .has_field = " << MessageName(message_) << "HasField,\n";
-  os << "  .get_field_by_number = " << MessageName(message_)
-     << "GetFieldByNumber,\n";
   os << "  .get_field_by_name = " << MessageName(message_)
      << "GetFieldByName,\n";
+  os << "  .get_field_by_number = " << MessageName(message_)
+     << "GetFieldByNumber,\n";
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";

@@ -24,7 +24,7 @@ TEST(StressTest, DynamicStringPressure) {
 
 TEST(StressTest, FixedBufferTuningSizeMode) {
   constexpr size_t kBufSize = 4096;
-  char *buffer = static_cast<char *>(malloc(kBufSize));
+  char *buffer = static_cast<char *>(calloc(kBufSize, 1));
   ASSERT_NE(nullptr, buffer);
 
   TestMessage msg = TestMessage::CreateMutable(buffer, kBufSize,

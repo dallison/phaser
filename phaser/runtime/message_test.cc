@@ -1260,7 +1260,7 @@ static struct TestMessageBankRegister {
 } TestMessage_bank_register;
 
 TEST(MessageTest, Basic) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   msg.DebugDump();
 
@@ -1292,7 +1292,7 @@ TEST(MessageTest, Basic) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)malloc(4096);
+    char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
     TestMessage msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1312,12 +1312,13 @@ TEST(MessageTest, Basic) {
     auto &inner2 = msg.m_.Get();
     ASSERT_EQ("Inner message", inner2.str_.Get());
     ASSERT_EQ(0xdeadbeef, inner2.f_.Get());
+    free(buffer2);
   }
   free(buffer);
 }
 
 TEST(MessageTest, RepeatedPrimitive) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   // This field is absent.
@@ -1337,7 +1338,7 @@ TEST(MessageTest, RepeatedPrimitive) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)malloc(4096);
+    char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
     TestMessage msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1348,12 +1349,13 @@ TEST(MessageTest, RepeatedPrimitive) {
     }
     ASSERT_EQ(1, msg.vi32_.Get(0));
     ASSERT_EQ(2, msg.vi32_.Get(1));
+    free(buffer2);
   }
   free(buffer);
 }
 
 TEST(MessageTest, RepeatedString) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.DebugDump();
@@ -1379,7 +1381,7 @@ TEST(MessageTest, RepeatedString) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)malloc(4096);
+    char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
     TestMessage msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1392,12 +1394,13 @@ TEST(MessageTest, RepeatedString) {
     ASSERT_EQ("two", msg.vstr_.Get(1));
     ASSERT_EQ("three", msg.vstr_.Get(2));
     ASSERT_EQ("four", msg.vstr_.Get(3));
+    free(buffer2);
   }
   free(buffer);
 }
 
 TEST(MessageTest, RepeatedMessage) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   InnerMessage *inner1 = msg.vm_.Add();
@@ -1422,7 +1425,7 @@ TEST(MessageTest, RepeatedMessage) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)malloc(4096);
+    char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
     TestMessage msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1433,12 +1436,13 @@ TEST(MessageTest, RepeatedMessage) {
     auto &inner2 = msg.vm_.Get(2);
     ASSERT_EQ("two", inner2.str_.Get());
     ASSERT_EQ(0x1234, inner2.f_.Get());
+    free(buffer2);
   }
   free(buffer);
 }
 
 TEST(MessageTest, UnionField) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.u1_.Set<0>(1234);
@@ -1461,7 +1465,7 @@ TEST(MessageTest, UnionField) {
 }
 
 TEST(MessageTest, ClearBasic) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.x_.Set(1234);
@@ -1487,7 +1491,7 @@ TEST(MessageTest, ClearBasic) {
 }
 
 TEST(MessageTest, ClearRepeated) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.vi32_.Add(1);
@@ -1522,7 +1526,7 @@ TEST(MessageTest, ClearRepeated) {
 }
 
 TEST(MessageTest, ClearUnion) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.u1_.Set<0>(1234);
@@ -1542,7 +1546,7 @@ TEST(MessageTest, ClearUnion) {
 }
 
 TEST(MessageTest, ProtobufBasic) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.set_x(1234);
@@ -1565,7 +1569,7 @@ TEST(MessageTest, ProtobufBasic) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)malloc(4096);
+    char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
     TestMessage msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1578,12 +1582,13 @@ TEST(MessageTest, ProtobufBasic) {
     ASSERT_TRUE(msg.has_m());
     ASSERT_EQ("Inner message", msg.m().str());
     ASSERT_EQ(0xdeadbeef, msg.m().f());
+    free(buffer2);
   }
   free(buffer);
 }
 
 TEST(MessageTest, ProtobufSerializationSizeBasic) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.set_x(1); // Tag 100
@@ -1624,7 +1629,7 @@ TEST(MessageTest, ProtobufSerializationSizeBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeUnion) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.set_u1a(1234); // Tag 107.
@@ -1664,7 +1669,7 @@ TEST(MessageTest, ProtobufSerializationSizeUnion) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeRepeatedPrimitive) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   // Tag 104.
@@ -1702,7 +1707,7 @@ TEST(MessageTest, ProtobufSerializationSizeRepeatedPrimitive) {
 }
 
 TEST(MessageTest, ProtobufSerializationBasic) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1733,7 +1738,7 @@ TEST(MessageTest, ProtobufSerializationBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationRepeated) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1784,7 +1789,7 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
 }
 
 TEST(MessageTest, ProtobufSerializationUnion) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1828,7 +1833,7 @@ TEST(MessageTest, ProtobufDeserializationBasic) {
   std::string str = pb_msg.SerializeAsString();
   toolbelt::Hexdump(str.data(), str.size());
 
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1868,7 +1873,7 @@ TEST(MessageTest, ProtobufDeserializationRepeated) {
   std::string str = pb_msg.SerializeAsString();
   toolbelt::Hexdump(str.data(), str.size());
 
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1899,7 +1904,7 @@ TEST(MessageTest, ProtobufDeserializationUnion) {
   std::string str = pb_msg.SerializeAsString();
   toolbelt::Hexdump(str.data(), str.size());
 
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1983,7 +1988,7 @@ TEST(MessageTest, Print) {
 }
 
 TEST(MessageTest, MessageInfo) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   InnerMessage msg = InnerMessage::CreateMutable(buffer, 4096);
   const ::phaser::MessageInfo *info = msg.GetMessageInfo();
   ASSERT_EQ("foo.bar.InnerMessage", info->full_name);
@@ -1994,7 +1999,7 @@ TEST(MessageTest, MessageInfo) {
 }
 
 TEST(MessageTest, PhaserBank) {
-  char *buffer = (char *)malloc(4096);
+  char *buffer = (char *)calloc(4096, 1);
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   auto status = ::phaser::PhaserBankAllocate<InnerMessage>(
       "foo.bar.InnerMessage", msg.runtime);
@@ -2004,6 +2009,8 @@ TEST(MessageTest, PhaserBank) {
   inner->set_str("Inner message");
 
   ASSERT_EQ("Inner message", msg.m().str());
+  delete inner;
+  free(buffer);
 }
 
 int main(int argc, char **argv) {
