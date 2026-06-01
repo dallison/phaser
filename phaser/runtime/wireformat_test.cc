@@ -79,7 +79,10 @@ TEST(Wireformat, SintVarintRoundTrip) {
   auto round_trip64 = [](int64_t v) {
     ProtoBuffer out;
     ASSERT_TRUE((out.SerializeRawVarint<int64_t, true>(v).ok()));
-    ProtoBuffer in(out.AsString());
+    // ProtoBuffer(std::string_view) does not own its storage, so the encoded
+    // string must outlive the reader.
+    std::string encoded = out.AsString();
+    ProtoBuffer in(encoded);
     absl::StatusOr<int64_t> decoded = in.DeserializeVarint<int64_t, true>();
     ASSERT_TRUE(decoded.ok());
     EXPECT_EQ(v, *decoded) << "int64 value " << v;
@@ -93,7 +96,8 @@ TEST(Wireformat, SintVarintRoundTrip) {
   auto round_trip32 = [](int32_t v) {
     ProtoBuffer out;
     ASSERT_TRUE((out.SerializeRawVarint<int32_t, true>(v).ok()));
-    ProtoBuffer in(out.AsString());
+    std::string encoded = out.AsString();
+    ProtoBuffer in(encoded);
     absl::StatusOr<int32_t> decoded = in.DeserializeVarint<int32_t, true>();
     ASSERT_TRUE(decoded.ok());
     EXPECT_EQ(v, *decoded) << "int32 value " << v;
