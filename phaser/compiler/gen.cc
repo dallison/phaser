@@ -61,7 +61,8 @@ bool CodeGenerator::Generate(
 
   Generator gen(file, added_namespace_, package_name_, target_name_);
 
-  std::string filename = GeneratedFilename(package_name_, target_name_, file->name());
+  std::string filename =
+      GeneratedFilename(package_name_, target_name_, std::string(file->name()));
 
   std::filesystem::path hp(filename);
   hp.replace_extension(".phaser.h");
@@ -129,7 +130,9 @@ Generator::Generator(const google::protobuf::FileDescriptor *file,
     : file_(file), added_namespace_(ns), package_name_(pn), target_name_(tn) {
   for (int i = 0; i < file->message_type_count(); i++) {
     message_gens_.push_back(
-        std::make_unique<MessageGenerator>(file->message_type(i), added_namespace_, file->package()));
+        std::make_unique<MessageGenerator>(
+            file->message_type(i), added_namespace_,
+            std::string(file->package())));
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {
@@ -141,7 +144,9 @@ void Generator::GenerateHeaders(std::ostream &os) {
   os << "#pragma once\n";
   os << "#include \"phaser/runtime/runtime.h\"\n";
   for (int i = 0; i < file_->dependency_count(); i++) {
-    std::string base = GeneratedFilename(package_name_, target_name_, file_->dependency(i)->name());
+    std::string base = GeneratedFilename(
+        package_name_, target_name_,
+        std::string(file_->dependency(i)->name()));
     std::filesystem::path p(base);
     p.replace_extension(".phaser.h");
     os << "#include \"" << p.string() << "\"\n";
@@ -166,7 +171,8 @@ void Generator::GenerateHeaders(std::ostream &os) {
 }
 
 void Generator::GenerateSources(std::ostream &os) {
-  std::filesystem::path p(GeneratedFilename(package_name_, target_name_, file_->name()));
+  std::filesystem::path p(GeneratedFilename(
+      package_name_, target_name_, std::string(file_->name())));
   p.replace_extension(".phaser.h");
   os << "#include \"" << p.string() << "\"\n";
 

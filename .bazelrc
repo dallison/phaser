@@ -1,18 +1,41 @@
+# AddressSanitizer (clang): bazel test //phaser/... --config=asan
+# Do not pass -fsanitize to host/exec tools (protoc, plugins); that breaks codegen.
+# On Apple Silicon, build natively (omit --config=apple_silicon on Intel Macs).
+build:asan --config=apple_silicon
 build:asan --strip=never
-build:asan --copt -fsanitize=address
-build:asan --copt -DADDRESS_SANITIZER
-build:asan --copt -g
-build:asan --copt -fno-omit-frame-pointer
-build:asan --linkopt -fsanitize=address
+build:asan -c dbg
+build:asan --copt=-fsanitize=address
+build:asan --copt=-fno-omit-frame-pointer
+build:asan --linkopt=-fsanitize=address
+
+test:asan --test_output=errors
+# Leak detection is not supported by ASan on macOS.
+test:asan --test_env=ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:symbolize=1:fast_unwind_on_malloc=0
+
+build --enable_platform_specific_config
 
 # For all builds, use C++17
 build --cxxopt="-std=c++17"
 build --cxxopt='-Wno-sign-compare'
 build --host_cxxopt="-std=c++17"
 
-# For Apple Silicon
+# For Apple Silicon (required when Bazel itself is x86_64 under Rosetta).
 build:apple_silicon --cpu=darwin_arm64 --host_cpu=darwin_arm64 --host_cxxopt="-std=c++17"
+build:apple_silicon --copt=-arch
+build:apple_silicon --copt=arm64
+build:apple_silicon --linkopt=-arch
+build:apple_silicon --linkopt=arm64
+build:apple_silicon --host_copt=-arch
+build:apple_silicon --host_copt=arm64
+build:apple_silicon --host_linkopt=-arch
+build:apple_silicon --host_linkopt=arm64
 build:apple_silicon --features=oso_prefix_is_pwd
+
+# std::filesystem requires macOS 10.15+
+build:macos --cxxopt=-mmacosx-version-min=10.15
+build:macos --linkopt=-mmacosx-version-min=10.15
+build:macos --host_cxxopt=-mmacosx-version-min=10.15
+build:macos --host_linkopt=-mmacosx-version-min=10.15
 
 # Common flags for Clang
 build:clang --action_env=BAZEL_COMPILER=clang

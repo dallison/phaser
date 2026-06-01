@@ -416,7 +416,7 @@ InnerMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
 static std::pair<Message *, toolbelt::BufferOffset>
 InnerMessageAllocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {
   void *addr = toolbelt::PayloadBuffer::Allocate(
-      &runtime->pb, InnerMessage::BinarySize(), 8, true);
+      &runtime->pb, InnerMessage::BinarySize());
   toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
   auto msg = new InnerMessage(runtime, offset);
   msg->InstallMetadata<InnerMessage>();
@@ -1213,7 +1213,7 @@ TestMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
 static std::pair<Message *, toolbelt::BufferOffset>
 TestMessageAllocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {
   void *addr = toolbelt::PayloadBuffer::Allocate(
-      &runtime->pb, TestMessage::BinarySize(), 8, true);
+      &runtime->pb, TestMessage::BinarySize());
   toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
   auto msg = new TestMessage(runtime, offset);
   msg->InstallMetadata<TestMessage>();

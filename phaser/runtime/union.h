@@ -339,7 +339,7 @@ public:
     }
     // Allocate a new message.
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(runtime), MessageType::BinarySize(), 8);
+        GetBufferAddr(runtime), MessageType::BinarySize());
     ::toolbelt::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
@@ -387,7 +387,7 @@ public:
     }
     // Allocate a new message.
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(runtime), MessageType::BinarySize(), 8);
+        GetBufferAddr(runtime), MessageType::BinarySize());
     ::toolbelt::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
@@ -447,7 +447,7 @@ public:
       return s.status();
     }
     void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(runtime), MessageType::BinarySize(), 8);
+        GetBufferAddr(runtime), MessageType::BinarySize());
     ::toolbelt::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.

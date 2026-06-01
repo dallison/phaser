@@ -12,6 +12,7 @@
 #include <string.h>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace phaser {
 
@@ -116,18 +117,29 @@ public:
     return VarintSize<int32_t, false>(MakeTag(field_number, wire_type));
   }
 
-  template <typename T, bool Signed> static size_t VarintSize(T value) {
+  template <typename T, bool Signed> static uint64_t ToVarintWire(T value) {
     if (Signed) {
-      value = ZigZag(value);
+      return static_cast<uint64_t>(ZigZag(value));
     }
+    if constexpr (std::is_same_v<T, bool>) {
+      return static_cast<uint8_t>(value);
+    }
+    if constexpr (std::is_signed_v<T>) {
+      // Protobuf int32/int64 varints sign-extend to 64 bits when negative.
+      return static_cast<uint64_t>(static_cast<int64_t>(value));
+    }
+    return static_cast<uint64_t>(value);
+  }
+
+  template <typename T, bool Signed> static size_t VarintSize(T value) {
+    uint64_t uvalue = ToVarintWire<T, Signed>(value);
     size_t size = 0;
     for (;;) {
-      if ((value & ~0x7f) == 0) {
+      if ((uvalue & ~uint64_t(0x7f)) == 0) {
         return size + 1;
-      } else {
-        size++;
-        value >>= 7;
       }
+      size++;
+      uvalue >>= 7;
     }
   }
 
@@ -143,20 +155,18 @@ public:
   // Serialization functions.
 
   template <typename T, bool Signed> absl::Status SerializeRawVarint(T value) {
-    if (Signed) {
-      value = ZigZag(value);
-    }
-    if (auto status = HasSpaceFor(VarintSize<T, false>(value)); !status.ok()) {
+    uint64_t uvalue = ToVarintWire<T, Signed>(value);
+    if (auto status = HasSpaceFor(VarintSize<uint64_t, false>(uvalue));
+        !status.ok()) {
       return status;
     }
     for (;;) {
-      if ((value & ~0x7f) == 0) {
-        *addr_++ = static_cast<char>(value);
+      if ((uvalue & ~uint64_t(0x7f)) == 0) {
+        *addr_++ = static_cast<char>(uvalue);
         break;
-      } else {
-        *addr_++ = static_cast<char>((value & 0xfF) | 0x80);
-        value >>= 7;
       }
+      *addr_++ = static_cast<char>((uvalue & 0x7f) | 0x80);
+      uvalue >>= 7;
     }
     return absl::OkStatus();
   }
@@ -283,15 +293,24 @@ public:
 
   // Tag has already been read.
   template <typename T, bool Signed> absl::StatusOr<T> DeserializeVarint() {
-    uint32_t value = 0;
-    for (int shift = 0; shift < sizeof(T) * 8; shift += 7) {
+    uint64_t value = 0;
+    for (int shift = 0; shift < 64; shift += 7) {
       if (absl::Status status = Check(1); !status.ok()) {
         return status;
       }
-      uint32_t byte = *addr_++;
+      uint64_t byte = static_cast<uint8_t>(*addr_++);
       value |= (byte & 0x7f) << shift;
       if ((byte & 0x80) == 0) {
-        return Signed ? ZagZig(value) : value;
+        if constexpr (Signed) {
+          if constexpr (std::is_same_v<T, bool>) {
+            return static_cast<T>(value != 0);
+          } else {
+            using ST = std::make_signed_t<T>;
+            return static_cast<T>(ZagZig(static_cast<ST>(value)));
+          }
+        } else {
+          return static_cast<T>(value);
+        }
       }
     }
     return absl::InternalError("Varint too long");

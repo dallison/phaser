@@ -3,8 +3,15 @@ This module provides a rule to generate phaser message files from proto_library 
 """
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
+load("@com_google_protobuf//bazel/common:proto_info.bzl", "ProtoInfo")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 
-MessageInfo = provider(fields = ["direct_sources", "transitive_sources", "cpp_outputs"])
+MessageInfo = provider(fields = [
+    "direct_sources",
+    "transitive_sources",
+    "cpp_outputs",
+    "symlink_headers",
+])
 
 def _phaser_action(
         ctx,
@@ -59,37 +66,51 @@ def _phaser_action(
 
 # This aspect generates the MessageInfo provider containing the files we
 # will generate from running the Phaser plugin.
+def _to_list(value):
+    if type(value) == "list":
+        return value
+    return value.to_list()
+
+def _proto_output_base(source_file):
+    file_path = source_file.short_path
+    if "_virtual_imports" in file_path:
+        # For a file that is not in this package, we need to generate the
+        # output in our package.
+        # The path looks like:
+        # ../com_google_protobuf/_virtual_imports/any_proto/google/protobuf/any.proto
+        # We want to declare the file as:
+        # google/protobuf/any.phaser.cc
+        v = file_path.split("_virtual_imports/")
+
+        # Remove the first directory of v[1] to get the path relative to the package.
+        file_path = v[1].split("/", 1)[1]
+    return file_path
+
 def _phaser_aspect_impl(target, _ctx):
     direct_sources = []
     transitive_sources = depset()
     cpp_outputs = []
+    symlink_headers = []
 
-    def add_output(base):
+    def add_output(base, symlink):
         cpp_outputs.append(paths.replace_extension(base, ".phaser.cc"))
-        cpp_outputs.append(paths.replace_extension(base, ".phaser.h"))
+        header = paths.replace_extension(base, ".phaser.h")
+        cpp_outputs.append(header)
+        if symlink:
+            symlink_headers.append(header)
 
     if ProtoInfo in target:
         transitive_sources = target[ProtoInfo].transitive_sources
-        for s in transitive_sources.to_list():
+        direct_paths = {s.path: True for s in _to_list(target[ProtoInfo].direct_sources)}
+        for s in _to_list(transitive_sources):
             direct_sources.append(s)
-            file_path = s.short_path
-            if "_virtual_imports" in file_path:
-                # For a file that is not in this package, we need to generate the
-                # output in our package.
-                # The path looks like:
-                # ../com_google_protobuf/_virtual_imports/any_proto/google/protobuf/any.proto
-                # We want to declare the file as:ƒ
-                # google/protobuf/any.phaser.cc
-                v = file_path.split("_virtual_imports/")
-
-                # Remove the first directory of v[1] to get the path relative to the package.
-                file_path = v[1].split("/", 1)[1]
-            add_output(file_path)
+            add_output(_proto_output_base(s), s.path in direct_paths)
 
     return [MessageInfo(
         direct_sources = direct_sources,
         transitive_sources = transitive_sources,
         cpp_outputs = cpp_outputs,
+        symlink_headers = symlink_headers,
     )]
 
 phaser_aspect = aspect(
@@ -121,7 +142,7 @@ def _phaser_impl(ctx):
             # #include "phaser/testdata/Test.phaser.h"
             # so we create the symlink:
             # Test.phaser.h -> phaser/testdata/phaser/testdata/Test.phaser.h
-            if out_file.extension == "h":
+            if out_file.extension == "h" and out in dep[MessageInfo].symlink_headers:
                 prefix = paths.join(ctx.attr.target_name, package_name)
                 symlink_name = out_file.short_path[len(prefix) + 1:]
                 if symlink_name.startswith(package_name):
@@ -233,7 +254,7 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
     if runtime != "":
         libdeps = libdeps + [runtime]
 
-    native.cc_library(
+    cc_library(
         name = name,
         srcs = [srcs],
         hdrs = [hdrs],

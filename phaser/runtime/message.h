@@ -169,8 +169,10 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
                                std::function<void(void *)> free)
       : MutableMessageRuntime(p), free_(std::move(free)) {}
   ~DynamicMutableMessageRuntime() override {
-    if (free_ != nullptr)
+    if (free_ != nullptr) {
+      pb->~PayloadBuffer();
       free_(pb);
+    }
   }
   std::function<void(void *)> free_;
 };
@@ -297,16 +299,16 @@ struct Message {
   }
 
   void *Allocate(size_t size, size_t alignment = 4, bool clear = true) {
-    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, alignment,
-                                             clear);
+    (void)alignment;
+    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, clear);
   }
 
   void Free(void *ptr) { runtime->pb->Free(ptr); }
 
   void *Realloc(void *ptr, size_t size, size_t alignment = 4,
                 bool clear = true) {
-    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, alignment,
-                                            clear);
+    (void)alignment;
+    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, clear);
   }
 
   toolbelt::BufferOffset ToOffset(void *addr) {
@@ -329,7 +331,7 @@ struct Message {
 
     // Allocate space for field data in the payload buffer and copy it in.
     void *fields = ::toolbelt::PayloadBuffer::Allocate(
-        &runtime->pb, sizeof(MessageType::field_data), 4, false);
+        &runtime->pb, sizeof(MessageType::field_data), false);
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
     ::toolbelt::BufferOffset *header =
         runtime->pb->ToAddress<::toolbelt::BufferOffset>(

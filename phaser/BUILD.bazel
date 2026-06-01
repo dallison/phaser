@@ -1,4 +1,14 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
 package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "test_helpers",
+    hdrs = ["test_helpers.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+    ],
+)
 
 cc_test(
     name = "phaser_test",
@@ -6,6 +16,7 @@ cc_test(
         "phaser_test.cc",
     ],
     deps = [
+        ":test_helpers",
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:test_message_cc_proto",
         "//phaser/testdata:test_message_phaser",
@@ -16,7 +27,36 @@ cc_test(
 )
 
 cc_test(
+    name = "all_types_test",
+    srcs = ["all_types_test.cc"],
+    deps = [
+        ":test_helpers",
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:coverage_cc_proto",
+        "//phaser/testdata:coverage_phaser",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "stress_test",
+    size = "medium",
+    timeout = "moderate",
+    srcs = ["stress_test.cc"],
+    deps = [
+        ":test_helpers",
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:test_message_phaser",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "perf_test",
+    size = "large",
+    timeout = "long",
     srcs = [
         "perf_test.cc",
     ],

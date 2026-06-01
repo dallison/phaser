@@ -16,6 +16,8 @@ TEST(Wireformat, Sizes) {
   ASSERT_EQ(1, (ProtoBuffer::VarintSize<int32_t, false>(1)));
   ASSERT_EQ(2, (ProtoBuffer::VarintSize<int32_t, false>(0x80)));
   ASSERT_EQ(3, (ProtoBuffer::VarintSize<int32_t, false>(0x8000)));
+  // int32 varints use unsigned encoding (10 bytes for negative values).
+  ASSERT_EQ(10, (ProtoBuffer::VarintSize<int32_t, false>(-123456)));
 
   ASSERT_EQ(1, ProtoBuffer::TagSize(1, WireType::kVarint));
   ASSERT_EQ(1, ProtoBuffer::TagSize(0xf, WireType::kVarint));

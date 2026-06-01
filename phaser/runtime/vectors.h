@@ -789,7 +789,7 @@ public:
   T *Add() {
     // Allocate a new message.
     void *binary = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(), T::BinarySize(), 8, true);
+        GetBufferAddr(), T::BinarySize());
     ::toolbelt::BufferOffset absolute_binary_offset =
         GetRuntime()->ToOffset(binary);
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
@@ -811,7 +811,7 @@ public:
 
     if (msgs_[index].IsPlaceholder()) {
       void *binary = ::toolbelt::PayloadBuffer::Allocate(
-          GetBufferAddr(), T::BinarySize(), 8, true);
+          GetBufferAddr(), T::BinarySize());
       ::toolbelt::BufferOffset absolute_binary_offset =
           GetRuntime()->ToOffset(binary);
 
@@ -1118,7 +1118,7 @@ public:
   template <typename Str> void push_back(Str s) {
     // Allocate string header in buffer.
     void *str_hdr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(), sizeof(toolbelt::StringHeader), 4);
+        GetBufferAddr(), sizeof(toolbelt::StringHeader));
     ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
     ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s, hdr_offset);
 
@@ -1147,7 +1147,7 @@ public:
     if (strings_[index].IsPlaceholder()) {
       // Allocate string header in buffer.
       void *str_hdr = ::toolbelt::PayloadBuffer::Allocate(
-          GetBufferAddr(), sizeof(toolbelt::StringHeader), 4);
+          GetBufferAddr(), sizeof(toolbelt::StringHeader));
       ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
 
       auto hdr = Header();

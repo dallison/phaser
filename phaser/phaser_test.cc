@@ -3,6 +3,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
+#include "test_helpers.h"
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
@@ -86,6 +87,8 @@ TEST(PhaserTest, ProtobufCompat) {
 
   std::string pb_debug_string = msg2.DebugString();
   std::string phaser_debug_string = msg.DebugString();
+  phaser::test::StripProtobufDebugRedaction(pb_debug_string);
+  phaser::test::StripProtobufDebugRedaction(phaser_debug_string);
   ASSERT_EQ(pb_debug_string, phaser_debug_string);
 }
 
@@ -261,6 +264,8 @@ TEST(PhaserTest, Any) {
 
   std::string pb_debug_string = msg4.DebugString();
   std::string phaser_debug_string = msg.DebugString();
+  phaser::test::StripProtobufDebugRedaction(pb_debug_string);
+  phaser::test::StripProtobufDebugRedaction(phaser_debug_string);
   ASSERT_EQ(pb_debug_string, phaser_debug_string);
 }
 

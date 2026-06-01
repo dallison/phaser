@@ -9,13 +9,17 @@
 // 1. A string called 'type_url' that specifies the type of the message
 // 2. A bytes field called 'value' that contains a message.
 //
-// In regular protobuf, the 'value' field is a serialized message, but
-// in phaser, the value is the binary of the message.
+// In memory, `value` holds phaser binary (zero-copy via PackFrom / As / MutableAny).
+// On protobuf wire, `value` is length-delimited *protobuf* bytes of the inner
+// message; Serialize/Deserialize transcode at this boundary.
 //
 #include "phaser/runtime/fields.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "toolbelt/hexdump.h"
 #include <stddef.h>
+#include <optional>
+#include <string>
+#include <utility>
 
 namespace phaser {
 
@@ -97,12 +101,16 @@ public:
       size += type_url_.SerializedSize();
     }
     if (value_.IsPresent()) {
-      absl::StatusOr<size_t> value_size =
-          PhaserBankSerializedSize(std::string(type_url()), As<Message>());
-      if (!value_size.ok()) {
+      absl::StatusOr<const Message *> embedded = EmbeddedMessageForWire();
+      if (!embedded.ok()) {
         return 0;
       }
-      size += *value_size;
+      absl::StatusOr<size_t> inner_size =
+          PhaserBankSerializedSize(MessageTypeName(), **embedded);
+      if (!inner_size.ok()) {
+        return 0;
+      }
+      size += ProtoBuffer::LengthDelimitedSize(2, *inner_size);
     }
     return size;
   }
@@ -114,8 +122,23 @@ public:
       }
     }
     if (value_.IsPresent()) {
-      if (absl::Status status = PhaserBankSerializeToBuffer(
-              std::string(type_url()), As<Message>(), buffer);
+      absl::StatusOr<const Message *> embedded = EmbeddedMessageForWire();
+      if (!embedded.ok()) {
+        return embedded.status();
+      }
+      const std::string type = MessageTypeName();
+      absl::StatusOr<size_t> inner_size =
+          PhaserBankSerializedSize(type, **embedded);
+      if (!inner_size.ok()) {
+        return inner_size.status();
+      }
+      if (absl::Status status =
+              buffer.SerializeLengthDelimitedHeader(2, *inner_size);
+          !status.ok()) {
+        return status;
+      }
+      if (absl::Status status =
+              PhaserBankSerializeToBuffer(type, **embedded, buffer);
           !status.ok()) {
         return status;
       }
@@ -124,6 +147,12 @@ public:
   }
 
   absl::Status Deserialize(phaser::ProtoBuffer &buffer) {
+    clear_type_url();
+    clear_value();
+
+    std::optional<std::string> pending_type_url;
+    std::optional<std::string> pending_wire_value;
+
     while (!buffer.Eof()) {
       absl::StatusOr<uint32_t> tag =
           buffer.DeserializeVarint<uint32_t, false>();
@@ -132,25 +161,22 @@ public:
       }
       uint32_t field_number = *tag >> phaser::ProtoBuffer::kFieldIdShift;
       switch (field_number) {
-      case 1:
-        if (absl::Status status = type_url_.Deserialize(buffer); !status.ok()) {
-          return status;
+      case 1: {
+        absl::StatusOr<std::string_view> url = buffer.DeserializeString();
+        if (!url.ok()) {
+          return url.status();
         }
+        pending_type_url = std::string(*url);
         break;
+      }
       case 2: {
-        std::string type = MessageTypeName();
-
-        absl::StatusOr<Message *> d = BuildMessageInstanceInValue();
-        if (!d.ok()) {
-          return d.status();
+        absl::StatusOr<absl::Span<char>> wire =
+            buffer.DeserializeLengthDelimited();
+        if (!wire.ok()) {
+          return wire.status();
         }
-
-        std::unique_ptr<Message> msg(*d);
-        if (absl::Status status =
-                PhaserBankDeserializeFromBuffer(type, *msg, buffer);
-            !status.ok()) {
-          return status;
-        }
+        pending_wire_value =
+            std::string(wire->data(), wire->data() + wire->size());
         break;
       }
       default:
@@ -158,6 +184,13 @@ public:
           return status;
         }
       }
+    }
+
+    if (pending_type_url) {
+      type_url_.Set(*pending_type_url);
+    }
+    if (pending_wire_value) {
+      return MaterializeValueFromProtobufWire(*pending_wire_value);
     }
     return absl::OkStatus();
   }
@@ -176,23 +209,21 @@ public:
       type_url_.Set(msg.type_url());
     }
     if (msg.has_value()) {
-      std::string type = MessageTypeName();
-      absl::StatusOr<Message *> d = BuildMessageInstanceInValue();
-      if (!d.ok()) {
-        return d.status();
+      if (!msg.has_type_url()) {
+        return absl::FailedPreconditionError(
+            "Any value without type_url cannot be cloned");
       }
-
-      std::unique_ptr<Message> dest(*d);
-      absl::StatusOr<const Message *> s =
+      const std::string type = msg.MessageTypeName();
+      absl::StatusOr<Message *> dest = AllocateEmbeddedMessage(type);
+      if (!dest.ok()) {
+        return dest.status();
+      }
+      absl::StatusOr<const Message *> src =
           PhaserBankMakeExisting(type, msg.runtime, msg.value().data());
-      if (!s.ok()) {
-        return s.status();
+      if (!src.ok()) {
+        return src.status();
       }
-      std::unique_ptr<const Message> src(*s);
-      if (absl::Status status = PhaserBankCopy(type, *src, *dest);
-          !status.ok()) {
-        return status;
-      }
+      return PhaserBankCopy(type, **src, **dest);
     }
     return absl::OkStatus();
   }
@@ -254,34 +285,72 @@ public:
     return msg;
   }
 
+  bool ParseFromArray(const char *array, size_t size) {
+    ProtoBuffer buffer(array, size);
+    if (absl::Status status = Deserialize(buffer); !status.ok()) {
+      return false;
+    }
+    return true;
+  }
+
+  bool ParseFromString(const std::string &str) {
+    return ParseFromArray(str.data(), str.size());
+  }
+
+  bool SerializeToString(std::string *str) const {
+    size_t size = SerializedSize();
+    str->resize(size);
+    return SerializeToArray(&(*str)[0], size);
+  }
+
+  std::string SerializeAsString() const {
+    std::string str;
+    SerializeToString(&str);
+    return str;
+  }
+
+  bool SerializeToArray(char *array, size_t size) const {
+    ProtoBuffer buffer(array, size);
+    if (absl::Status status = Serialize(buffer); !status.ok()) {
+      return false;
+    }
+    return true;
+  }
+
 private:
-  absl::StatusOr<Message *> BuildMessageInstanceInValue() {
-    std::string type = MessageTypeName();
-    // Allocate space in this payload buffer with space for the string
-    // length. The message data will be stored in a string field, which
-    // needs the length before the data.
+  static constexpr int kValueFieldNumber = 2;
+
+  absl::StatusOr<const Message *> EmbeddedMessageForWire() const {
+    if (!has_type_url() || !has_value()) {
+      return absl::FailedPreconditionError(
+          "Any is missing type_url or embedded value");
+    }
+    const std::string type = MessageTypeName();
+    return PhaserBankMakeExisting(type, runtime, value().data());
+  }
+
+  absl::StatusOr<Message *> AllocateEmbeddedMessage(const std::string &type) {
     absl::StatusOr<size_t> binary_size = PhaserBankBinarySize(type);
     if (!binary_size.ok()) {
       return binary_size.status();
     }
-    char *memory = reinterpret_cast<char *>(::toolbelt::PayloadBuffer::Allocate(
-        &runtime->pb, *binary_size + 4, 4, true));
-    // Place the message after the string length field.
-    absl::StatusOr<Message *> d = PhaserBankAllocateAtOffset(
-        type, runtime, runtime->ToOffset(memory + 4));
-    if (!d.ok()) {
-      return d.status();
+    absl::Span<char> memory = value_.Allocate(*binary_size, true);
+    return PhaserBankAllocateAtOffset(type, runtime,
+                                      runtime->ToOffset(memory.data()));
+  }
+
+  absl::Status MaterializeValueFromProtobufWire(const std::string &wire) {
+    if (!has_type_url()) {
+      return absl::InvalidArgumentError(
+          "Any value on wire requires type_url");
     }
-
-    // Write the length of the string into the first 4 bytes of the
-    // allocatedmemory
-    uint32_t *string_length = reinterpret_cast<uint32_t *>(memory);
-    *string_length = *binary_size;
-    // Set the string indirect field to the address of the string length
-    // field.
-    value_.SetNoCopy(memory);
-
-    return d;
+    const std::string type = MessageTypeName();
+    absl::StatusOr<Message *> embedded = AllocateEmbeddedMessage(type);
+    if (!embedded.ok()) {
+      return embedded.status();
+    }
+    ProtoBuffer sub(wire);
+    return PhaserBankDeserializeFromBuffer(type, **embedded, sub);
   }
 
   phaser::StringField type_url_;
@@ -308,6 +377,12 @@ public:
 
   template <typename T> bool UnpackTo(T *msg) const {
     return msg_.UnpackTo(msg);
+  }
+
+  bool ParseFromString(const std::string &str) { return msg_.ParseFromString(str); }
+
+  bool SerializeToString(std::string *str) const {
+    return msg_.SerializeToString(str);
   }
 
   template <typename T> bool Is() const { return msg_.Is<T>(); }
