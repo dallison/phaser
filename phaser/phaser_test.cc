@@ -53,7 +53,7 @@ TEST(PhaserTest, ProtobufCompat) {
 
   msg.set_e(foo::bar::phaser::FOO);
 
-  msg.set_fl(1.3);
+  msg.set_fl(1.3f);
   msg.set_db(2.4);
 
   std::cout << msg;
@@ -79,7 +79,7 @@ TEST(PhaserTest, ProtobufCompat) {
 
   // Deserialize from a string into a protobuf message.
   foo::bar::TestMessage msg2;
-  msg2.ParseFromString(serialized);
+  ASSERT_TRUE(msg2.ParseFromString(serialized));
   ASSERT_EQ(msg2.x(), msg.x());
   ASSERT_EQ(msg2.y(), msg.y());
   ASSERT_EQ(msg2.s(), msg.s());
@@ -344,8 +344,8 @@ TEST(PhaserTest, GarbageSmall) {
 TEST(PhaserTest, GarbageLoop) {
   char buffer[256];
   for (int i = 0; i < 1000; i++) {
-    for (int i = 0; i < 256; i++) {
-      buffer[i] = rand() & 0xff;
+    for (int j = 0; j < 256; j++) {
+      buffer[j] = rand() & 0xff;
     }
     auto msg =
         foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));

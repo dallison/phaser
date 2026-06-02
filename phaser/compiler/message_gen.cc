@@ -11,7 +11,7 @@
 
 namespace phaser {
 
-bool IsCppReservedWord(const std::string &s) {
+static bool IsCppReservedWord(const std::string &s) {
   static absl::flat_hash_set<std::string> reserved_words = {
       "alignas",
       "alignof",
@@ -545,6 +545,10 @@ void MessageGenerator::GenerateHeader(std::ostream &os) {
 
   os << "class " << MessageName(message_) << " : public ::phaser::Message {\n";
   os << " public:\n";
+  if (generate_active_message_) {
+    os << "  // Optional user-attached payload, not part of the wire format.\n";
+    os << "  std::any active_message;\n\n";
+  }
   // Generate constructors.
   GenerateConstructors(os, true);
   // Generate size functions.
@@ -1226,7 +1230,6 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
       std::cerr << "Groups are not supported\n";
       exit(1);
-      break;
     }
   }
 }
@@ -1455,15 +1458,15 @@ void MessageGenerator::GenerateStreamer(std::ostream &os) {
       auto u = std::static_pointer_cast<UnionInfo>(field);
       os << "  switch (msg." << u->member_name << ".Discriminator()) {\n";
       for (size_t i = 0; i < u->members.size(); i++) {
-        auto &field = u->members[i];
-        os << "  case " << field->field->number() << ":\n";
+        auto &member = u->members[i];
+        os << "  case " << member->field->number() << ":\n";
         os << "    msg." << u->member_name << ".PrintIndent(os);\n";
-        if (field->field->type() ==
+        if (member->field->type() ==
             google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-          os << "    os << \"" << field->field->name() << " \";\n";
+          os << "    os << \"" << member->field->name() << " \";\n";
         } else {
 
-          os << "    os << \"" << field->field->name() << ": \";\n";
+          os << "    os << \"" << member->field->name() << ": \";\n";
         }
         os << "    msg." << u->member_name << ".Print<" << i << ">(os);\n";
         os << "    os << std::endl;\n";
@@ -1867,8 +1870,8 @@ void MessageGenerator::GenerateMessageInfo(std::ostream &os, bool decl) {
          << index << "]);\n";
       os << "    u->fields_in_order.resize(" << u->members.size() << ");\n";
       for (size_t i = 0; i < u->members.size(); i++) {
-        auto &field = u->members[i];
-        GenerateFieldInfo(i, field, u, int(i), os);
+        auto &member = u->members[i];
+        GenerateFieldInfo(i, member, u, int(i), os);
       }
       os << R"XXX(  for (auto &f : u->fields_in_order) {
     info.fields_by_number[f->number] = f;

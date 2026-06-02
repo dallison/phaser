@@ -29,6 +29,8 @@ class Field {
 public:
   Field() = default;
   Field(int id, int number) : id_(id), number_(number) {}
+  Field(const Field &) = default;
+  Field &operator=(const Field &) = default;
   virtual ~Field() = default;
 
   // The presence bit is in a set of words immediately after
@@ -662,7 +664,7 @@ protected:
 
 template <typename MessageType> class MessageObject {
 public:
-  MessageObject() : msg_(InternalDefault{}){};
+  MessageObject() : msg_(InternalDefault{}) {}
   explicit MessageObject(std::shared_ptr<MessageRuntime> runtime,
                          uint32_t absolute_binary_offset)
       : msg_(runtime, absolute_binary_offset) {}

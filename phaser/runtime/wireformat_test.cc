@@ -65,7 +65,7 @@ TEST(Wireformat, ZigZagRoundTrip) {
         << "int32 value " << v;
   }
   for (int64_t v : {INT64_MIN, INT64_MIN + 1, int64_t(INT32_MIN) - 1,
-                    int64_t(INT32_MIN), int64_t(-1) << 40, int64_t(-1),
+                    int64_t(INT32_MIN), -(int64_t(1) << 40), int64_t(-1),
                     int64_t(0), int64_t(1), int64_t(1) << 31, int64_t(1) << 40,
                     int64_t(INT32_MAX) + 1, INT64_MAX - 1, INT64_MAX}) {
     EXPECT_EQ(v, ProtoBuffer::ZagZig<int64_t>(ProtoBuffer::ZigZag<int64_t>(v)))

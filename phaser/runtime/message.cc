@@ -105,9 +105,9 @@ absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
   memset(*buffer, 0, initial_size);
   ::toolbelt::PayloadBuffer *pb = new (*buffer)::toolbelt::PayloadBuffer(
       initial_size,
-      [ initial_size, realloc = std::move(realloc) ](
+      [ initial_size, realloc_fn = std::move(realloc) ](
           ::toolbelt::PayloadBuffer * *p, size_t old_size, size_t new_size) {
-        absl::StatusOr<void *> r = realloc(*p, old_size, new_size);
+        absl::StatusOr<void *> r = realloc_fn(*p, old_size, new_size);
         if (!r.ok()) {
           std::cerr << "Failed to resize PayloadBuffer from " << initial_size
                     << " to " << new_size << std::endl;

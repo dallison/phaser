@@ -228,7 +228,7 @@ void ExpectRepeatedPackedMatchPb(const PbRepeatedPacked &pb,
   }
 }
 
-void FillRepeatedUnpacked(RepeatedPrimitivesUnpacked &msg) {
+[[maybe_unused]] void FillRepeatedUnpacked(RepeatedPrimitivesUnpacked &msg) {
   for (int i = -5; i < 5; i++) {
     msg.add_vi32(i * 11);
   }
@@ -250,8 +250,9 @@ void ExpectRepeatedUnpackedMatchPb(const PbRepeatedUnpacked &pb,
   }
 }
 
-void ExpectRepeatedUnpackedMatchPb(const PbRepeatedUnpacked &a,
-                                   const PbRepeatedUnpacked &b) {
+[[maybe_unused]] void
+ExpectRepeatedUnpackedMatchPb(const PbRepeatedUnpacked &a,
+                             const PbRepeatedUnpacked &b) {
   ASSERT_EQ(a.vi32_size(), b.vi32_size());
   for (int i = 0; i < a.vi32_size(); i++) {
     EXPECT_EQ(a.vi32(i), b.vi32(i));
@@ -372,7 +373,7 @@ void FillImportsMessage(PbImportsMessage &msg, bool include_any = true) {
   if (include_any) {
     PbCoverageInner packed;
     FillCoverageInner(packed);
-    msg.mutable_any_field()->PackFrom(packed);
+    EXPECT_TRUE(msg.mutable_any_field()->PackFrom(packed));
   }
 }
 
@@ -450,8 +451,9 @@ void ExpectImportsMessageMatchPb(const PbImportsMessage &pb,
   ExpectCoverageInnerMatchPb(inner_pb, inner_msg);
 }
 
-void ExpectImportsMessageMatchPb(const PbImportsMessage &a,
-                                 const PbImportsMessage &b) {
+[[maybe_unused]] void
+ExpectImportsMessageMatchPb(const PbImportsMessage &a,
+                            const PbImportsMessage &b) {
   EXPECT_EQ(a.imported_foo().a(), b.imported_foo().a());
   EXPECT_EQ(a.imported_foo().b(), b.imported_foo().b());
   EXPECT_EQ(a.inner().str(), b.inner().str());
@@ -542,7 +544,7 @@ TEST(AllTypesTest, LargeSintWireCompat) {
   const int32_t kSint32Values[] = {INT32_MIN, -1000000, -1, 0, 1, 1000000,
                                     INT32_MAX};
   const int64_t kSint64Values[] = {
-      INT64_MIN,           int64_t(INT32_MIN) - 1, int64_t(-1) << 40,
+      INT64_MIN,           int64_t(INT32_MIN) - 1, -(int64_t(1) << 40),
       -1,                  0,                      1,
       int64_t(1) << 40,    int64_t(INT32_MAX) + 1, INT64_MAX};
 

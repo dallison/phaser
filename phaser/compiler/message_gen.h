@@ -37,24 +37,25 @@ struct UnionInfo : public FieldInfo {
   // Constructor
   UnionInfo(const google::protobuf::OneofDescriptor *o, uint32_t size,
             const std::string &name, const std::string &type)
-      : FieldInfo(nullptr, 0, 0, name, type, "", 4), oneof(o),
-        binary_size(size) {}
+      : FieldInfo(nullptr, 0, 0, name, type, "", size), oneof(o) {}
   bool IsUnion() const override { return true; }
   const google::protobuf::OneofDescriptor *oneof;
   std::vector<std::shared_ptr<FieldInfo>> members;
-  uint32_t binary_size;
 };
 
 class MessageGenerator {
 public:
   MessageGenerator(const google::protobuf::Descriptor *message,
                    const std::string &added_namespace,
-                   const std::string &package_name)
+                   const std::string &package_name,
+                   bool generate_active_message = false)
       : message_(message), added_namespace_(added_namespace),
-        package_name_(package_name) {
+        package_name_(package_name),
+        generate_active_message_(generate_active_message) {
     for (int i = 0; i < message_->nested_type_count(); i++) {
       nested_message_gens_.push_back(std::make_unique<MessageGenerator>(
-          message_->nested_type(i), added_namespace, package_name));
+          message_->nested_type(i), added_namespace, package_name,
+          generate_active_message));
     }
     // Enums
     for (int i = 0; i < message_->enum_type_count(); i++) {
@@ -136,6 +137,7 @@ private:
   uint32_t presence_mask_size_ = 0;
   std::string added_namespace_;
   std::string package_name_;
+  bool generate_active_message_ = false;
 };
 
 } // namespace phaser

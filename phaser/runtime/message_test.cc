@@ -47,16 +47,16 @@ struct EnumTestParser {
 };
 
 struct InnerMessage : public Message {
-  InnerMessage(phaser::InternalDefault d)
+  InnerMessage(phaser::InternalDefault /*d*/)
       : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
         e_(offsetof(InnerMessage, e_), HeaderSize() + 16, 2, 30),
         ev_(offsetof(InnerMessage, ev_), HeaderSize() + 20, 0, 40),
         uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0, {50, 60}) {}
 
-  InnerMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
+  InnerMessage(std::shared_ptr<phaser::MessageRuntime> rt,
                ::toolbelt::BufferOffset offset)
-      : Message(runtime, offset),
+      : Message(rt, offset),
         str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
         e_(offsetof(InnerMessage, e_), HeaderSize() + 16, 2, 30),
@@ -383,7 +383,7 @@ inline std::ostream &operator<<(std::ostream &os, const InnerMessage &msg) {
 }
 
 static void InnerMessageStreamTo(const Message &msg, std::ostream &os,
-                                 int indent) {
+                                 int /*indent*/) {
   const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
   os << *m;
 }
@@ -533,9 +533,9 @@ struct TestMessage : public Message {
     InitDynamicMutable(initial_size);
   }
 
-  TestMessage(std::shared_ptr<phaser::MessageRuntime> runtime,
+  TestMessage(std::shared_ptr<phaser::MessageRuntime> rt,
               ::toolbelt::BufferOffset offset)
-      : Message(runtime, offset),
+      : Message(rt, offset),
         x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
         y_(offsetof(TestMessage, y_), HeaderSize() + 8, 1, 101),
         s_(offsetof(TestMessage, s_), HeaderSize() + 16, 0, 102),
@@ -1179,7 +1179,7 @@ inline std::ostream &operator<<(std::ostream &os, const TestMessage &msg) {
 }
 
 static void TestMessageStreamTo(const Message &msg, std::ostream &os,
-                                int indent) {
+                                int /*indent*/) {
   const TestMessage *m = static_cast<const TestMessage *>(&msg);
   os << *m;
 }
@@ -1249,6 +1249,11 @@ static phaser::BankInfo kTestMessageBackInfo{
     .copy = TestMessageCopy,
     .make_existing = TestMessageMakeExisting,
     .binary_size = TestMessageBinarySize,
+    // This mock intentionally does not provide reflection metadata.
+    .message_info = nullptr,
+    .has_field = nullptr,
+    .get_field_by_name = nullptr,
+    .get_field_by_number = nullptr,
 };
 
 static struct TestMessageBankRegister {
@@ -1293,24 +1298,24 @@ TEST(MessageTest, Basic) {
   {
     char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
-    TestMessage msg = TestMessage::CreateReadonly(buffer2);
+    TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
-    ASSERT_TRUE(msg.x_.IsPresent());
-    uint32_t x = msg.x_.Get();
-    ASSERT_EQ(1234, x);
+    ASSERT_TRUE(ro_msg.x_.IsPresent());
+    uint32_t ro_x = ro_msg.x_.Get();
+    ASSERT_EQ(1234, ro_x);
 
-    ASSERT_TRUE(msg.y_.IsPresent());
-    uint64_t y = msg.y_.Get();
-    ASSERT_EQ(0xffff, y);
+    ASSERT_TRUE(ro_msg.y_.IsPresent());
+    uint64_t ro_y = ro_msg.y_.Get();
+    ASSERT_EQ(0xffff, ro_y);
 
-    ASSERT_TRUE(msg.s_.IsPresent());
-    std::string_view s = msg.s_.Get();
-    ASSERT_EQ("Hello, world!", s);
+    ASSERT_TRUE(ro_msg.s_.IsPresent());
+    std::string_view ro_s = ro_msg.s_.Get();
+    ASSERT_EQ("Hello, world!", ro_s);
 
-    ASSERT_TRUE(msg.m_.IsPresent());
-    auto &inner2 = msg.m_.Get();
-    ASSERT_EQ("Inner message", inner2.str_.Get());
-    ASSERT_EQ(0xdeadbeef, inner2.f_.Get());
+    ASSERT_TRUE(ro_msg.m_.IsPresent());
+    auto &ro_inner = ro_msg.m_.Get();
+    ASSERT_EQ("Inner message", ro_inner.str_.Get());
+    ASSERT_EQ(0xdeadbeef, ro_inner.f_.Get());
     free(buffer2);
   }
   free(buffer);
@@ -1339,15 +1344,15 @@ TEST(MessageTest, RepeatedPrimitive) {
   {
     char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
-    TestMessage msg = TestMessage::CreateReadonly(buffer2);
+    TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
-    int i = 1;
-    for (auto &v : msg.vi32_) {
-      ASSERT_EQ(i, v);
-      i++;
+    int ro_i = 1;
+    for (auto &v : ro_msg.vi32_) {
+      ASSERT_EQ(ro_i, v);
+      ro_i++;
     }
-    ASSERT_EQ(1, msg.vi32_.Get(0));
-    ASSERT_EQ(2, msg.vi32_.Get(1));
+    ASSERT_EQ(1, ro_msg.vi32_.Get(0));
+    ASSERT_EQ(2, ro_msg.vi32_.Get(1));
     free(buffer2);
   }
   free(buffer);
@@ -1382,17 +1387,17 @@ TEST(MessageTest, RepeatedString) {
   {
     char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
-    TestMessage msg = TestMessage::CreateReadonly(buffer2);
+    TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
-    int i = 0;
-    for (auto &v : msg.vstr_) {
-      ASSERT_EQ(strings[i], v.Get());
-      i++;
+    int ro_i = 0;
+    for (auto &v : ro_msg.vstr_) {
+      ASSERT_EQ(strings[ro_i], v.Get());
+      ro_i++;
     }
-    ASSERT_EQ("one", msg.vstr_.Get(0));
-    ASSERT_EQ("two", msg.vstr_.Get(1));
-    ASSERT_EQ("three", msg.vstr_.Get(2));
-    ASSERT_EQ("four", msg.vstr_.Get(3));
+    ASSERT_EQ("one", ro_msg.vstr_.Get(0));
+    ASSERT_EQ("two", ro_msg.vstr_.Get(1));
+    ASSERT_EQ("three", ro_msg.vstr_.Get(2));
+    ASSERT_EQ("four", ro_msg.vstr_.Get(3));
     free(buffer2);
   }
   free(buffer);
@@ -1413,28 +1418,28 @@ TEST(MessageTest, RepeatedMessage) {
   msg.DebugDump();
 
   {
-    auto &inner1 = msg.vm_.Get(0);
-    ASSERT_EQ("one", inner1.str_.Get());
-    ASSERT_EQ(0xdeadbeef, inner1.f_.Get());
+    auto &ro_inner1 = msg.vm_.Get(0);
+    ASSERT_EQ("one", ro_inner1.str_.Get());
+    ASSERT_EQ(0xdeadbeef, ro_inner1.f_.Get());
 
-    auto &inner2 = msg.vm_.Get(2);
-    ASSERT_EQ("two", inner2.str_.Get());
-    ASSERT_EQ(0x1234, inner2.f_.Get());
+    auto &ro_inner2 = msg.vm_.Get(2);
+    ASSERT_EQ("two", ro_inner2.str_.Get());
+    ASSERT_EQ(0x1234, ro_inner2.f_.Get());
   }
 
   // Copy message to test reading.
   {
     char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
-    TestMessage msg = TestMessage::CreateReadonly(buffer2);
+    TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
-    auto &inner1 = msg.vm_.Get(0);
-    ASSERT_EQ("one", inner1.str_.Get());
-    ASSERT_EQ(0xdeadbeef, inner1.f_.Get());
+    auto &ro_inner1 = ro_msg.vm_.Get(0);
+    ASSERT_EQ("one", ro_inner1.str_.Get());
+    ASSERT_EQ(0xdeadbeef, ro_inner1.f_.Get());
 
-    auto &inner2 = msg.vm_.Get(2);
-    ASSERT_EQ("two", inner2.str_.Get());
-    ASSERT_EQ(0x1234, inner2.f_.Get());
+    auto &ro_inner2 = ro_msg.vm_.Get(2);
+    ASSERT_EQ("two", ro_inner2.str_.Get());
+    ASSERT_EQ(0x1234, ro_inner2.f_.Get());
     free(buffer2);
   }
   free(buffer);
@@ -1628,17 +1633,17 @@ TEST(MessageTest, ProtobufBasic) {
   {
     char *buffer2 = (char *)calloc(4096, 1);
     memcpy(buffer2, buffer, 4096);
-    TestMessage msg = TestMessage::CreateReadonly(buffer2);
+    TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
-    ASSERT_TRUE(msg.has_x());
-    ASSERT_EQ(1234, msg.x());
-    ASSERT_TRUE(msg.has_y());
-    ASSERT_EQ(0xffff, msg.y());
-    ASSERT_TRUE(msg.has_s());
-    ASSERT_EQ("Hello, world!", msg.s());
-    ASSERT_TRUE(msg.has_m());
-    ASSERT_EQ("Inner message", msg.m().str());
-    ASSERT_EQ(0xdeadbeef, msg.m().f());
+    ASSERT_TRUE(ro_msg.has_x());
+    ASSERT_EQ(1234, ro_msg.x());
+    ASSERT_TRUE(ro_msg.has_y());
+    ASSERT_EQ(0xffff, ro_msg.y());
+    ASSERT_TRUE(ro_msg.has_s());
+    ASSERT_EQ("Hello, world!", ro_msg.s());
+    ASSERT_TRUE(ro_msg.has_m());
+    ASSERT_EQ("Inner message", ro_msg.m().str());
+    ASSERT_EQ(0xdeadbeef, ro_msg.m().f());
     free(buffer2);
   }
   free(buffer);

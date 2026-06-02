@@ -32,6 +32,17 @@ cc_test(
 )
 
 cc_test(
+    name = "active_message_test",
+    srcs = ["active_message_test.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:foo_active_message_phaser",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
     name = "all_types_test",
     srcs = ["all_types_test.cc"],
     copts = PHASER_COPTS,

@@ -228,6 +228,8 @@ struct Message {
   Message() = default;
   Message(std::shared_ptr<MessageRuntime> rt, ::toolbelt::BufferOffset start)
       : runtime(rt), absolute_binary_offset(start) {}
+  Message(const Message &) = default;
+  Message &operator=(const Message &) = default;
   virtual ~Message() = default;
 
   virtual const MessageInfo *GetMessageInfo() const { return nullptr; }

@@ -25,11 +25,14 @@ def _phaser_action(
     # The protobuf compiler allow plugins to get arguments specified in the --plugin_out
     # argument.  The args are passed as a comma separated list of key=value pairs followed
     # by a colon and the output directory.
-    options_and_out_dir = ""
+    options = []
     if add_namespace != "":
-        options_and_out_dir = "--phaser_out=add_namespace={},package_name={},target_name={}:{}".format(add_namespace, package_name, target_name, out_dir)
-    else:
-        options_and_out_dir = "--phaser_out=package_name={},target_name={}:{}".format(package_name, target_name, out_dir)
+        options.append("add_namespace={}".format(add_namespace))
+    options.append("package_name={}".format(package_name))
+    options.append("target_name={}".format(target_name))
+    if ctx.attr.enable_active_message:
+        options.append("active_message=true")
+    options_and_out_dir = "--phaser_out={}:{}".format(",".join(options), out_dir)
 
     inputs = depset(direct = direct_sources, transitive = transitive_sources)
 
@@ -191,6 +194,7 @@ _phaser_gen = rule(
         "add_namespace": attr.string(),
         "package_name": attr.string(),
         "target_name": attr.string(),
+        "enable_active_message": attr.bool(default = False),
     },
     implementation = _phaser_impl,
 )
@@ -211,7 +215,7 @@ _split_files = rule(
     implementation = _split_files_impl,
 )
 
-def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_runtime", add_namespace = ""):
+def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_runtime", add_namespace = "", enable_active_message = False):
     """
     Generate a cc_libary for protobuf files specified in deps.
 
@@ -221,6 +225,9 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
         deps: dependencies
         runtime: label for phaser runtime.
         add_namespace: add given namespace to the message output
+        enable_active_message: if True, generated message types get a public
+            `std::any active_message` field (also enableable via the
+            `active_message=true` plugin command-line option).
     """
     phaser = name + "_phaser"
 
@@ -230,6 +237,7 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
         add_namespace = add_namespace,
         package_name = native.package_name(),
         target_name = name,
+        enable_active_message = enable_active_message,
     )
 
     srcs = name + "_srcs"

@@ -58,10 +58,16 @@ bool CodeGenerator::Generate(
       package_name_ = option.second;
     } else if (option.first == "target_name") {
       target_name_ = option.second;
+    } else if (option.first == "active_message") {
+      // Bare flag or explicit truthy value enables the field.
+      generate_active_message_ =
+          option.second.empty() || option.second == "true" ||
+          option.second == "1";
    }
   }
 
-  Generator gen(file, added_namespace_, package_name_, target_name_);
+  Generator gen(file, added_namespace_, package_name_, target_name_,
+                generate_active_message_);
 
   std::string filename =
       GeneratedFilename(package_name_, target_name_, std::string(file->name()));
@@ -128,13 +134,14 @@ void Generator::CloseNamespace(std::ostream &os) {
 
 Generator::Generator(const google::protobuf::FileDescriptor *file,
                      const std::string &ns, const std::string& pn,
-                     const std::string& tn)
-    : file_(file), added_namespace_(ns), package_name_(pn), target_name_(tn) {
+                     const std::string& tn, bool generate_active_message)
+    : file_(file), added_namespace_(ns), package_name_(pn), target_name_(tn),
+      generate_active_message_(generate_active_message) {
   for (int i = 0; i < file->message_type_count(); i++) {
     message_gens_.push_back(
         std::make_unique<MessageGenerator>(
             file->message_type(i), added_namespace_,
-            std::string(file->package())));
+            std::string(file->package()), generate_active_message_));
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {
@@ -145,6 +152,9 @@ Generator::Generator(const google::protobuf::FileDescriptor *file,
 void Generator::GenerateHeaders(std::ostream &os) {
   os << "#pragma once\n";
   os << "#include \"phaser/runtime/runtime.h\"\n";
+  if (generate_active_message_) {
+    os << "#include <any>\n";
+  }
   for (int i = 0; i < file_->dependency_count(); i++) {
     std::string base = GeneratedFilename(
         package_name_, target_name_,
