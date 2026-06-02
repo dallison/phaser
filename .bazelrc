@@ -30,6 +30,11 @@ test:valgrind --run_under='valgrind --leak-check=full --show-leak-kinds=definite
 
 build --enable_platform_specific_config
 
+# Treat third-party (external repo) headers as system headers so the aggressive
+# warning set used for our own code (see phaser/copts.bzl) does not flood the
+# build with diagnostics from abseil/protobuf/googletest/toolbelt.
+build --features=external_include_paths
+
 # For all builds, use C++17
 build --cxxopt="-std=c++17"
 build --cxxopt='-Wno-sign-compare'

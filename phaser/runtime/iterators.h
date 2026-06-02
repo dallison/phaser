@@ -6,35 +6,38 @@
 
 // Array and vector iterators.
 
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "phaser/runtime/message.h"
-#include "toolbelt/payload_buffer.h"
 #include <stdint.h>
 #include <stdlib.h>
+
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "phaser/runtime/message.h"
+#include "toolbelt/payload_buffer.h"
+
 namespace phaser {
 
-template <typename Field, typename T> struct FieldIterator {
-  FieldIterator(const Field *f, ::toolbelt::BufferOffset o, bool r = false)
+template <typename Field, typename T>
+struct FieldIterator {
+  FieldIterator(const Field* f, ::toolbelt::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
-  FieldIterator &operator++() {
+  FieldIterator& operator++() {
     if (reverse) {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }
-  FieldIterator &operator--() {
+  FieldIterator& operator--() {
     if (reverse) {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }
@@ -50,26 +53,28 @@ template <typename Field, typename T> struct FieldIterator {
     }
     return FieldIterator(field, field->BaseOffset() - i * sizeof(T));
   }
-  T &operator*() const {
-    T *addr = field->GetBuffer()->template ToAddress<T>(offset);
+  T& operator*() const {
+    T* addr = field->GetBuffer()->template ToAddress<T>(offset);
     return *addr;
   }
 
-  bool operator==(const FieldIterator &it) const {
+  bool operator==(const FieldIterator& it) const {
     return field == it.field && offset == it.offset;
   }
-  bool operator!=(const FieldIterator &it) const { return !operator==(it); }
+  bool operator!=(const FieldIterator& it) const { return !operator==(it); }
 
-  const Field *field;
+  const Field* field;
   ::toolbelt::BufferOffset offset;
   bool reverse;
 };
 
-template <typename Field> struct StringFieldIterator {
-  StringFieldIterator(const Field *f, ::toolbelt::BufferOffset o, bool r = false)
+template <typename Field>
+struct StringFieldIterator {
+  StringFieldIterator(const Field* f, ::toolbelt::BufferOffset o,
+                      bool r = false)
       : field(f), offset(o), reverse(r) {}
 
-  StringFieldIterator &operator++() {
+  StringFieldIterator& operator++() {
     if (reverse) {
       offset -= sizeof(::toolbelt::BufferOffset);
     } else {
@@ -77,7 +82,7 @@ template <typename Field> struct StringFieldIterator {
     }
     return *this;
   }
-  StringFieldIterator &operator--() {
+  StringFieldIterator& operator--() {
     if (reverse) {
       offset += sizeof(::toolbelt::BufferOffset);
     } else {
@@ -91,8 +96,8 @@ template <typename Field> struct StringFieldIterator {
           field, field->BaseOffset() - i * sizeof(::toolbelt::BufferOffset),
           true);
     }
-    return StringFieldIterator(field, field->BaseOffset() +
-                                          i * sizeof(::toolbelt::BufferOffset));
+    return StringFieldIterator(
+        field, field->BaseOffset() + i * sizeof(::toolbelt::BufferOffset));
   }
   StringFieldIterator operator-(size_t i) {
     if (reverse) {
@@ -100,80 +105,84 @@ template <typename Field> struct StringFieldIterator {
           field, field->BaseOffset() + i * sizeof(::toolbelt::BufferOffset),
           true);
     }
-    return StringFieldIterator(field, field->BaseOffset() -
-                                          i * sizeof(::toolbelt::BufferOffset));
+    return StringFieldIterator(
+        field, field->BaseOffset() - i * sizeof(::toolbelt::BufferOffset));
   }
   std::string_view operator*() const {
     return field->GetBuffer()->GetStringView(field->BaseOffset() + offset);
   }
 
-  bool operator==(const StringFieldIterator &it) const {
+  bool operator==(const StringFieldIterator& it) const {
     return field == it.field && offset == it.offset;
   }
-  bool operator!=(const StringFieldIterator &it) const {
+  bool operator!=(const StringFieldIterator& it) const {
     return !operator==(it);
   }
 
-  const Field *field;
+  const Field* field;
   ::toolbelt::BufferOffset offset;
   bool reverse;
 };
 
-template <typename Field, typename T> struct EnumFieldIterator {
-  EnumFieldIterator(const Field *f, ::toolbelt::BufferOffset o, bool r = false)
+template <typename Field, typename T>
+struct EnumFieldIterator {
+  EnumFieldIterator(const Field* f, ::toolbelt::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
-  EnumFieldIterator &operator++() {
+  EnumFieldIterator& operator++() {
     if (reverse) {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }
-  EnumFieldIterator &operator--() {
+  EnumFieldIterator& operator--() {
     if (reverse) {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }
   EnumFieldIterator operator+(size_t i) {
     if (reverse) {
-      return EnumFieldIterator(field,
-                               field->BaseOffset() -
-                                   i * sizeof(std::underlying_type<T>::type),
-                               true);
+      return EnumFieldIterator(
+          field,
+          field->BaseOffset() - i * sizeof(std::underlying_type<T>::type),
+          true);
     }
     return EnumFieldIterator(
         field, field->BaseOffset() + i * sizeof(std::underlying_type<T>::type));
   }
   EnumFieldIterator operator-(size_t i) {
     if (reverse) {
-      return EnumFieldIterator(field,
-                               field->BaseOffset() +
-                                   i * sizeof(std::underlying_type<T>::type),
-                               true);
+      return EnumFieldIterator(
+          field,
+          field->BaseOffset() + i * sizeof(std::underlying_type<T>::type),
+          true);
     }
     return EnumFieldIterator(
         field, field->BaseOffset() - i * sizeof(std::underlying_type<T>::type));
   }
 
-  T &operator*() const {
+  T& operator*() const {
     using U = typename std::underlying_type<T>::type;
-    U *addr = field->GetBuffer()->template ToAddress<U>(offset);
-    return *reinterpret_cast<T *>(addr);
+    U* addr = field->GetBuffer()->template ToAddress<U>(offset);
+    // An enum and its fixed underlying type share representation; route the
+    // cast through void* so it is not flagged as a dereference of an unrelated
+    // reinterpret_cast.
+    return *static_cast<T*>(static_cast<void*>(addr));
   }
 
-  bool operator==(const EnumFieldIterator &it) const {
+  bool operator==(const EnumFieldIterator& it) const {
     return field == it.field && offset == it.offset;
   }
-  bool operator!=(const EnumFieldIterator &it) const { return !operator==(it); }
+  bool operator!=(const EnumFieldIterator& it) const { return !operator==(it); }
 
-  const Field *field;
+  const Field* field;
   ::toolbelt::BufferOffset offset;
   bool reverse;
 };
 
-} // namespace phasdr
+}  // namespace phaser

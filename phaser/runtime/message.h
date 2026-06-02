@@ -4,16 +4,18 @@
 
 #pragma once
 
+#include <stdint.h>
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "toolbelt/hexdump.h"
 #include "toolbelt/payload_buffer.h"
-#include <functional>
-#include <memory>
-#include <optional>
-#include <stdint.h>
-#include <string>
 
 namespace phaser {
 
@@ -32,9 +34,9 @@ struct FieldData {
   uint32_t num;
   struct {
     uint32_t number;
-    uint32_t offset : 24; // Offset into message.
-    uint32_t id : 8;      // Field id for presence bit mask.
-  } fields[]; // Flexible array member; data lives in the payload buffer.
+    uint32_t offset : 24;  // Offset into message.
+    uint32_t id : 8;       // Field id for presence bit mask.
+  } fields[];  // Flexible array member; data lives in the payload buffer.
 };
 #pragma clang diagnostic pop
 
@@ -54,22 +56,24 @@ enum class FieldType {
 };
 
 struct FieldInfo {
-  FieldInfo(const std::string &n, FieldType t, int num, off_t off)
+  FieldInfo(const std::string& n, FieldType t, int num, off_t off)
       : name(n), type(t), number(num), offset(off) {}
   std::string name;
   FieldType type;
   int number;
-  off_t offset; // Offset into source message (not binary).
+  off_t offset;  // Offset into source message (not binary).
 };
 
 struct PrimitiveFieldInfo : public FieldInfo {
-  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
+  PrimitiveFieldInfo(const std::string& n, FieldType t, int num, off_t off,
                      bool f = false, bool /*s*/ = false, bool r = false,
                      bool p = false)
       : FieldInfo(n, t, num, off), is_fixed(f), is_repeated(r), is_packed(p) {}
-  PrimitiveFieldInfo(const std::string &n, FieldType t, int num, off_t off,
-                     const std::string &m, bool r = false, bool p = false)
-      : FieldInfo(n, t, num, off), is_repeated(r), is_packed(p),
+  PrimitiveFieldInfo(const std::string& n, FieldType t, int num, off_t off,
+                     const std::string& m, bool r = false, bool p = false)
+      : FieldInfo(n, t, num, off),
+        is_repeated(r),
+        is_packed(p),
         message_or_enum_name(m) {}
 
   bool is_fixed = false;
@@ -80,17 +84,17 @@ struct PrimitiveFieldInfo : public FieldInfo {
 };
 
 struct UnionFieldInfo : public PrimitiveFieldInfo {
-  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i,
-                 const std::string &m)
+  UnionFieldInfo(const std::string& n, FieldType t, int num, off_t off, int i,
+                 const std::string& m)
       : PrimitiveFieldInfo(n, t, num, off, m), id(i) {}
-  UnionFieldInfo(const std::string &n, FieldType t, int num, off_t off, int i,
+  UnionFieldInfo(const std::string& n, FieldType t, int num, off_t off, int i,
                  bool f = false, bool s = false)
       : PrimitiveFieldInfo(n, t, num, off, f, s), id(i) {}
-  int id; // Field id within union.
+  int id;  // Field id within union.
 };
 
 struct UnionInfo : public FieldInfo {
-  UnionInfo(const std::string &n, off_t off)
+  UnionInfo(const std::string& n, off_t off)
       : FieldInfo(n, FieldType::kFieldOneof, 0, off) {}
   std::vector<std::shared_ptr<UnionFieldInfo>> fields_in_order;
 };
@@ -107,11 +111,11 @@ struct MessageInfo {
 // so that we know where the metadata for each message is stored.  The
 // metadata offset is held in the message header.
 struct MessageRuntime {
-  MessageRuntime(::toolbelt::PayloadBuffer *p) : pb(p) {}
-  MessageRuntime(::toolbelt::PayloadBuffer *p, size_t size)
+  MessageRuntime(::toolbelt::PayloadBuffer* p) : pb(p) {}
+  MessageRuntime(::toolbelt::PayloadBuffer* p, size_t size)
       : pb(p), buffer_size(size) {}
   virtual ~MessageRuntime() = default;
-  ::toolbelt::PayloadBuffer *pb;
+  ::toolbelt::PayloadBuffer* pb;
 
   // This is the size of the buffer.  If it is zero, the size is inside
   // the payload buffer.  If it's non-zero, it's the size of the received
@@ -120,27 +124,29 @@ struct MessageRuntime {
   // have no way to check it's valid).
   size_t buffer_size = 0;
 
-  virtual void AddMetadata(const std::string & /*name*/,
+  virtual void AddMetadata(const std::string& /*name*/,
                            ::toolbelt::BufferOffset /*offset*/) {}
-  virtual ::toolbelt::BufferOffset GetMetadata(const std::string & /*name*/) {
+  virtual ::toolbelt::BufferOffset GetMetadata(const std::string& /*name*/) {
     return 0;
   }
 
-  template <typename T = void> T *ToAddress(toolbelt::BufferOffset offset) {
+  template <typename T = void>
+  T* ToAddress(toolbelt::BufferOffset offset) {
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
   template <typename T = void>
-  const T *ToAddress(toolbelt::BufferOffset offset) const {
+  const T* ToAddress(toolbelt::BufferOffset offset) const {
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
   template <typename T = void>
-  toolbelt::BufferOffset ToOffset(const T *addr) const {
+  toolbelt::BufferOffset ToOffset(const T* addr) const {
     return pb->ToOffset(addr, buffer_size);
   }
 
-  template <typename T = void> toolbelt::BufferOffset ToOffset(T *addr) {
+  template <typename T = void>
+  toolbelt::BufferOffset ToOffset(T* addr) {
     return pb->ToOffset(addr, buffer_size);
   }
 };
@@ -148,15 +154,15 @@ struct MessageRuntime {
 // This is a message runtime for a message that is mutable.  It holds a mapping
 // for each message name to the offset of the metadata in the payload buffer.
 struct MutableMessageRuntime : public MessageRuntime {
-  MutableMessageRuntime(::toolbelt::PayloadBuffer *p) : MessageRuntime(p) {}
+  MutableMessageRuntime(::toolbelt::PayloadBuffer* p) : MessageRuntime(p) {}
 
   absl::flat_hash_map<std::string, ::toolbelt::BufferOffset> metadata_offsets;
-  void AddMetadata(const std::string &name,
+  void AddMetadata(const std::string& name,
                    ::toolbelt::BufferOffset offset) override {
     metadata_offsets[name] = offset;
   }
 
-  ::toolbelt::BufferOffset GetMetadata(const std::string &name) override {
+  ::toolbelt::BufferOffset GetMetadata(const std::string& name) override {
     auto it = metadata_offsets.find(name);
     if (it == metadata_offsets.end()) {
       return 0;
@@ -168,8 +174,8 @@ struct MutableMessageRuntime : public MessageRuntime {
 // Dynamically allocated payload buffer.  Must be allocated in memory
 // from malloc using the NewDynamicBuffer function.
 struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
-  DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer *p,
-                               std::function<void(void *)> free)
+  DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer* p,
+                               std::function<void(void*)> free)
       : MutableMessageRuntime(p), free_(std::move(free)) {}
   ~DynamicMutableMessageRuntime() override {
     if (free_ != nullptr) {
@@ -177,7 +183,7 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
       free_(pb);
     }
   }
-  std::function<void(void *)> free_;
+  std::function<void(void*)> free_;
 };
 
 struct InternalDefault {};
@@ -189,8 +195,8 @@ struct InternalDefault {};
 // If you are sending messages over a network, then you can sacrifice
 // allocation peformance for size and use kSize.
 enum class Tuning {
-  kPerformance, // Use a bitmap allocator for small blocks
-  kSize,        // Use a simple allocator for small blocks
+  kPerformance,  // Use a bitmap allocator for small blocks
+  kSize,         // Use a simple allocator for small blocks
 };
 
 // Payload buffers can move. All messages in a message tree must all use the
@@ -228,13 +234,15 @@ struct Message {
   Message() = default;
   Message(std::shared_ptr<MessageRuntime> rt, ::toolbelt::BufferOffset start)
       : runtime(rt), absolute_binary_offset(start) {}
+  Message(const Message&) = default;
+  Message& operator=(const Message&) = default;
   virtual ~Message() = default;
 
-  virtual const MessageInfo *GetMessageInfo() const { return nullptr; }
+  virtual const MessageInfo* GetMessageInfo() const { return nullptr; }
   virtual std::string GetName() const { return "Message"; }
   virtual std::string GetFullName() const { return "phaser.Message"; }
   virtual void Clear() {}
-  virtual void CopyFrom(const Message & /*src*/) {}
+  virtual void CopyFrom(const Message& /*src*/) {}
 
   std::shared_ptr<MessageRuntime> runtime;
   ::toolbelt::BufferOffset absolute_binary_offset;
@@ -242,50 +250,50 @@ struct Message {
   // 'field' is the offset from the start of the message to the field (positive)
   // Subtract the field offset from the field to get the address of the
   // std::shared_ptr to the pointer to the ::toolbelt::PayloadBuffer.
-  static ::toolbelt::PayloadBuffer *GetBuffer(const void *field,
+  static ::toolbelt::PayloadBuffer* GetBuffer(const void* field,
                                               uint32_t offset) {
-    const Message *msg = reinterpret_cast<const Message *>(
-        reinterpret_cast<const char *>(field) - offset);
+    const Message* msg = reinterpret_cast<const Message*>(
+        reinterpret_cast<const char*>(field) - offset);
     return msg->runtime->pb;
   }
 
-  static ::toolbelt::PayloadBuffer **GetBufferAddr(const void *field,
+  static ::toolbelt::PayloadBuffer** GetBufferAddr(const void* field,
                                                    uint32_t offset) {
-    const Message *msg = reinterpret_cast<const Message *>(
-        reinterpret_cast<const char *>(field) - offset);
+    const Message* msg = reinterpret_cast<const Message*>(
+        reinterpret_cast<const char*>(field) - offset);
     return &msg->runtime->pb;
   }
 
-  static std::shared_ptr<MessageRuntime> &GetRuntime(void *field,
+  static std::shared_ptr<MessageRuntime>& GetRuntime(void* field,
                                                      uint32_t offset) {
-    Message *msg =
-        reinterpret_cast<Message *>(reinterpret_cast<char *>(field) - offset);
+    Message* msg =
+        reinterpret_cast<Message*>(reinterpret_cast<char*>(field) - offset);
     return msg->runtime;
   }
 
-  static const std::shared_ptr<MessageRuntime> &GetRuntime(const void *field,
+  static const std::shared_ptr<MessageRuntime>& GetRuntime(const void* field,
                                                            uint32_t offset) {
-    const Message *msg = reinterpret_cast<const Message *>(
-        reinterpret_cast<const char *>(field) - offset);
+    const Message* msg = reinterpret_cast<const Message*>(
+        reinterpret_cast<const char*>(field) - offset);
     return msg->runtime;
   }
 
-  static const Message *GetMessage(const void *field, uint32_t offset) {
-    const Message *msg = reinterpret_cast<const Message *>(
-        reinterpret_cast<const char *>(field) - offset);
+  static const Message* GetMessage(const void* field, uint32_t offset) {
+    const Message* msg = reinterpret_cast<const Message*>(
+        reinterpret_cast<const char*>(field) - offset);
     return msg;
   }
 
-  static Message *GetMessage(void *field, uint32_t offset) {
-    Message *msg =
-        reinterpret_cast<Message *>(reinterpret_cast<char *>(field) - offset);
+  static Message* GetMessage(void* field, uint32_t offset) {
+    Message* msg =
+        reinterpret_cast<Message*>(reinterpret_cast<char*>(field) - offset);
     return msg;
   }
 
-  static ::toolbelt::BufferOffset GetMessageBinaryStart(const void *field,
+  static ::toolbelt::BufferOffset GetMessageBinaryStart(const void* field,
                                                         uint32_t offset) {
-    const Message *msg = reinterpret_cast<const Message *>(
-        reinterpret_cast<const char *>(field) - offset);
+    const Message* msg = reinterpret_cast<const Message*>(
+        reinterpret_cast<const char*>(field) - offset);
     return msg->absolute_binary_offset;
   }
 
@@ -297,35 +305,39 @@ struct Message {
     return absl::OkStatus();
   }
 
-  void *GetUserMetadata() {
+  void* GetUserMetadata() {
     return runtime->pb->ToAddress(runtime->pb->metadata);
   }
 
-  void *Allocate(size_t size, size_t alignment = 4, bool clear = true) {
+  void* Allocate(size_t size, size_t alignment = 4, bool clear = true) {
     (void)alignment;
-    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, clear);
+    return toolbelt::PayloadBuffer::Allocate(
+        &runtime->pb, static_cast<uint32_t>(size), clear);
   }
 
-  void Free(void *ptr) { runtime->pb->Free(ptr); }
+  void Free(void* ptr) { runtime->pb->Free(ptr); }
 
-  void *Realloc(void *ptr, size_t size, size_t alignment = 4,
+  void* Realloc(void* ptr, size_t size, size_t alignment = 4,
                 bool clear = true) {
     (void)alignment;
-    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, clear);
+    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr,
+                                            static_cast<uint32_t>(size), clear);
   }
 
-  toolbelt::BufferOffset ToOffset(void *addr) {
+  toolbelt::BufferOffset ToOffset(void* addr) {
     return runtime->pb->ToOffset(addr);
   }
 
-  template <typename T> T *ToAddress(toolbelt::BufferOffset offset) {
+  template <typename T>
+  T* ToAddress(toolbelt::BufferOffset offset) {
     return runtime->pb->ToAddress<T>(offset);
   }
 
-  template <typename MessageType> void InstallMetadata() {
+  template <typename MessageType>
+  void InstallMetadata() {
     auto metadata = runtime->GetMetadata(MessageType::FullName());
     if (metadata != 0) {
-      ::toolbelt::BufferOffset *header =
+      ::toolbelt::BufferOffset* header =
           runtime->pb->ToAddress<::toolbelt::BufferOffset>(
               absolute_binary_offset);
       *header = metadata;
@@ -333,10 +345,10 @@ struct Message {
     }
 
     // Allocate space for field data in the payload buffer and copy it in.
-    void *fields = ::toolbelt::PayloadBuffer::Allocate(
+    void* fields = ::toolbelt::PayloadBuffer::Allocate(
         &runtime->pb, sizeof(MessageType::field_data), false);
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
-    ::toolbelt::BufferOffset *header =
+    ::toolbelt::BufferOffset* header =
         runtime->pb->ToAddress<::toolbelt::BufferOffset>(
             absolute_binary_offset);
     *header = runtime->pb->ToOffset(fields);
@@ -350,22 +362,22 @@ struct Message {
   // Similar for field id for presence bit mask.
   int32_t FindFieldId(uint32_t field_number) const;
 
-  void *BinaryData() const {
+  void* BinaryData() const {
     return runtime->pb->ToAddress(absolute_binary_offset);
   }
 
-  void *Data() const { return reinterpret_cast<void *>(runtime->pb); }
+  void* Data() const { return reinterpret_cast<void*>(runtime->pb); }
 
   size_t Size() const { return runtime->pb->Size(); }
   size_t ZeroCopySize() const { return runtime->pb->Size(); }
 };
 
-::toolbelt::PayloadBuffer *
-NewDynamicBuffer(size_t initial_size, Tuning tuning = Tuning::kPerformance);
+::toolbelt::PayloadBuffer* NewDynamicBuffer(
+    size_t initial_size, Tuning tuning = Tuning::kPerformance);
 
-absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
-    size_t initial_size, std::function<absl::StatusOr<void *>(size_t)> alloc,
-    std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc,
+absl::StatusOr<::toolbelt::PayloadBuffer*> NewDynamicBuffer(
+    size_t initial_size, std::function<absl::StatusOr<void*>(size_t)> alloc,
+    std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc,
     Tuning tuning = Tuning::kPerformance);
 
-} // namespace phaser
+}  // namespace phaser

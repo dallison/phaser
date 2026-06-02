@@ -3,15 +3,17 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
+
+#include <sstream>
+
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "phaser/testdata/TestMessage.phaser.h"
+#include "test_helpers.h"
 #include "toolbelt/hexdump.h"
 #include "toolbelt/payload_buffer.h"
-#include <gtest/gtest.h>
-#include <sstream>
 
 TEST(PhaserTest, ProtobufCompat) {
   foo::bar::phaser::TestMessage msg;
@@ -41,7 +43,7 @@ TEST(PhaserTest, ProtobufCompat) {
 
   std::string buffer_data;
   for (int i = 0; i < 100; i++) {
-    buffer_data.push_back(rand() & 0xff);
+    buffer_data.push_back(static_cast<char>(rand() & 0xff));
   }
   buffer_data.push_back('\n');
   buffer_data.push_back('\r');
@@ -53,7 +55,7 @@ TEST(PhaserTest, ProtobufCompat) {
 
   msg.set_e(foo::bar::phaser::FOO);
 
-  msg.set_fl(1.3);
+  msg.set_fl(1.3f);
   msg.set_db(2.4);
 
   std::cout << msg;
@@ -79,7 +81,7 @@ TEST(PhaserTest, ProtobufCompat) {
 
   // Deserialize from a string into a protobuf message.
   foo::bar::TestMessage msg2;
-  msg2.ParseFromString(serialized);
+  ASSERT_TRUE(msg2.ParseFromString(serialized));
   ASSERT_EQ(msg2.x(), msg.x());
   ASSERT_EQ(msg2.y(), msg.y());
   ASSERT_EQ(msg2.s(), msg.s());
@@ -93,7 +95,7 @@ TEST(PhaserTest, ProtobufCompat) {
 }
 
 TEST(PhaserTest, Expansion) {
-  foo::bar::phaser::TestMessage msg; // 1K buffer by default.
+  foo::bar::phaser::TestMessage msg;  // 1K buffer by default.
   msg.set_x(1234);
   msg.set_y(5678);
   msg.set_s("hello world");
@@ -272,7 +274,7 @@ TEST(PhaserTest, Any) {
 TEST(PhaserTest, Garbage) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -308,7 +310,7 @@ TEST(PhaserTest, Garbage) {
 TEST(PhaserTest, GarbageSmall) {
   char buffer[10];
   for (int i = 0; i < 10; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -344,8 +346,8 @@ TEST(PhaserTest, GarbageSmall) {
 TEST(PhaserTest, GarbageLoop) {
   char buffer[256];
   for (int i = 0; i < 1000; i++) {
-    for (int i = 0; i < 256; i++) {
-      buffer[i] = rand() & 0xff;
+    for (int j = 0; j < 256; j++) {
+      buffer[j] = static_cast<char>(rand() & 0xff);
     }
     auto msg =
         foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -382,10 +384,10 @@ TEST(PhaserTest, GarbageLoop) {
 TEST(PhaserTest, GarbageWithValidMagic) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic.
-  *reinterpret_cast<uint32_t *>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
 
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -421,14 +423,14 @@ TEST(PhaserTest, GarbageWithValidMagic) {
 TEST(PhaserTest, GarbageWithTailoring) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic and the header fields.
-  *reinterpret_cast<uint32_t *>(buffer) = ::toolbelt::kFixedBufferMagic;
-  *reinterpret_cast<uint32_t *>(buffer + 4) = 0x1c;  // message location.
-  *reinterpret_cast<uint32_t *>(buffer + 8) = 1024;  // hwm.
-  *reinterpret_cast<uint32_t *>(buffer + 12) = 1000; // full_size
-  *reinterpret_cast<uint32_t *>(buffer + 16) = 50;   // free list
+  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer + 4) = 0x1c;   // message location.
+  *reinterpret_cast<uint32_t*>(buffer + 8) = 1024;   // hwm.
+  *reinterpret_cast<uint32_t*>(buffer + 12) = 1000;  // full_size
+  *reinterpret_cast<uint32_t*>(buffer + 16) = 50;    // free list
 
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -481,7 +483,7 @@ TEST(PhaserTest, Reflection) {
   msg.set_u1a(4321);
   msg.set_u2a(8765);
 
-  absl::StatusOr<const ::phaser::MessageInfo *> info =
+  absl::StatusOr<const ::phaser::MessageInfo*> info =
       ::phaser::PhaserBankMessageInfo("foo.bar.TestMessage");
   ASSERT_TRUE(info.ok());
   ASSERT_NE(nullptr, *info);
@@ -492,8 +494,8 @@ TEST(PhaserTest, Reflection) {
   ASSERT_EQ(100, field_x->number);
   ASSERT_EQ(::phaser::FieldType::kFieldInt32, field_x->type);
 
-  ::phaser::PrimitiveFieldInfo *pf_x =
-      static_cast<::phaser::PrimitiveFieldInfo *>(field_x.get());
+  ::phaser::PrimitiveFieldInfo* pf_x =
+      static_cast<::phaser::PrimitiveFieldInfo*>(field_x.get());
   ASSERT_NE(nullptr, pf_x);
   ASSERT_FALSE(pf_x->is_repeated);
   ASSERT_FALSE(pf_x->is_packed);
@@ -508,15 +510,16 @@ TEST(PhaserTest, Reflection) {
   int x_number = it->second->number;
 
   // Let's print all the fields.
-  for (const auto &field : (*info)->fields_in_order) {
-    std::cout << field->name << " " << field->number << " " << (int)field->type
-              << " " << field->offset << std::endl;
+  for (const auto& field : (*info)->fields_in_order) {
+    std::cout << field->name << " " << field->number << " "
+              << static_cast<int>(field->type) << " " << field->offset
+              << std::endl;
   }
   absl::StatusOr<bool> has_x =
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);
   ASSERT_TRUE(has_x.ok());
 
-  absl::StatusOr<::phaser::Int32Field<> *> x =
+  absl::StatusOr<::phaser::Int32Field<>*> x =
       ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
           "foo.bar.TestMessage", msg, 100);
   ASSERT_TRUE(x.ok());
@@ -533,11 +536,11 @@ TEST(PhaserTest, Reflection) {
   ASSERT_TRUE(vi32.ok());
   ASSERT_NE(nullptr, *vi32);
 
-  ::phaser::PrimitiveVectorField<int32_t> &vi32r = **vi32;
+  ::phaser::PrimitiveVectorField<int32_t>& vi32r = **vi32;
   ASSERT_EQ(3, vi32r.Size());
   ASSERT_EQ(1, vi32r[0]);
 
-  for (auto &v : vi32r) {
+  for (auto& v : vi32r) {
     std::cout << v << std::endl;
   }
 }
@@ -570,7 +573,7 @@ TEST(DebugRedaction, DoesNotStripMidContentMarker) {
   ASSERT_EQ(original, s);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 
   return RUN_ALL_TESTS();

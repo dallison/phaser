@@ -2,19 +2,21 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
+
+#include <cmath>
+#include <string>
+
+#include "google/protobuf/any.pb.h"
 #include "phaser/runtime/wireformat.h"
 #include "phaser/testdata/coverage.pb.h"
 #include "phaser/testdata/coverage.phaser.h"
-#include "google/protobuf/any.pb.h"
-#include <cmath>
-#include <gtest/gtest.h>
-#include <string>
+#include "test_helpers.h"
 
 namespace foo::bar::coverage::phaser {
 namespace {
 
-void FillAllScalars(AllScalars &msg) {
+void FillAllScalars(AllScalars& msg) {
   msg.set_f_int32(-123456);
   msg.set_f_int64(-9876543210LL);
   msg.set_f_sint32(-42);
@@ -33,7 +35,7 @@ void FillAllScalars(AllScalars &msg) {
   msg.set_f_enum(COV_BAR);
 }
 
-void ExpectAllScalars(const AllScalars &msg) {
+void ExpectAllScalars(const AllScalars& msg) {
   EXPECT_EQ(-123456, msg.f_int32());
   EXPECT_EQ(-9876543210LL, msg.f_int64());
   EXPECT_EQ(-42, msg.f_sint32());
@@ -63,7 +65,7 @@ using PbOneofStress = ::foo::bar::coverage::OneofStress;
 using PbCoverageInner = ::foo::bar::coverage::CoverageInner;
 using PbImportsMessage = ::foo::bar::coverage::ImportsMessage;
 
-void ExpectAllScalarsMatch(const AllScalars &a, const AllScalars &b) {
+void ExpectAllScalarsMatch(const AllScalars& a, const AllScalars& b) {
   EXPECT_EQ(a.f_int32(), b.f_int32());
   EXPECT_EQ(a.f_int64(), b.f_int64());
   EXPECT_EQ(a.f_sint32(), b.f_sint32());
@@ -82,7 +84,7 @@ void ExpectAllScalarsMatch(const AllScalars &a, const AllScalars &b) {
   EXPECT_EQ(a.f_enum(), b.f_enum());
 }
 
-void ExpectAllScalarsMatchPb(const PbAllScalars &pb, const AllScalars &msg) {
+void ExpectAllScalarsMatchPb(const PbAllScalars& pb, const AllScalars& msg) {
   EXPECT_EQ(pb.f_int32(), msg.f_int32());
   EXPECT_EQ(pb.f_int64(), msg.f_int64());
   EXPECT_EQ(pb.f_sint32(), msg.f_sint32());
@@ -101,7 +103,7 @@ void ExpectAllScalarsMatchPb(const PbAllScalars &pb, const AllScalars &msg) {
   EXPECT_EQ(pb.f_enum(), static_cast<int>(msg.f_enum()));
 }
 
-void FillAllScalars(PbAllScalars &msg) {
+void FillAllScalars(PbAllScalars& msg) {
   msg.set_f_int32(-123456);
   msg.set_f_int64(-9876543210LL);
   msg.set_f_sint32(-42);
@@ -120,14 +122,14 @@ void FillAllScalars(PbAllScalars &msg) {
   msg.set_f_enum(::foo::bar::coverage::COV_BAR);
 }
 
-void FillCoverageInner(PbCoverageInner &msg) {
+void FillCoverageInner(PbCoverageInner& msg) {
   msg.set_str("inner");
   msg.set_f(0x0123456789abcdefULL);
 }
 
 // Phaser -> protobuf wire -> phaser, then protobuf -> wire -> phaser.
-template <typename PhaserMsg, typename PbMsg, typename FillPhaser, typename FillPb,
-          typename ExpectPhaserMatch, typename ExpectPbMatch>
+template <typename PhaserMsg, typename PbMsg, typename FillPhaser,
+          typename FillPb, typename ExpectPhaserMatch, typename ExpectPbMatch>
 void ExpectBidirectionalWireRoundTrip(FillPhaser fill_phaser, FillPb fill_pb,
                                       ExpectPhaserMatch expect_phaser,
                                       ExpectPbMatch expect_pb) {
@@ -163,16 +165,16 @@ void ExpectBidirectionalWireRoundTrip(FillPhaser fill_phaser, FillPb fill_pb,
   expect_pb(pb_orig, phaser_roundtrip);
 }
 
-void FillMapHolder(MapHolder &msg) {
-  auto *a = msg.add_values();
+void FillMapHolder(MapHolder& msg) {
+  auto* a = msg.add_values();
   a->set_key("alpha");
   a->set_value(-7);
-  auto *b = msg.add_values();
+  auto* b = msg.add_values();
   b->set_key("beta");
   b->set_value(42);
 }
 
-void ExpectMapHolderMatch(const MapHolder &a, const MapHolder &b) {
+void ExpectMapHolderMatch(const MapHolder& a, const MapHolder& b) {
   ASSERT_EQ(a.values_size(), b.values_size());
   for (size_t i = 0; i < a.values_size(); i++) {
     bool found = false;
@@ -187,7 +189,7 @@ void ExpectMapHolderMatch(const MapHolder &a, const MapHolder &b) {
   }
 }
 
-void ExpectMapHolderMatchPb(const PbMapHolder &pb, const MapHolder &msg) {
+void ExpectMapHolderMatchPb(const PbMapHolder& pb, const MapHolder& msg) {
   ASSERT_EQ(static_cast<int>(msg.values_size()), pb.values_size());
   for (size_t i = 0; i < msg.values_size(); i++) {
     const auto it = pb.values().find(msg.values(i).key());
@@ -196,16 +198,16 @@ void ExpectMapHolderMatchPb(const PbMapHolder &pb, const MapHolder &msg) {
   }
 }
 
-void FillRepeatedPacked(RepeatedPrimitivesPacked &msg) {
+void FillRepeatedPacked(RepeatedPrimitivesPacked& msg) {
   for (int i = -3; i < 10; i++) {
     msg.add_vi32(i);
     msg.add_vi64(i * 1000LL);
-    msg.add_vf64(static_cast<uint64_t>(i * 100000ULL));
+    msg.add_vf64(static_cast<uint64_t>(i) * 100000);
   }
 }
 
-void ExpectRepeatedPackedMatch(const RepeatedPrimitivesPacked &a,
-                               const RepeatedPrimitivesPacked &b) {
+void ExpectRepeatedPackedMatch(const RepeatedPrimitivesPacked& a,
+                               const RepeatedPrimitivesPacked& b) {
   ASSERT_EQ(a.vi32_size(), b.vi32_size());
   ASSERT_EQ(a.vi64_size(), b.vi64_size());
   ASSERT_EQ(a.vf64_size(), b.vf64_size());
@@ -216,137 +218,137 @@ void ExpectRepeatedPackedMatch(const RepeatedPrimitivesPacked &a,
   }
 }
 
-void ExpectRepeatedPackedMatchPb(const PbRepeatedPacked &pb,
-                                 const RepeatedPrimitivesPacked &msg) {
+void ExpectRepeatedPackedMatchPb(const PbRepeatedPacked& pb,
+                                 const RepeatedPrimitivesPacked& msg) {
   ASSERT_EQ(pb.vi32_size(), static_cast<int>(msg.vi32_size()));
   ASSERT_EQ(pb.vi64_size(), static_cast<int>(msg.vi64_size()));
   ASSERT_EQ(pb.vf64_size(), static_cast<int>(msg.vf64_size()));
   for (int i = 0; i < pb.vi32_size(); i++) {
-    EXPECT_EQ(pb.vi32(i), msg.vi32(i));
-    EXPECT_EQ(pb.vi64(i), msg.vi64(i));
-    EXPECT_EQ(pb.vf64(i), msg.vf64(i));
+    EXPECT_EQ(pb.vi32(i), msg.vi32(static_cast<size_t>(i)));
+    EXPECT_EQ(pb.vi64(i), msg.vi64(static_cast<size_t>(i)));
+    EXPECT_EQ(pb.vf64(i), msg.vf64(static_cast<size_t>(i)));
   }
 }
 
-void FillRepeatedUnpacked(RepeatedPrimitivesUnpacked &msg) {
+[[maybe_unused]] void FillRepeatedUnpacked(RepeatedPrimitivesUnpacked& msg) {
   for (int i = -5; i < 5; i++) {
     msg.add_vi32(i * 11);
   }
 }
 
-void ExpectRepeatedUnpackedMatch(const RepeatedPrimitivesUnpacked &a,
-                                 const RepeatedPrimitivesUnpacked &b) {
+void ExpectRepeatedUnpackedMatch(const RepeatedPrimitivesUnpacked& a,
+                                 const RepeatedPrimitivesUnpacked& b) {
   ASSERT_EQ(a.vi32_size(), b.vi32_size());
   for (size_t i = 0; i < a.vi32_size(); i++) {
     EXPECT_EQ(a.vi32(i), b.vi32(i));
   }
 }
 
-void ExpectRepeatedUnpackedMatchPb(const PbRepeatedUnpacked &pb,
-                                   const RepeatedPrimitivesUnpacked &msg) {
+void ExpectRepeatedUnpackedMatchPb(const PbRepeatedUnpacked& pb,
+                                   const RepeatedPrimitivesUnpacked& msg) {
   ASSERT_EQ(pb.vi32_size(), static_cast<int>(msg.vi32_size()));
   for (int i = 0; i < pb.vi32_size(); i++) {
-    EXPECT_EQ(pb.vi32(i), msg.vi32(i));
+    EXPECT_EQ(pb.vi32(i), msg.vi32(static_cast<size_t>(i)));
   }
 }
 
-void ExpectRepeatedUnpackedMatchPb(const PbRepeatedUnpacked &a,
-                                   const PbRepeatedUnpacked &b) {
+[[maybe_unused]] void ExpectRepeatedUnpackedMatchPb(
+    const PbRepeatedUnpacked& a, const PbRepeatedUnpacked& b) {
   ASSERT_EQ(a.vi32_size(), b.vi32_size());
   for (int i = 0; i < a.vi32_size(); i++) {
     EXPECT_EQ(a.vi32(i), b.vi32(i));
   }
 }
 
-void FillRepeatedStrings(RepeatedStrings &msg) {
+void FillRepeatedStrings(RepeatedStrings& msg) {
   msg.add_vstr("");
   msg.add_vstr(::phaser::test::MakePatternString(64, 's'));
   msg.add_vstr("line\nbreak\t");
 }
 
-void ExpectRepeatedStringsMatch(const RepeatedStrings &a,
-                                const RepeatedStrings &b) {
+void ExpectRepeatedStringsMatch(const RepeatedStrings& a,
+                                const RepeatedStrings& b) {
   ASSERT_EQ(a.vstr_size(), b.vstr_size());
   for (size_t i = 0; i < a.vstr_size(); i++) {
     EXPECT_EQ(a.vstr(i), b.vstr(i));
   }
 }
 
-void ExpectRepeatedStringsMatchPb(const PbRepeatedStrings &pb,
-                                  const RepeatedStrings &msg) {
+void ExpectRepeatedStringsMatchPb(const PbRepeatedStrings& pb,
+                                  const RepeatedStrings& msg) {
   ASSERT_EQ(pb.vstr_size(), static_cast<int>(msg.vstr_size()));
   for (int i = 0; i < pb.vstr_size(); i++) {
-    EXPECT_EQ(pb.vstr(i), msg.vstr(i));
+    EXPECT_EQ(pb.vstr(i), msg.vstr(static_cast<size_t>(i)));
   }
 }
 
-void FillRepeatedBytes(RepeatedBytes &msg) {
+void FillRepeatedBytes(RepeatedBytes& msg) {
   msg.add_vbytes(::phaser::test::MakePatternBytes(32));
   msg.add_vbytes(std::string("\0\x01\xff", 3));
 }
 
-void ExpectRepeatedBytesMatch(const RepeatedBytes &a, const RepeatedBytes &b) {
+void ExpectRepeatedBytesMatch(const RepeatedBytes& a, const RepeatedBytes& b) {
   ASSERT_EQ(a.vbytes_size(), b.vbytes_size());
   for (size_t i = 0; i < a.vbytes_size(); i++) {
     EXPECT_EQ(a.vbytes(i), b.vbytes(i));
   }
 }
 
-void ExpectRepeatedBytesMatchPb(const PbRepeatedBytes &pb,
-                                const RepeatedBytes &msg) {
+void ExpectRepeatedBytesMatchPb(const PbRepeatedBytes& pb,
+                                const RepeatedBytes& msg) {
   ASSERT_EQ(pb.vbytes_size(), static_cast<int>(msg.vbytes_size()));
   for (int i = 0; i < pb.vbytes_size(); i++) {
-    EXPECT_EQ(pb.vbytes(i), msg.vbytes(i));
+    EXPECT_EQ(pb.vbytes(i), msg.vbytes(static_cast<size_t>(i)));
   }
 }
 
-void FillRepeatedMessages(RepeatedMessages &msg) {
-  auto *m0 = msg.add_items();
+void FillRepeatedMessages(RepeatedMessages& msg) {
+  auto* m0 = msg.add_items();
   FillAllScalars(*m0);
-  auto *m1 = msg.add_items();
+  auto* m1 = msg.add_items();
   m1->set_f_int32(99);
   m1->set_f_string("nested");
 }
 
-void ExpectRepeatedMessagesMatch(const RepeatedMessages &a,
-                                 const RepeatedMessages &b) {
+void ExpectRepeatedMessagesMatch(const RepeatedMessages& a,
+                                 const RepeatedMessages& b) {
   ASSERT_EQ(a.items_size(), b.items_size());
   for (size_t i = 0; i < a.items_size(); i++) {
     ExpectAllScalarsMatch(a.items(i), b.items(i));
   }
 }
 
-void ExpectRepeatedMessagesMatchPb(const PbRepeatedMessages &pb,
-                                   const RepeatedMessages &msg) {
+void ExpectRepeatedMessagesMatchPb(const PbRepeatedMessages& pb,
+                                   const RepeatedMessages& msg) {
   ASSERT_EQ(pb.items_size(), static_cast<int>(msg.items_size()));
   for (int i = 0; i < pb.items_size(); i++) {
-    ExpectAllScalarsMatchPb(pb.items(i), msg.items(i));
+    ExpectAllScalarsMatchPb(pb.items(i), msg.items(static_cast<size_t>(i)));
   }
 }
 
-void FillCoverageInner(CoverageInner &msg) {
+void FillCoverageInner(CoverageInner& msg) {
   msg.set_str("inner");
   msg.set_f(0x0123456789abcdefULL);
 }
 
-void ExpectCoverageInnerMatch(const CoverageInner &a, const CoverageInner &b) {
+void ExpectCoverageInnerMatch(const CoverageInner& a, const CoverageInner& b) {
   EXPECT_EQ(a.str(), b.str());
   EXPECT_EQ(a.f(), b.f());
 }
 
-void ExpectCoverageInnerMatchPb(const PbCoverageInner &pb,
-                                const CoverageInner &msg) {
+void ExpectCoverageInnerMatchPb(const PbCoverageInner& pb,
+                                const CoverageInner& msg) {
   EXPECT_EQ(pb.str(), msg.str());
   EXPECT_EQ(pb.f(), msg.f());
 }
 
-void ExpectCoverageInnerMatchPb(const PbCoverageInner &a,
-                                const PbCoverageInner &b) {
+void ExpectCoverageInnerMatchPb(const PbCoverageInner& a,
+                                const PbCoverageInner& b) {
   EXPECT_EQ(a.str(), b.str());
   EXPECT_EQ(a.f(), b.f());
 }
 
-void FillImportsMessage(ImportsMessage &msg, bool include_any = true) {
+void FillImportsMessage(ImportsMessage& msg, bool include_any = true) {
   msg.mutable_imported_foo()->set_a(-3);
   msg.mutable_imported_foo()->set_b("wire-foo");
   FillCoverageInner(*msg.mutable_inner());
@@ -361,7 +363,7 @@ void FillImportsMessage(ImportsMessage &msg, bool include_any = true) {
   }
 }
 
-void FillImportsMessage(PbImportsMessage &msg, bool include_any = true) {
+void FillImportsMessage(PbImportsMessage& msg, bool include_any = true) {
   msg.mutable_imported_foo()->set_a(-3);
   msg.mutable_imported_foo()->set_b("wire-foo");
   FillCoverageInner(*msg.mutable_inner());
@@ -372,48 +374,48 @@ void FillImportsMessage(PbImportsMessage &msg, bool include_any = true) {
   if (include_any) {
     PbCoverageInner packed;
     FillCoverageInner(packed);
-    msg.mutable_any_field()->PackFrom(packed);
+    EXPECT_TRUE(msg.mutable_any_field()->PackFrom(packed));
   }
 }
 
-void FillMapHolder(PbMapHolder &msg) {
+void FillMapHolder(PbMapHolder& msg) {
   (*msg.mutable_values())["alpha"] = -7;
   (*msg.mutable_values())["beta"] = 42;
 }
 
-void FillRepeatedPacked(PbRepeatedPacked &msg) {
+void FillRepeatedPacked(PbRepeatedPacked& msg) {
   for (int i = -3; i < 10; i++) {
     msg.add_vi32(i);
     msg.add_vi64(i * 1000LL);
-    msg.add_vf64(static_cast<uint64_t>(i * 100000ULL));
+    msg.add_vf64(static_cast<uint64_t>(i) * 100000);
   }
 }
 
-void FillRepeatedUnpacked(PbRepeatedUnpacked &msg) {
+void FillRepeatedUnpacked(PbRepeatedUnpacked& msg) {
   for (int i = -5; i < 5; i++) {
     msg.add_vi32(i * 11);
   }
 }
 
-void FillRepeatedStrings(PbRepeatedStrings &msg) {
+void FillRepeatedStrings(PbRepeatedStrings& msg) {
   msg.add_vstr("");
   msg.add_vstr(::phaser::test::MakePatternString(64, 's'));
   msg.add_vstr("line\nbreak\t");
 }
 
-void FillRepeatedBytes(PbRepeatedBytes &msg) {
+void FillRepeatedBytes(PbRepeatedBytes& msg) {
   msg.add_vbytes(::phaser::test::MakePatternBytes(32));
   msg.add_vbytes(std::string("\0\x01\xff", 3));
 }
 
-void FillRepeatedMessages(PbRepeatedMessages &msg) {
+void FillRepeatedMessages(PbRepeatedMessages& msg) {
   FillAllScalars(*msg.add_items());
-  auto *m1 = msg.add_items();
+  auto* m1 = msg.add_items();
   m1->set_f_int32(99);
   m1->set_f_string("nested");
 }
 
-void ExpectImportsMessageMatch(const ImportsMessage &a, const ImportsMessage &b,
+void ExpectImportsMessageMatch(const ImportsMessage& a, const ImportsMessage& b,
                                bool check_any = true) {
   EXPECT_EQ(a.imported_foo().a(), b.imported_foo().a());
   EXPECT_EQ(a.imported_foo().b(), b.imported_foo().b());
@@ -431,8 +433,8 @@ void ExpectImportsMessageMatch(const ImportsMessage &a, const ImportsMessage &b,
   ExpectCoverageInnerMatch(inner_a, inner_b);
 }
 
-void ExpectImportsMessageMatchPb(const PbImportsMessage &pb,
-                                 const ImportsMessage &msg,
+void ExpectImportsMessageMatchPb(const PbImportsMessage& pb,
+                                 const ImportsMessage& msg,
                                  bool check_any = true) {
   EXPECT_EQ(pb.imported_foo().a(), msg.imported_foo().a());
   EXPECT_EQ(pb.imported_foo().b(), msg.imported_foo().b());
@@ -450,8 +452,8 @@ void ExpectImportsMessageMatchPb(const PbImportsMessage &pb,
   ExpectCoverageInnerMatchPb(inner_pb, inner_msg);
 }
 
-void ExpectImportsMessageMatchPb(const PbImportsMessage &a,
-                                 const PbImportsMessage &b) {
+[[maybe_unused]] void ExpectImportsMessageMatchPb(const PbImportsMessage& a,
+                                                  const PbImportsMessage& b) {
   EXPECT_EQ(a.imported_foo().a(), b.imported_foo().a());
   EXPECT_EQ(a.imported_foo().b(), b.imported_foo().b());
   EXPECT_EQ(a.inner().str(), b.inner().str());
@@ -484,7 +486,7 @@ void ExpectOneofWireRoundTrip(FillOneof fill, ExpectPhaserOneof expect_phaser,
   expect_phaser(phaser2);
 }
 
-} // namespace
+}  // namespace
 
 TEST(AllTypesTest, SetAndGetEveryScalar) {
   AllScalars msg;
@@ -539,12 +541,11 @@ TEST(AllTypesTest, ProtobufRoundTrip) {
 // the int32 range. Exercise large positive and negative 64-bit values in both
 // serialization directions to confirm wire compatibility with protobuf.
 TEST(AllTypesTest, LargeSintWireCompat) {
-  const int32_t kSint32Values[] = {INT32_MIN, -1000000, -1, 0, 1, 1000000,
-                                    INT32_MAX};
+  const int32_t kSint32Values[] = {INT32_MIN, -1000000, -1,       0,
+                                   1,         1000000,  INT32_MAX};
   const int64_t kSint64Values[] = {
-      INT64_MIN,           int64_t(INT32_MIN) - 1, int64_t(-1) << 40,
-      -1,                  0,                      1,
-      int64_t(1) << 40,    int64_t(INT32_MAX) + 1, INT64_MAX};
+      INT64_MIN, int64_t(INT32_MIN) - 1, -(int64_t(1) << 40),    -1,       0,
+      1,         int64_t(1) << 40,       int64_t(INT32_MAX) + 1, INT64_MAX};
 
   for (int32_t s32 : kSint32Values) {
     for (int64_t s64 : kSint64Values) {
@@ -571,10 +572,10 @@ TEST(AllTypesTest, LargeSintWireCompat) {
 
 TEST(AllTypesTest, MapInsertOverwriteAndClear) {
   MapHolder msg;
-  auto *e1 = msg.add_values();
+  auto* e1 = msg.add_values();
   e1->set_key("alpha");
   e1->set_value(1);
-  auto *e2 = msg.add_values();
+  auto* e2 = msg.add_values();
   e2->set_key("beta");
   e2->set_value(2);
 
@@ -590,7 +591,7 @@ TEST(AllTypesTest, MapInsertOverwriteAndClear) {
   msg.clear_values();
   EXPECT_EQ(0u, msg.values_size());
 
-  auto *e3 = msg.add_values();
+  auto* e3 = msg.add_values();
   e3->set_key("gamma");
   e3->set_value(3);
   EXPECT_EQ(1u, msg.values_size());
@@ -605,7 +606,7 @@ TEST(AllTypesTest, RepeatedPackedInt32GrowAndResize) {
   }
   ASSERT_EQ(static_cast<size_t>(kCount), msg.vi32_size());
   for (int i = 0; i < kCount; i++) {
-    EXPECT_EQ(i, msg.vi32(i));
+    EXPECT_EQ(i, msg.vi32(static_cast<size_t>(i)));
   }
   msg.resize_vi32(10);
   ASSERT_EQ(10u, msg.vi32_size());
@@ -630,12 +631,14 @@ TEST(AllTypesTest, RepeatedStringChurn) {
   for (int round = 0; round < 10; round++) {
     msg.clear_vstr();
     for (int i = 0; i < 100; i++) {
-      msg.add_vstr(::phaser::test::MakePatternString(32, static_cast<char>('a' + (i % 26))));
+      msg.add_vstr(::phaser::test::MakePatternString(
+          32, static_cast<char>('a' + (i % 26))));
     }
     ASSERT_EQ(100u, msg.vstr_size());
     for (int i = 0; i < 100; i++) {
-      EXPECT_EQ(::phaser::test::MakePatternString(32, static_cast<char>('a' + (i % 26))),
-                msg.vstr(i));
+      EXPECT_EQ(::phaser::test::MakePatternString(
+                    32, static_cast<char>('a' + (i % 26))),
+                msg.vstr(static_cast<size_t>(i)));
     }
   }
 }
@@ -661,9 +664,9 @@ TEST(AllTypesTest, RepeatedBytesWithNulls) {
 
 TEST(AllTypesTest, RepeatedMessagesSparseMutable) {
   RepeatedMessages msg;
-  auto *m5 = msg.mutable_items(5);
+  auto* m5 = msg.mutable_items(5);
   m5->set_f_string("slot-five");
-  auto *m0 = msg.mutable_items(0);
+  auto* m0 = msg.mutable_items(0);
   m0->set_f_int32(7);
   EXPECT_EQ(7, msg.items(0).f_int32());
   EXPECT_EQ("slot-five", msg.items(5).f_string());
@@ -691,7 +694,7 @@ TEST(AllTypesTest, OneofBytesArm) {
 
 TEST(AllTypesTest, OneofNestedMessageArm) {
   OneofStress msg;
-  auto *inner = msg.mutable_u_msg();
+  auto* inner = msg.mutable_u_msg();
   inner->set_f_string("nested");
   EXPECT_EQ("nested", msg.u_msg().f_string());
 }
@@ -742,41 +745,43 @@ TEST(AllTypesTest, AnyPackInnerAndImported) {
 
 TEST(AllTypesTest, WireFormatScalarsBidirectional) {
   ExpectBidirectionalWireRoundTrip<AllScalars, PbAllScalars>(
-      [](AllScalars &m) { FillAllScalars(m); },
-      [](PbAllScalars &m) { FillAllScalars(m); },
-      [](const AllScalars &a, const AllScalars &b) {
+      [](AllScalars& m) { FillAllScalars(m); },
+      [](PbAllScalars& m) { FillAllScalars(m); },
+      [](const AllScalars& a, const AllScalars& b) {
         ExpectAllScalarsMatch(a, b);
       },
-      [](const PbAllScalars &pb, const AllScalars &m) {
+      [](const PbAllScalars& pb, const AllScalars& m) {
         ExpectAllScalarsMatchPb(pb, m);
       });
 }
 
 TEST(AllTypesTest, WireFormatMapBidirectional) {
   ExpectBidirectionalWireRoundTrip<MapHolder, PbMapHolder>(
-      [](MapHolder &m) { FillMapHolder(m); },
-      [](PbMapHolder &m) { FillMapHolder(m); },
-      [](const MapHolder &a, const MapHolder &b) { ExpectMapHolderMatch(a, b); },
-      [](const PbMapHolder &pb, const MapHolder &m) {
+      [](MapHolder& m) { FillMapHolder(m); },
+      [](PbMapHolder& m) { FillMapHolder(m); },
+      [](const MapHolder& a, const MapHolder& b) {
+        ExpectMapHolderMatch(a, b);
+      },
+      [](const PbMapHolder& pb, const MapHolder& m) {
         ExpectMapHolderMatchPb(pb, m);
       });
 }
 
 TEST(AllTypesTest, WireFormatRepeatedPackedBidirectional) {
   ExpectBidirectionalWireRoundTrip<RepeatedPrimitivesPacked, PbRepeatedPacked>(
-      [](RepeatedPrimitivesPacked &m) { FillRepeatedPacked(m); },
-      [](PbRepeatedPacked &m) { FillRepeatedPacked(m); },
-      [](const RepeatedPrimitivesPacked &a, const RepeatedPrimitivesPacked &b) {
+      [](RepeatedPrimitivesPacked& m) { FillRepeatedPacked(m); },
+      [](PbRepeatedPacked& m) { FillRepeatedPacked(m); },
+      [](const RepeatedPrimitivesPacked& a, const RepeatedPrimitivesPacked& b) {
         ExpectRepeatedPackedMatch(a, b);
       },
-      [](const PbRepeatedPacked &pb, const RepeatedPrimitivesPacked &m) {
+      [](const PbRepeatedPacked& pb, const RepeatedPrimitivesPacked& m) {
         ExpectRepeatedPackedMatchPb(pb, m);
       });
 }
 
-// Proto has [packed=false], but phaser currently emits a length-delimited packed
-// payload for scalar repeated fields. Protobuf accepts that wire; verify both
-// directions through protobuf bytes.
+// Proto has [packed=false], but phaser currently emits a length-delimited
+// packed payload for scalar repeated fields. Protobuf accepts that wire; verify
+// both directions through protobuf bytes.
 TEST(AllTypesTest, WireFormatRepeatedUnpackedBidirectional) {
   PbRepeatedUnpacked pb;
   FillRepeatedUnpacked(pb);
@@ -802,48 +807,48 @@ TEST(AllTypesTest, WireFormatRepeatedUnpackedBidirectional) {
 
 TEST(AllTypesTest, WireFormatRepeatedStringsBidirectional) {
   ExpectBidirectionalWireRoundTrip<RepeatedStrings, PbRepeatedStrings>(
-      [](RepeatedStrings &m) { FillRepeatedStrings(m); },
-      [](PbRepeatedStrings &m) { FillRepeatedStrings(m); },
-      [](const RepeatedStrings &a, const RepeatedStrings &b) {
+      [](RepeatedStrings& m) { FillRepeatedStrings(m); },
+      [](PbRepeatedStrings& m) { FillRepeatedStrings(m); },
+      [](const RepeatedStrings& a, const RepeatedStrings& b) {
         ExpectRepeatedStringsMatch(a, b);
       },
-      [](const PbRepeatedStrings &pb, const RepeatedStrings &m) {
+      [](const PbRepeatedStrings& pb, const RepeatedStrings& m) {
         ExpectRepeatedStringsMatchPb(pb, m);
       });
 }
 
 TEST(AllTypesTest, WireFormatRepeatedBytesBidirectional) {
   ExpectBidirectionalWireRoundTrip<RepeatedBytes, PbRepeatedBytes>(
-      [](RepeatedBytes &m) { FillRepeatedBytes(m); },
-      [](PbRepeatedBytes &m) { FillRepeatedBytes(m); },
-      [](const RepeatedBytes &a, const RepeatedBytes &b) {
+      [](RepeatedBytes& m) { FillRepeatedBytes(m); },
+      [](PbRepeatedBytes& m) { FillRepeatedBytes(m); },
+      [](const RepeatedBytes& a, const RepeatedBytes& b) {
         ExpectRepeatedBytesMatch(a, b);
       },
-      [](const PbRepeatedBytes &pb, const RepeatedBytes &m) {
+      [](const PbRepeatedBytes& pb, const RepeatedBytes& m) {
         ExpectRepeatedBytesMatchPb(pb, m);
       });
 }
 
 TEST(AllTypesTest, WireFormatRepeatedMessagesBidirectional) {
   ExpectBidirectionalWireRoundTrip<RepeatedMessages, PbRepeatedMessages>(
-      [](RepeatedMessages &m) { FillRepeatedMessages(m); },
-      [](PbRepeatedMessages &m) { FillRepeatedMessages(m); },
-      [](const RepeatedMessages &a, const RepeatedMessages &b) {
+      [](RepeatedMessages& m) { FillRepeatedMessages(m); },
+      [](PbRepeatedMessages& m) { FillRepeatedMessages(m); },
+      [](const RepeatedMessages& a, const RepeatedMessages& b) {
         ExpectRepeatedMessagesMatch(a, b);
       },
-      [](const PbRepeatedMessages &pb, const RepeatedMessages &m) {
+      [](const PbRepeatedMessages& pb, const RepeatedMessages& m) {
         ExpectRepeatedMessagesMatchPb(pb, m);
       });
 }
 
 TEST(AllTypesTest, WireFormatImportsBidirectional) {
   ExpectBidirectionalWireRoundTrip<ImportsMessage, PbImportsMessage>(
-      [](ImportsMessage &m) { FillImportsMessage(m, true); },
-      [](PbImportsMessage &m) { FillImportsMessage(m, true); },
-      [](const ImportsMessage &a, const ImportsMessage &b) {
+      [](ImportsMessage& m) { FillImportsMessage(m, true); },
+      [](PbImportsMessage& m) { FillImportsMessage(m, true); },
+      [](const ImportsMessage& a, const ImportsMessage& b) {
         ExpectImportsMessageMatch(a, b, true);
       },
-      [](const PbImportsMessage &pb, const ImportsMessage &m) {
+      [](const PbImportsMessage& pb, const ImportsMessage& m) {
         ExpectImportsMessageMatchPb(pb, m, true);
       });
 }
@@ -897,8 +902,8 @@ TEST(AllTypesTest, WireFormatAnyFieldValueBeforeTypeUrl) {
     ASSERT_TRUE(
         buf.SerializeLengthDelimited(2, inner_wire.data(), inner_wire.size())
             .ok());
-    ASSERT_TRUE(buf.SerializeLengthDelimited(1, type_url.data(), type_url.size())
-                    .ok());
+    ASSERT_TRUE(
+        buf.SerializeLengthDelimited(1, type_url.data(), type_url.size()).ok());
     any_wire = buf.AsString();
   }
 
@@ -920,61 +925,56 @@ TEST(AllTypesTest, WireFormatAnyFieldValueBeforeTypeUrl) {
 }
 
 TEST(AllTypesTest, WireFormatOneofIntBidirectional) {
-  ExpectOneofWireRoundTrip(
-      [](OneofStress &m) { m.set_u_int(-99); },
-      [](const OneofStress &m) {
-        EXPECT_TRUE(m.has_u_int());
-        EXPECT_EQ(-99, m.u_int());
-      },
-      [](const PbOneofStress &pb) {
-        EXPECT_TRUE(pb.has_u_int());
-        EXPECT_EQ(-99, pb.u_int());
-      });
+  ExpectOneofWireRoundTrip([](OneofStress& m) { m.set_u_int(-99); },
+                           [](const OneofStress& m) {
+                             EXPECT_TRUE(m.has_u_int());
+                             EXPECT_EQ(-99, m.u_int());
+                           },
+                           [](const PbOneofStress& pb) {
+                             EXPECT_TRUE(pb.has_u_int());
+                             EXPECT_EQ(-99, pb.u_int());
+                           });
 }
 
 TEST(AllTypesTest, WireFormatOneofStringBidirectional) {
-  ExpectOneofWireRoundTrip(
-      [](OneofStress &m) { m.set_u_string("wire-oneof"); },
-      [](const OneofStress &m) {
-        EXPECT_TRUE(m.has_u_string());
-        EXPECT_EQ("wire-oneof", m.u_string());
-      },
-      [](const PbOneofStress &pb) {
-        EXPECT_TRUE(pb.has_u_string());
-        EXPECT_EQ("wire-oneof", pb.u_string());
-      });
+  ExpectOneofWireRoundTrip([](OneofStress& m) { m.set_u_string("wire-oneof"); },
+                           [](const OneofStress& m) {
+                             EXPECT_TRUE(m.has_u_string());
+                             EXPECT_EQ("wire-oneof", m.u_string());
+                           },
+                           [](const PbOneofStress& pb) {
+                             EXPECT_TRUE(pb.has_u_string());
+                             EXPECT_EQ("wire-oneof", pb.u_string());
+                           });
 }
 
 TEST(AllTypesTest, WireFormatOneofBytesBidirectional) {
   const std::string bytes = ::phaser::test::MakePatternBytes(48);
-  ExpectOneofWireRoundTrip(
-      [&](OneofStress &m) { m.set_u_bytes(bytes); },
-      [&](const OneofStress &m) {
-        EXPECT_TRUE(m.has_u_bytes());
-        EXPECT_EQ(bytes, m.u_bytes());
-      },
-      [&](const PbOneofStress &pb) {
-        EXPECT_TRUE(pb.has_u_bytes());
-        EXPECT_EQ(bytes, pb.u_bytes());
-      });
+  ExpectOneofWireRoundTrip([&](OneofStress& m) { m.set_u_bytes(bytes); },
+                           [&](const OneofStress& m) {
+                             EXPECT_TRUE(m.has_u_bytes());
+                             EXPECT_EQ(bytes, m.u_bytes());
+                           },
+                           [&](const PbOneofStress& pb) {
+                             EXPECT_TRUE(pb.has_u_bytes());
+                             EXPECT_EQ(bytes, pb.u_bytes());
+                           });
 }
 
 TEST(AllTypesTest, WireFormatOneofMessageBidirectional) {
   ExpectOneofWireRoundTrip(
-      [](OneofStress &m) {
-        FillAllScalars(*m.mutable_u_msg());
-      },
-      [](const OneofStress &m) {
+      [](OneofStress& m) { FillAllScalars(*m.mutable_u_msg()); },
+      [](const OneofStress& m) {
         EXPECT_TRUE(m.has_u_msg());
         AllScalars expected;
         FillAllScalars(expected);
         ExpectAllScalarsMatch(m.u_msg(), expected);
       },
-      [](const PbOneofStress &pb) {
+      [](const PbOneofStress& pb) {
         EXPECT_TRUE(pb.has_u_msg());
         EXPECT_EQ(-123456, pb.u_msg().f_int32());
         EXPECT_EQ("scalar-string", pb.u_msg().f_string());
       });
 }
 
-} // namespace foo::bar::coverage::phaser
+}  // namespace foo::bar::coverage::phaser

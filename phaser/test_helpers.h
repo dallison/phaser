@@ -4,15 +4,16 @@
 
 #pragma once
 
-#include "absl/status/statusor.h"
 #include <cstring>
 #include <functional>
 #include <string>
 #include <string_view>
 
+#include "absl/status/statusor.h"
+
 namespace phaser::test {
 
-inline void StripProtobufDebugRedaction(std::string &s) {
+inline void StripProtobufDebugRedaction(std::string& s) {
   // Recent protobuf versions prepend a non-deterministic redaction marker to
   // DebugString() output (e.g. "goo.gle/debugstr", "goo.gle/debugproto",
   // "goo.gle/debugonly") to discourage parsing the debug format. The marker is
@@ -41,14 +42,14 @@ inline void StripProtobufDebugRedaction(std::string &s) {
 }
 
 // Alloc succeeds until cumulative requested bytes exceed limit.
-inline std::function<absl::StatusOr<void *>(size_t)>
-AllocUntilLimit(size_t limit) {
-  return [remaining = limit](size_t size) mutable -> absl::StatusOr<void *> {
+inline std::function<absl::StatusOr<void*>(size_t)> AllocUntilLimit(
+    size_t limit) {
+  return [remaining = limit](size_t size) mutable -> absl::StatusOr<void*> {
     if (size > remaining) {
       return absl::ResourceExhaustedError("alloc limit exceeded");
     }
     remaining -= size;
-    void *p = ::malloc(size);
+    void* p = ::malloc(size);
     if (p == nullptr) {
       return absl::ResourceExhaustedError("malloc failed");
     }
@@ -56,9 +57,9 @@ AllocUntilLimit(size_t limit) {
   };
 }
 
-inline std::function<absl::StatusOr<void *>(void *, size_t, size_t)>
+inline std::function<absl::StatusOr<void*>(void*, size_t, size_t)>
 ReallocAlwaysFails() {
-  return [](void *, size_t, size_t) -> absl::StatusOr<void *> {
+  return [](void*, size_t, size_t) -> absl::StatusOr<void*> {
     return absl::ResourceExhaustedError("realloc denied");
   };
 }
@@ -76,4 +77,4 @@ inline std::string MakePatternBytes(size_t n) {
   return s;
 }
 
-} // namespace phaser::test
+}  // namespace phaser::test

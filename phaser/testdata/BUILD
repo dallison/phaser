@@ -56,6 +56,16 @@ phaser_library(
     deps = [":test_proto"],
 )
 
+# Same as foo_proto but with the optional `std::any active_message` field
+# enabled, used to exercise phaser_library(enable_active_message = True).
+phaser_library(
+    name = "foo_active_message_phaser",
+    add_namespace = "phaser",
+    enable_active_message = True,
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":foo_proto"],
+)
+
 proto_library(
     name = "coverage_proto",
     srcs = ["coverage.proto"],
