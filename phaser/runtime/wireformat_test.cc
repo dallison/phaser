@@ -2,13 +2,16 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
+#include "phaser/runtime/wireformat.h"
+
+#include <gtest/gtest.h>
+
+#include <cstdint>
+#include <sstream>
+
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
-#include "phaser/runtime/wireformat.h"
 #include "toolbelt/hexdump.h"
-#include <cstdint>
-#include <gtest/gtest.h>
-#include <sstream>
 
 using ProtoBuffer = phaser::ProtoBuffer;
 using WireType = phaser::WireType;
@@ -47,9 +50,9 @@ TEST(Wireformat, ZigZagKnownValues) {
   // 31-bit sign shift and produced garbage for anything outside the int32
   // range.
   EXPECT_EQ(1u, static_cast<uint64_t>(ProtoBuffer::ZigZag<int64_t>(-1)));
-  EXPECT_EQ(uint64_t(1) << 32,
-            static_cast<uint64_t>(ProtoBuffer::ZigZag<int64_t>(int64_t(1)
-                                                               << 31)));
+  EXPECT_EQ(
+      uint64_t(1) << 32,
+      static_cast<uint64_t>(ProtoBuffer::ZigZag<int64_t>(int64_t(1) << 31)));
   EXPECT_EQ(0xFFFFFFFFFFFFFFFEull,
             static_cast<uint64_t>(ProtoBuffer::ZigZag<int64_t>(INT64_MAX)));
   EXPECT_EQ(0xFFFFFFFFFFFFFFFFull,
@@ -58,9 +61,8 @@ TEST(Wireformat, ZigZagKnownValues) {
 
 TEST(Wireformat, ZigZagRoundTrip) {
   EXPECT_EQ(0, ProtoBuffer::ZagZig<int32_t>(ProtoBuffer::ZigZag<int32_t>(0)));
-  for (int32_t v :
-       {INT32_MIN, INT32_MIN + 1, -123456, -2, -1, 0, 1, 2, 123456,
-        INT32_MAX - 1, INT32_MAX}) {
+  for (int32_t v : {INT32_MIN, INT32_MIN + 1, -123456, -2, -1, 0, 1, 2, 123456,
+                    INT32_MAX - 1, INT32_MAX}) {
     EXPECT_EQ(v, ProtoBuffer::ZagZig<int32_t>(ProtoBuffer::ZigZag<int32_t>(v)))
         << "int32 value " << v;
   }
@@ -87,9 +89,9 @@ TEST(Wireformat, SintVarintRoundTrip) {
     ASSERT_TRUE(decoded.ok());
     EXPECT_EQ(v, *decoded) << "int64 value " << v;
   };
-  for (int64_t v : {INT64_MIN, int64_t(INT32_MIN) - 1, int64_t(-1),
-                    int64_t(0), int64_t(1), int64_t(1) << 33,
-                    int64_t(INT32_MAX) + 1, INT64_MAX}) {
+  for (int64_t v :
+       {INT64_MIN, int64_t(INT32_MIN) - 1, int64_t(-1), int64_t(0), int64_t(1),
+        int64_t(1) << 33, int64_t(INT32_MAX) + 1, INT64_MAX}) {
     round_trip64(v);
   }
 
@@ -107,7 +109,7 @@ TEST(Wireformat, SintVarintRoundTrip) {
   }
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 
   return RUN_ALL_TESTS();

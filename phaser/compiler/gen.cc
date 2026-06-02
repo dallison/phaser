@@ -3,18 +3,20 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/compiler/gen.h"
-#include "absl/strings/str_format.h"
-#include "absl/strings/str_split.h"
+
 #include <filesystem>
 #include <fstream>
 
+#include "absl/strings/str_format.h"
+#include "absl/strings/str_split.h"
+
 namespace phaser {
 
-static void
-WriteToZeroCopyStream(const std::string &data,
-                      google::protobuf::io::ZeroCopyOutputStream *stream) {
+static void WriteToZeroCopyStream(
+    const std::string& data,
+    google::protobuf::io::ZeroCopyOutputStream* stream) {
   // Write to the stream that protobuf wants
-  void *data_buffer;
+  void* data_buffer;
   int size;
   size_t offset = 0;
   while (offset < data.size()) {
@@ -29,7 +31,9 @@ WriteToZeroCopyStream(const std::string &data,
   }
 }
 
-static std::string GeneratedFilename(const std::filesystem::path& package_name, const std::filesystem::path& target_name, std::string filename) {
+static std::string GeneratedFilename(const std::filesystem::path& package_name,
+                                     const std::filesystem::path& target_name,
+                                     std::string filename) {
   size_t virtual_imports = filename.find("_virtual_imports/");
   if (virtual_imports != std::string::npos) {
     // This is something like:
@@ -38,14 +42,13 @@ static std::string GeneratedFilename(const std::filesystem::path& package_name, 
     // Remove the first directory.
     filename = filename.substr(filename.find('/') + 1);
   }
-  return  package_name / target_name / filename;
+  return package_name / target_name / filename;
 }
 
 bool CodeGenerator::Generate(
-    const google::protobuf::FileDescriptor *file, const std::string &parameter,
-    google::protobuf::compiler::GeneratorContext *generator_context,
-    std::string *error) const {
-
+    const google::protobuf::FileDescriptor* file, const std::string& parameter,
+    google::protobuf::compiler::GeneratorContext* generator_context,
+    std::string* error) const {
   // The options for the compiler are passed in the --phaser_out parameter
   // as a comma separated list of key=value pairs, followed by a colon
   // and then the output directory.
@@ -61,10 +64,10 @@ bool CodeGenerator::Generate(
       target_name_ = option.second;
     } else if (option.first == "active_message") {
       // Bare flag or explicit truthy value enables the field.
-      generate_active_message_ =
-          option.second.empty() || option.second == "true" ||
-          option.second == "1";
-   }
+      generate_active_message_ = option.second.empty() ||
+                                 option.second == "true" ||
+                                 option.second == "1";
+    }
   }
 
   Generator gen(file, added_namespace_, package_name_, target_name_,
@@ -85,7 +88,7 @@ bool CodeGenerator::Generate(
       generator_context->Open(hp.string()));
 
   std::filesystem::create_directories(hp.parent_path());
-  
+
   if (header_output == nullptr) {
     std::cerr << "Failed to open " << hp << " for writing\n";
     *error = absl::StrFormat("Failed to open %s for writing", hp.string());
@@ -112,10 +115,9 @@ bool CodeGenerator::Generate(
   return true;
 }
 
-
-void Generator::OpenNamespace(std::ostream &os) {
+void Generator::OpenNamespace(std::ostream& os) {
   std::vector<std::string> parts = absl::StrSplit(file_->package(), '.');
-  for (const auto &part : parts) {
+  for (const auto& part : parts) {
     os << "namespace " << part << " {\n";
   }
   if (!added_namespace_.empty()) {
@@ -123,26 +125,28 @@ void Generator::OpenNamespace(std::ostream &os) {
   }
 }
 
-void Generator::CloseNamespace(std::ostream &os) {
+void Generator::CloseNamespace(std::ostream& os) {
   if (!added_namespace_.empty()) {
     os << "} // namespace " << added_namespace_ << "\n";
   }
   std::vector<std::string> parts = absl::StrSplit(file_->package(), '.');
-  for (const auto &part : parts) {
+  for (const auto& part : parts) {
     os << "} // namespace " << part << "\n";
   }
 }
 
-Generator::Generator(const google::protobuf::FileDescriptor *file,
-                     const std::string &ns, const std::string& pn,
+Generator::Generator(const google::protobuf::FileDescriptor* file,
+                     const std::string& ns, const std::string& pn,
                      const std::string& tn, bool generate_active_message)
-    : file_(file), added_namespace_(ns), package_name_(pn), target_name_(tn),
+    : file_(file),
+      added_namespace_(ns),
+      package_name_(pn),
+      target_name_(tn),
       generate_active_message_(generate_active_message) {
   for (int i = 0; i < file->message_type_count(); i++) {
-    message_gens_.push_back(
-        std::make_unique<MessageGenerator>(
-            file->message_type(i), added_namespace_,
-            std::string(file->package()), generate_active_message_));
+    message_gens_.push_back(std::make_unique<MessageGenerator>(
+        file->message_type(i), added_namespace_, std::string(file->package()),
+        generate_active_message_));
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {
@@ -150,7 +154,7 @@ Generator::Generator(const google::protobuf::FileDescriptor *file,
   }
 }
 
-void Generator::GenerateHeaders(std::ostream &os) {
+void Generator::GenerateHeaders(std::ostream& os) {
   os << "#pragma once\n";
   os << "#include \"phaser/runtime/runtime.h\"\n";
   if (generate_active_message_) {
@@ -158,8 +162,7 @@ void Generator::GenerateHeaders(std::ostream &os) {
   }
   for (int i = 0; i < file_->dependency_count(); i++) {
     std::string base = GeneratedFilename(
-        package_name_, target_name_,
-        std::string(file_->dependency(i)->name()));
+        package_name_, target_name_, std::string(file_->dependency(i)->name()));
     std::filesystem::path p(base);
     p.replace_extension(".phaser.h");
     os << "#include \"" << p.string() << "\"\n";
@@ -168,33 +171,33 @@ void Generator::GenerateHeaders(std::ostream &os) {
   OpenNamespace(os);
 
   // Enums
-  for (auto &enum_gen : enum_gens_) {
+  for (auto& enum_gen : enum_gens_) {
     enum_gen->GenerateHeader(os);
   }
 
-  for (auto &msg_gen : message_gens_) {
+  for (auto& msg_gen : message_gens_) {
     msg_gen->GenerateEnums(os);
   }
 
-  for (auto &msg_gen : message_gens_) {
+  for (auto& msg_gen : message_gens_) {
     msg_gen->GenerateHeader(os);
   }
 
   CloseNamespace(os);
 }
 
-void Generator::GenerateSources(std::ostream &os) {
-  std::filesystem::path p(GeneratedFilename(
-      package_name_, target_name_, std::string(file_->name())));
+void Generator::GenerateSources(std::ostream& os) {
+  std::filesystem::path p(GeneratedFilename(package_name_, target_name_,
+                                            std::string(file_->name())));
   p.replace_extension(".phaser.h");
   os << "#include \"" << p.string() << "\"\n";
 
   OpenNamespace(os);
 
-  for (auto &msg_gen : message_gens_) {
+  for (auto& msg_gen : message_gens_) {
     msg_gen->GenerateSource(os);
   }
 
   CloseNamespace(os);
 }
-} // namespace phaser
+}  // namespace phaser

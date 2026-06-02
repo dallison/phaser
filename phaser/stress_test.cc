@@ -2,11 +2,13 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/runtime/message.h"
-#include "test_helpers.h"
-#include "phaser/testdata/TestMessage.phaser.h"
 #include <gtest/gtest.h>
+
 #include <vector>
+
+#include "phaser/runtime/message.h"
+#include "phaser/testdata/TestMessage.phaser.h"
+#include "test_helpers.h"
 
 namespace {
 
@@ -24,11 +26,11 @@ TEST(StressTest, DynamicStringPressure) {
 
 TEST(StressTest, FixedBufferTuningSizeMode) {
   constexpr size_t kBufSize = 4096;
-  char *buffer = static_cast<char *>(calloc(kBufSize, 1));
+  char* buffer = static_cast<char*>(calloc(kBufSize, 1));
   ASSERT_NE(nullptr, buffer);
 
-  TestMessage msg = TestMessage::CreateMutable(buffer, kBufSize,
-                                               ::phaser::Tuning::kSize);
+  TestMessage msg =
+      TestMessage::CreateMutable(buffer, kBufSize, ::phaser::Tuning::kSize);
   for (int i = 0; i < 200; i++) {
     msg.add_vi32(i);
   }
@@ -68,9 +70,9 @@ TEST(StressTest, AllocFailsAtStart) {
 
 TEST(StressTest, CustomAllocSucceeds) {
   TestMessage msg = TestMessage::CreateDynamicMutable(
-      512, ::phaser::test::AllocUntilLimit(64 * 1024), [](void *p) { free(p); },
-      [](void *p, size_t, size_t new_size) -> absl::StatusOr<void *> {
-        void *r = realloc(p, new_size);
+      512, ::phaser::test::AllocUntilLimit(64 * 1024), [](void* p) { free(p); },
+      [](void* p, size_t, size_t new_size) -> absl::StatusOr<void*> {
+        void* r = realloc(p, new_size);
         if (r == nullptr) {
           return absl::ResourceExhaustedError("realloc failed");
         }
@@ -85,7 +87,7 @@ TEST(StressTest, ReallocFailureAborts) {
       {
         TestMessage msg = TestMessage::CreateDynamicMutable(
             256, ::phaser::test::AllocUntilLimit(1024 * 1024),
-            [](void *p) { free(p); }, ::phaser::test::ReallocAlwaysFails());
+            [](void* p) { free(p); }, ::phaser::test::ReallocAlwaysFails());
         for (int i = 0; i < 2000; i++) {
           msg.add_vstr(::phaser::test::MakePatternString(256, 'x'));
         }
@@ -98,7 +100,8 @@ TEST(StressTest, RepeatedStringResizeAndReplace) {
   ASSERT_FALSE(msg.allocate_buffer(64 * 1024).empty());
   msg.resize_vstr(200);
   for (size_t i = 0; i < 200; i++) {
-    msg.set_vstr(i, ::phaser::test::MakePatternString(16, static_cast<char>('a' + (i % 26))));
+    msg.set_vstr(i, ::phaser::test::MakePatternString(
+                        16, static_cast<char>('a' + (i % 26))));
   }
   msg.clear_vstr();
   EXPECT_EQ(0u, msg.vstr_size());
@@ -112,8 +115,9 @@ TEST(StressTest, MapManyEntries) {
   TestMessage msg(4096);
   ASSERT_FALSE(msg.allocate_buffer(128 * 1024).empty());
   for (int i = 0; i < 500; i++) {
-    auto *e = msg.add_values();
-    e->set_key(::phaser::test::MakePatternString(8, static_cast<char>('k' + (i % 10))));
+    auto* e = msg.add_values();
+    e->set_key(::phaser::test::MakePatternString(
+        8, static_cast<char>('k' + (i % 10))));
     e->set_value(i);
   }
   ASSERT_EQ(500u, msg.values_size());
@@ -122,4 +126,4 @@ TEST(StressTest, MapManyEntries) {
   }
 }
 
-} // namespace
+}  // namespace

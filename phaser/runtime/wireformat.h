@@ -3,16 +3,18 @@
 // See LICENSE file for licensing information.
 
 #pragma once
+#include <stdint.h>
+#include <string.h>
+
+#include <cstddef>
+#include <string>
+#include <string_view>
+#include <type_traits>
+
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include <cstddef>
-#include <stdint.h>
-#include <string.h>
-#include <string>
-#include <string_view>
-#include <type_traits>
 
 namespace phaser {
 
@@ -26,7 +28,7 @@ enum class WireType {
 };
 
 class ProtoBuffer {
-public:
+ public:
   static constexpr int kFieldIdShift = 3;
   static constexpr int kWireTypeMask = (1 << kFieldIdShift) - 1;
   static constexpr int kFieldIdMask = ~kWireTypeMask;
@@ -37,7 +39,7 @@ public:
       // Need a reasonable size to start with.
       abort();
     }
-    start_ = reinterpret_cast<char *>(malloc(size_));
+    start_ = reinterpret_cast<char*>(malloc(size_));
     if (start_ == nullptr) {
       abort();
     }
@@ -49,12 +51,18 @@ public:
   }
 
   // Fixed buffer in non-owned memory.
-  ProtoBuffer(char *addr, size_t size)
-      : owned_(false), start_(addr), size_(size), addr_(addr),
+  ProtoBuffer(char* addr, size_t size)
+      : owned_(false),
+        start_(addr),
+        size_(size),
+        addr_(addr),
         end_(addr_ + size) {}
 
-  ProtoBuffer(const char *addr, size_t size)
-      : owned_(false), start_(const_cast<char*>(addr)), size_(size), addr_(const_cast<char*>(addr)),
+  ProtoBuffer(const char* addr, size_t size)
+      : owned_(false),
+        start_(const_cast<char*>(addr)),
+        size_(size),
+        addr_(const_cast<char*>(addr)),
         end_(addr_ + size) {}
 
   ProtoBuffer(absl::Span<char> v) {
@@ -81,16 +89,20 @@ public:
 
   size_t size() const { return Size(); }
 
-  template <typename T> T *Data() { return reinterpret_cast<T *>(start_); }
+  template <typename T>
+  T* Data() {
+    return reinterpret_cast<T*>(start_);
+  }
 
-  char *data() { return Data<char>(); }
+  char* data() { return Data<char>(); }
 
   std::string AsString() const {
     return std::string(start_, static_cast<size_t>(addr_ - start_));
   }
 
-  template <typename T> absl::Span<const T> AsSpan() const {
-    return absl::Span<T>(reinterpret_cast<const T *>(start_),
+  template <typename T>
+  absl::Span<const T> AsSpan() const {
+    return absl::Span<T>(reinterpret_cast<const T*>(start_),
                          static_cast<size_t>(addr_ - start_));
   }
 
@@ -107,19 +119,22 @@ public:
   // it is free of signed overflow/shift undefined behavior and is correct for
   // any width of T (the previous implementation hard-coded a 31-bit shift and
   // produced wrong results for 64-bit values).
-  template <typename T> static T ZigZag(T value) {
+  template <typename T>
+  static T ZigZag(T value) {
     using U = std::make_unsigned_t<T>;
     constexpr unsigned kSignShift = sizeof(T) * 8 - 1;
     const U u = static_cast<U>(value);
     return static_cast<T>((u << 1) ^ static_cast<U>(-(u >> kSignShift)));
   }
-  template <typename T> static T ZagZig(T value) {
+  template <typename T>
+  static T ZagZig(T value) {
     using U = std::make_unsigned_t<T>;
     const U u = static_cast<U>(value);
     return static_cast<T>((u >> 1) ^ static_cast<U>(-(u & U(1))));
   }
 
-  template <typename T> static constexpr WireType FixedWireType() {
+  template <typename T>
+  static constexpr WireType FixedWireType() {
     if (sizeof(T) == 4) {
       return WireType::kFixed32;
     } else if (sizeof(T) == 8) {
@@ -134,7 +149,8 @@ public:
         static_cast<int32_t>(MakeTag(field_number, wire_type)));
   }
 
-  template <typename T, bool Signed> static uint64_t ToVarintWire(T value) {
+  template <typename T, bool Signed>
+  static uint64_t ToVarintWire(T value) {
     if constexpr (Signed) {
       return static_cast<uint64_t>(ZigZag(value));
     }
@@ -148,7 +164,8 @@ public:
     return static_cast<uint64_t>(value);
   }
 
-  template <typename T, bool Signed> static size_t VarintSize(T value) {
+  template <typename T, bool Signed>
+  static size_t VarintSize(T value) {
     uint64_t uvalue = ToVarintWire<T, Signed>(value);
     size_t size = 0;
     for (;;) {
@@ -171,7 +188,8 @@ public:
 
   // Serialization functions.
 
-  template <typename T, bool Signed> absl::Status SerializeRawVarint(T value) {
+  template <typename T, bool Signed>
+  absl::Status SerializeRawVarint(T value) {
     uint64_t uvalue = ToVarintWire<T, Signed>(value);
     if (auto status = HasSpaceFor(VarintSize<uint64_t, false>(uvalue));
         !status.ok()) {
@@ -202,7 +220,8 @@ public:
         static_cast<uint32_t>(MakeTag(field_number, wire_type)));
   }
 
-  template <typename T> absl::Status SerializeFixed(int field_number, T value) {
+  template <typename T>
+  absl::Status SerializeFixed(int field_number, T value) {
     if (auto status = SerializeTag(field_number, FixedWireType<T>());
         !status.ok()) {
       return status;
@@ -216,7 +235,7 @@ public:
     return absl::OkStatus();
   }
 
-  absl::Status SerializeLengthDelimited(int field_number, const void *data,
+  absl::Status SerializeLengthDelimited(int field_number, const void* data,
                                         size_t length) {
     if (auto status = SerializeTag(field_number, WireType::kLengthDelimited);
         !status.ok()) {
@@ -243,7 +262,7 @@ public:
     return SerializeRawVarint<int32_t, false>(static_cast<int32_t>(length));
   }
 
-  absl::Status SerializeRaw(const void *data, size_t length) {
+  absl::Status SerializeRaw(const void* data, size_t length) {
     if (auto status = HasSpaceFor(length); !status.ok()) {
       return status;
     }
@@ -273,44 +292,45 @@ public:
     WireType wire_type = WireType(tag & kWireTypeMask);
     tag >>= kFieldIdShift;
     switch (wire_type) {
-    case WireType::kVarint:
-      if (absl::Status status = SkipVarint(); !status.ok()) {
-        return status;
+      case WireType::kVarint:
+        if (absl::Status status = SkipVarint(); !status.ok()) {
+          return status;
+        }
+        break;
+      case WireType::kFixed64:
+        if (absl::Status status = Check(8); !status.ok()) {
+          return status;
+        }
+        addr_ += 8;
+        break;
+      case WireType::kLengthDelimited: {
+        absl::StatusOr<uint32_t> length = DeserializeVarint<uint32_t, false>();
+        if (!length.ok()) {
+          return length.status();
+        }
+        if (absl::Status status = Check(*length); !status.ok()) {
+          return status;
+        }
+        addr_ += *length;
+        break;
       }
-      break;
-    case WireType::kFixed64:
-      if (absl::Status status = Check(8); !status.ok()) {
-        return status;
-      }
-      addr_ += 8;
-      break;
-    case WireType::kLengthDelimited: {
-      absl::StatusOr<uint32_t> length = DeserializeVarint<uint32_t, false>();
-      if (!length.ok()) {
-        return length.status();
-      }
-      if (absl::Status status = Check(*length); !status.ok()) {
-        return status;
-      }
-      addr_ += *length;
-      break;
-    }
-    case WireType::kStartGroup:
-    case WireType::kEndGroup:
-      return absl::InternalError("Unsupported wire type");
-    case WireType::kFixed32:
-      if (absl::Status status = Check(4); !status.ok()) {
-        return status;
-      }
-      addr_ += 4;
-      break;
+      case WireType::kStartGroup:
+      case WireType::kEndGroup:
+        return absl::InternalError("Unsupported wire type");
+      case WireType::kFixed32:
+        if (absl::Status status = Check(4); !status.ok()) {
+          return status;
+        }
+        addr_ += 4;
+        break;
     }
 
     return absl::OkStatus();
   }
 
   // Tag has already been read.
-  template <typename T, bool Signed> absl::StatusOr<T> DeserializeVarint() {
+  template <typename T, bool Signed>
+  absl::StatusOr<T> DeserializeVarint() {
     uint64_t value = 0;
     for (int shift = 0; shift < 64; shift += 7) {
       if (absl::Status status = Check(1); !status.ok()) {
@@ -334,7 +354,8 @@ public:
     return absl::InternalError("Varint too long");
   }
 
-  template <typename T> absl::StatusOr<T> DeserializeFixed() {
+  template <typename T>
+  absl::StatusOr<T> DeserializeFixed() {
     if (absl::Status status = Check(sizeof(T)); !status.ok()) {
       return status;
     }
@@ -372,7 +393,7 @@ public:
     return str;
   }
 
-  absl::Status CopyRaw(char *dest, size_t length) {
+  absl::Status CopyRaw(char* dest, size_t length) {
     if (absl::Status status = Check(length); !status.ok()) {
       return status;
     }
@@ -381,21 +402,21 @@ public:
     return absl::OkStatus();
   }
 
-private:
+ private:
   size_t static MakeTag(int field_number, WireType wire_type) {
     return static_cast<size_t>((field_number << kFieldIdShift) |
                                int(wire_type));
   }
 
   absl::Status HasSpaceFor(size_t n) {
-    char *next = addr_ + n;
+    char* next = addr_ + n;
     // Off-by-one complexity here.  The end is one past the end of the buffer.
     if (next > end_) {
       if (owned_) {
         // Expand the buffer.
         size_t new_size = size_ * 2;
 
-        char *new_start = reinterpret_cast<char *>(realloc(start_, new_size));
+        char* new_start = reinterpret_cast<char*>(realloc(start_, new_size));
         if (new_start == nullptr) {
           abort();
         }
@@ -415,18 +436,18 @@ private:
   }
 
   absl::Status Check(size_t n) {
-    char *next = addr_ + n;
+    char* next = addr_ + n;
     if (next <= end_) {
       return absl::OkStatus();
     }
     return absl::InternalError("End of buffer");
   }
 
-  bool owned_ = false;    // Memory is owned by this buffer.
-  char *start_ = nullptr; //
+  bool owned_ = false;     // Memory is owned by this buffer.
+  char* start_ = nullptr;  //
   size_t size_ = 0;
-  char *addr_ = nullptr;
-  char *end_ = nullptr;
+  char* addr_ = nullptr;
+  char* end_ = nullptr;
 };
 
-} // namespace phaser
+}  // namespace phaser

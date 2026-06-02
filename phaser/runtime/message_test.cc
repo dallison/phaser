@@ -2,14 +2,16 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
+#include <gtest/gtest.h>
+
+#include <sstream>
+
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "toolbelt/hexdump.h"
 #include "toolbelt/payload_buffer.h"
-#include <gtest/gtest.h>
-#include <sstream>
 
 using PayloadBuffer = ::toolbelt::PayloadBuffer;
 using BufferOffset = ::toolbelt::BufferOffset;
@@ -25,12 +27,12 @@ enum class EnumTest : uint16_t { UNSET = 0, FOO = 0xda, BAR = 0xad };
 struct EnumTestStringizer {
   std::string operator()(EnumTest e) const {
     switch (e) {
-    case EnumTest::FOO:
-      return "FOO";
-    case EnumTest::BAR:
-      return "BAR";
-    case EnumTest::UNSET:
-      return "UNSET";
+      case EnumTest::FOO:
+        return "FOO";
+      case EnumTest::BAR:
+        return "BAR";
+      case EnumTest::UNSET:
+        return "UNSET";
     }
     return "UNKNOWN";
   }
@@ -93,13 +95,13 @@ struct InnerMessage : public Message {
   std::string GetName() const override { return Name(); }
   std::string GetFullName() const override { return FullName(); }
 
-  friend std::ostream &operator<<(std::ostream &os, const InnerMessage &msg);
+  friend std::ostream& operator<<(std::ostream& os, const InnerMessage& msg);
 
-  const ::phaser::MessageInfo *GetMessageInfo() const override {
+  const ::phaser::MessageInfo* GetMessageInfo() const override {
     return InnerMessage::GetMessageInfoStatic();
   }
 
-  static const ::phaser::MessageInfo *GetMessageInfoStatic() {
+  static const ::phaser::MessageInfo* GetMessageInfoStatic() {
     static phaser::MessageInfo info;
     if (!info.full_name.empty()) {
       return &info;
@@ -121,7 +123,7 @@ struct InnerMessage : public Message {
         std::make_shared<phaser::UnionInfo>("uv", offsetof(InnerMessage, uv_));
 
     // Add to fields maps.
-    for (auto &f : info.fields_in_order) {
+    for (auto& f : info.fields_in_order) {
       info.fields_by_number[f->number] = f;
       info.fields_by_name[f->name] = f;
     }
@@ -135,7 +137,7 @@ struct InnerMessage : public Message {
       u->fields_in_order[1] = std::make_shared<phaser::UnionFieldInfo>(
           "uvb", phaser::FieldType::kFieldEnum, 60, u->offset, 1);
       // Add to fields map.
-      for (auto &f : u->fields_in_order) {
+      for (auto& f : u->fields_in_order) {
         info.fields_by_number[f->number] = f;
         info.fields_by_name[f->name] = f;
       }
@@ -144,8 +146,9 @@ struct InnerMessage : public Message {
     return &info;
   }
 
-  static InnerMessage CreateMutable(void *addr, size_t size) {
-    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
+  static InnerMessage CreateMutable(void* addr, size_t size) {
+    ::toolbelt::PayloadBuffer* pb =
+        new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    InnerMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
@@ -168,12 +171,12 @@ struct InnerMessage : public Message {
     return os.str();
   }
 
-  void CopyFrom(const Message &m) override {
-    const InnerMessage &other = static_cast<const InnerMessage &>(m);
+  void CopyFrom(const Message& m) override {
+    const InnerMessage& other = static_cast<const InnerMessage&>(m);
     (void)CloneFrom(other);
   }
 
-  absl::Status CloneFrom(const InnerMessage &other) {
+  absl::Status CloneFrom(const InnerMessage& other) {
     if (other.str_.IsPresent()) {
       str_.Set(other.str_.Get());
     }
@@ -183,29 +186,34 @@ struct InnerMessage : public Message {
     if (other.e_.IsPresent()) {
       e_.Set(other.e_.Get());
     }
-    for (auto &v : other.ev_) {
+    for (auto& v : other.ev_) {
       ev_.Add(v);
     }
     switch (other.uv_.Discriminator()) {
-    case 50:
-      if (absl::Status s = uv_.CloneFrom<0>(other.uv_.GetValue<0, uint32_t>());
-          !s.ok()) {
-        return s;
-      }
-      break;
-    case 60:
-      if (absl::Status s = uv_.CloneFrom<1>(other.uv_.GetValue<1, EnumTest>());
-          !s.ok()) {
-        return s;
-      }
-      break;
+      case 50:
+        if (absl::Status s =
+                uv_.CloneFrom<0>(other.uv_.GetValue<0, uint32_t>());
+            !s.ok()) {
+          return s;
+        }
+        break;
+      case 60:
+        if (absl::Status s =
+                uv_.CloneFrom<1>(other.uv_.GetValue<1, EnumTest>());
+            !s.ok()) {
+          return s;
+        }
+        break;
     }
     return absl::OkStatus();
   }
 
   // Protobuf accessors.
   std::string_view str() const { return str_.Get(); }
-  template <typename Str> void set_str(Str str) { str_.Set(str); }
+  template <typename Str>
+  void set_str(Str str) {
+    str_.Set(str);
+  }
 
   void clear_str() { str_.Clear(); }
   bool has_str() const { return str_.IsPresent(); }
@@ -242,17 +250,17 @@ struct InnerMessage : public Message {
     }
     size += ev_.SerializedSize();
     switch (uv_.Discriminator()) {
-    case 50:
-      size += uv_.SerializedSize<0>(50);
-      break;
-    case 60:
-      size += uv_.SerializedSize<1>(60);
-      break;
+      case 50:
+        size += uv_.SerializedSize<0>(50);
+        break;
+      case 60:
+        size += uv_.SerializedSize<1>(60);
+        break;
     }
     return size;
   }
 
-  absl::Status Serialize(phaser::ProtoBuffer &buffer) const {
+  absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
     if (str_.IsPresent()) {
       if (absl::Status status = str_.Serialize(buffer); !status.ok()) {
         return status;
@@ -273,22 +281,22 @@ struct InnerMessage : public Message {
     }
 
     switch (uv_.Discriminator()) {
-    case 50:
-      if (absl::Status status = uv_.Serialize<0>(50, buffer); !status.ok()) {
-        return status;
-      }
-      break;
-    case 60:
-      if (absl::Status status = uv_.Serialize<1>(60, buffer); !status.ok()) {
-        return status;
-      }
-      break;
+      case 50:
+        if (absl::Status status = uv_.Serialize<0>(50, buffer); !status.ok()) {
+          return status;
+        }
+        break;
+      case 60:
+        if (absl::Status status = uv_.Serialize<1>(60, buffer); !status.ok()) {
+          return status;
+        }
+        break;
     }
 
     return absl::OkStatus();
   }
 
-  absl::Status Deserialize(phaser::ProtoBuffer &buffer) {
+  absl::Status Deserialize(phaser::ProtoBuffer& buffer) {
     while (!buffer.Eof()) {
       absl::StatusOr<uint32_t> tag =
           buffer.DeserializeVarint<uint32_t, false>();
@@ -297,49 +305,49 @@ struct InnerMessage : public Message {
       }
       uint32_t field_number = *tag >> phaser::ProtoBuffer::kFieldIdShift;
       switch (field_number) {
-      case 10:
-        if (absl::Status status = str_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 20:
-        if (absl::Status status = f_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 30:
-        if (absl::Status status = e_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 40:
-        if (absl::Status status = ev_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 50:
-        if (absl::Status status = uv_.Deserialize<0>(50, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      case 60:
-        if (absl::Status status = uv_.Deserialize<1>(60, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      default:
-        if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
-          return status;
-        }
+        case 10:
+          if (absl::Status status = str_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 20:
+          if (absl::Status status = f_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 30:
+          if (absl::Status status = e_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 40:
+          if (absl::Status status = ev_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 50:
+          if (absl::Status status = uv_.Deserialize<0>(50, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        case 60:
+          if (absl::Status status = uv_.Deserialize<1>(60, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        default:
+          if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
+            return status;
+          }
       }
     }
     return absl::OkStatus();
   }
 
   phaser::StringField str_;
-  phaser::Uint64Field<true, false> f_; // Fixed size.
+  phaser::Uint64Field<true, false> f_;  // Fixed size.
   phaser::EnumField<EnumTest, EnumTestStringizer, EnumTestParser> e_;
   phaser::EnumVectorField<EnumTest, EnumTestStringizer, EnumTestParser, false>
       ev_;
@@ -349,7 +357,7 @@ struct InnerMessage : public Message {
       uv_;
 };
 
-inline std::ostream &operator<<(std::ostream &os, const InnerMessage &msg) {
+inline std::ostream& operator<<(std::ostream& os, const InnerMessage& msg) {
   if (msg.str_.IsPresent()) {
     msg.str_.PrintIndent(os);
     os << "str: " << msg.str_ << std::endl;
@@ -362,133 +370,132 @@ inline std::ostream &operator<<(std::ostream &os, const InnerMessage &msg) {
     msg.e_.PrintIndent(os);
     os << "e: " << msg.e_ << std::endl;
   }
-  for (auto &v : msg.ev_) {
+  for (auto& v : msg.ev_) {
     msg.ev_.PrintIndent(os);
     os << "ev: " << EnumTestStringizer()(v) << std::endl;
   }
   switch (msg.uv_.Discriminator()) {
-  case 50:
-    msg.uv_.PrintIndent(os);
-    os << "uva: ";
-    msg.uv_.Print<0>(os);
-    os << std::endl;
-    break;
-  case 60:
-    msg.uv_.PrintIndent(os);
-    os << "uvb: ";
-    msg.uv_.Print<1>(os);
-    os << std::endl;
-    break;
+    case 50:
+      msg.uv_.PrintIndent(os);
+      os << "uva: ";
+      msg.uv_.Print<0>(os);
+      os << std::endl;
+      break;
+    case 60:
+      msg.uv_.PrintIndent(os);
+      os << "uvb: ";
+      msg.uv_.Print<1>(os);
+      os << std::endl;
+      break;
   }
   return os;
 }
 
-static void InnerMessageStreamTo(const Message &msg, std::ostream &os,
+static void InnerMessageStreamTo(const Message& msg, std::ostream& os,
                                  int /*indent*/) {
-  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
+  const InnerMessage* m = static_cast<const InnerMessage*>(&msg);
   os << *m;
 }
 
-static absl::Status InnerMessageSerializeToBuffer(const Message &msg,
-                                                  phaser::ProtoBuffer &buffer) {
-  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
+static absl::Status InnerMessageSerializeToBuffer(const Message& msg,
+                                                  phaser::ProtoBuffer& buffer) {
+  const InnerMessage* m = static_cast<const InnerMessage*>(&msg);
   return m->Serialize(buffer);
 }
 
-static absl::Status
-InnerMessageDeserializeFromBuffer(Message &msg, phaser::ProtoBuffer &buffer) {
-  InnerMessage *m = static_cast<InnerMessage *>(&msg);
+static absl::Status InnerMessageDeserializeFromBuffer(
+    Message& msg, phaser::ProtoBuffer& buffer) {
+  InnerMessage* m = static_cast<InnerMessage*>(&msg);
   return m->Deserialize(buffer);
 }
 
-static size_t InnerMessageSerializedSize(const Message &msg) {
-  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
+static size_t InnerMessageSerializedSize(const Message& msg) {
+  const InnerMessage* m = static_cast<const InnerMessage*>(&msg);
   return m->SerializedSize();
 }
 
-static Message *
-InnerMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
-                             toolbelt::BufferOffset offset) {
+static Message* InnerMessageAllocateAtOffset(
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset) {
   auto msg = new InnerMessage(runtime, offset);
   msg->InstallMetadata<InnerMessage>();
   return msg;
 }
 
-static std::pair<Message *, toolbelt::BufferOffset>
-InnerMessageAllocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {
-  void *addr = toolbelt::PayloadBuffer::Allocate(
-      &runtime->pb, InnerMessage::BinarySize());
+static std::pair<Message*, toolbelt::BufferOffset> InnerMessageAllocate(
+    std::shared_ptr<::phaser::MessageRuntime> runtime) {
+  void* addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb,
+                                                 InnerMessage::BinarySize());
   toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
   auto msg = new InnerMessage(runtime, offset);
   msg->InstallMetadata<InnerMessage>();
   return std::make_pair(msg, offset);
 }
 
-static void InnerMessageClear(Message &msg) {
-  InnerMessage *m = static_cast<InnerMessage *>(&msg);
+static void InnerMessageClear(Message& msg) {
+  InnerMessage* m = static_cast<InnerMessage*>(&msg);
   m->Clear();
 }
 
-static absl::Status InnerMessageCopy(const Message &src, Message &dst) {
-  const InnerMessage *src_m = static_cast<const InnerMessage *>(&src);
-  InnerMessage *dst_m = static_cast<InnerMessage *>(&dst);
+static absl::Status InnerMessageCopy(const Message& src, Message& dst) {
+  const InnerMessage* src_m = static_cast<const InnerMessage*>(&src);
+  InnerMessage* dst_m = static_cast<InnerMessage*>(&dst);
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message *
-InnerMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
-                         const void *data) {
+static const Message* InnerMessageMakeExisting(
+    std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data) {
   return new InnerMessage(runtime, runtime->pb->ToOffset(data));
 }
 
 static size_t InnerMessageBinarySize() { return InnerMessage::BinarySize(); }
 
-static const phaser::MessageInfo *InnerMessageMessageInfo() {
+static const phaser::MessageInfo* InnerMessageMessageInfo() {
   return InnerMessage::GetMessageInfoStatic();
 }
 
-static bool InnerMessageHasField(const phaser::Message &msg, int number) {
-  const InnerMessage *m = static_cast<const InnerMessage *>(&msg);
+static bool InnerMessageHasField(const phaser::Message& msg, int number) {
+  const InnerMessage* m = static_cast<const InnerMessage*>(&msg);
   switch (number) {
-  case 10:
-    return m->str_.IsPresent();
-  case 20:
-    return m->f_.IsPresent();
-  case 30:
-    return m->e_.IsPresent();
-  case 40:
-    return m->ev_.size() > 0;
-  case 50:
-    return m->uv_.Discriminator() == 50;
-  case 60:
-    return m->uv_.Discriminator() == 60;
+    case 10:
+      return m->str_.IsPresent();
+    case 20:
+      return m->f_.IsPresent();
+    case 30:
+      return m->e_.IsPresent();
+    case 40:
+      return m->ev_.size() > 0;
+    case 50:
+      return m->uv_.Discriminator() == 50;
+    case 60:
+      return m->uv_.Discriminator() == 60;
   }
   return false;
 }
 
-static void *InnerMessageFindFieldByNumber(Message &msg, int number) {
+static void* InnerMessageFindFieldByNumber(Message& msg, int number) {
   if (!InnerMessageHasField(msg, number)) {
     return nullptr;
   }
-  const phaser::MessageInfo *info = InnerMessage::GetMessageInfoStatic();
+  const phaser::MessageInfo* info = InnerMessage::GetMessageInfoStatic();
   auto it = info->fields_by_number.find(number);
   if (it != info->fields_by_number.end()) {
-    char *m = reinterpret_cast<char *>(&msg);
+    char* m = reinterpret_cast<char*>(&msg);
     return m + it->second->offset;
   }
   return nullptr;
 }
 
-static void *InnerMessageFindFieldByName(Message &msg,
-                                         const std::string &name) {
-  const phaser::MessageInfo *info = InnerMessage::GetMessageInfoStatic();
+static void* InnerMessageFindFieldByName(Message& msg,
+                                         const std::string& name) {
+  const phaser::MessageInfo* info = InnerMessage::GetMessageInfoStatic();
   auto it = info->fields_by_name.find(name);
   if (it != info->fields_by_name.end()) {
     if (!InnerMessageHasField(msg, it->second->number)) {
       return nullptr;
     }
 
-    char *m = reinterpret_cast<char *>(&msg);
+    char* m = reinterpret_cast<char*>(&msg);
     return m + it->second->offset;
   }
   return nullptr;
@@ -548,8 +555,9 @@ struct TestMessage : public Message {
         u2_(offsetof(TestMessage, u2_), HeaderSize() + 56, 0, 0, {109, 110}),
         u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0, {111, 112}) {}
 
-  static TestMessage CreateMutable(void *addr, size_t size) {
-    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
+  static TestMessage CreateMutable(void* addr, size_t size) {
+    ::toolbelt::PayloadBuffer* pb =
+        new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
@@ -558,28 +566,30 @@ struct TestMessage : public Message {
     return msg;
   }
 
-  static TestMessage CreateReadonly(void *addr) {
-    ::toolbelt::PayloadBuffer *pb =
-        reinterpret_cast<::toolbelt::PayloadBuffer *>(addr);
+  static TestMessage CreateReadonly(void* addr) {
+    ::toolbelt::PayloadBuffer* pb =
+        reinterpret_cast<::toolbelt::PayloadBuffer*>(addr);
     auto runtime = std::make_shared<phaser::MessageRuntime>(pb);
     return TestMessage(runtime, pb->message);
   }
 
   static TestMessage CreateDynamicMutable(size_t initial_size = 1024) {
-    ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
+    ::toolbelt::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
+    auto runtime =
+        std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
     auto msg = TestMessage(runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
     return msg;
   }
 
   void InitDynamicMutable(size_t initial_size = 1024) {
-    ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
+    ::toolbelt::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto rt = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
+    auto rt =
+        std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
     this->runtime = rt;
     this->absolute_binary_offset = pb->message;
     this->InstallMetadata<TestMessage>();
@@ -630,8 +640,8 @@ struct TestMessage : public Message {
   std::string GetName() const override { return Name(); }
   std::string GetFullName() const override { return FullName(); }
 
-  void CopyFrom(const Message &m) override {
-    const TestMessage &other = static_cast<const TestMessage &>(m);
+  void CopyFrom(const Message& m) override {
+    const TestMessage& other = static_cast<const TestMessage&>(m);
     (void)CloneFrom(other);
   }
 
@@ -651,7 +661,7 @@ struct TestMessage : public Message {
     u3_.Clear<1>();
   }
 
-  const ::phaser::MessageInfo *GetMessageInfo() const override {
+  const ::phaser::MessageInfo* GetMessageInfo() const override {
     return nullptr;
   }
 
@@ -679,35 +689,35 @@ struct TestMessage : public Message {
     size += vstr_.SerializedSize();
     size += vm_.SerializedSize();
     switch (u1_.Discriminator()) {
-    case 107:
-      size += u1_.SerializedSize<0>(107);
-      break;
-    case 108:
-      size += u1_.SerializedSize<1>(108);
-      break;
+      case 107:
+        size += u1_.SerializedSize<0>(107);
+        break;
+      case 108:
+        size += u1_.SerializedSize<1>(108);
+        break;
     }
 
     switch (u2_.Discriminator()) {
-    case 109:
-      size += u2_.SerializedSize<0>(109);
-      break;
-    case 110:
-      size += u2_.SerializedSize<1>(110);
-      break;
+      case 109:
+        size += u2_.SerializedSize<0>(109);
+        break;
+      case 110:
+        size += u2_.SerializedSize<1>(110);
+        break;
     }
 
     switch (u3_.Discriminator()) {
-    case 111:
-      size += u3_.SerializedSize<0>(111);
-      break;
-    case 112:
-      size += u3_.SerializedSize<1>(112);
-      break;
+      case 111:
+        size += u3_.SerializedSize<0>(111);
+        break;
+      case 112:
+        size += u3_.SerializedSize<1>(112);
+        break;
     }
     return size;
   }
 
-  absl::Status Serialize(phaser::ProtoBuffer &buffer) const {
+  absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
     if (x_.IsPresent()) {
       if (absl::Status status = x_.Serialize(buffer); !status.ok()) {
         return status;
@@ -740,50 +750,50 @@ struct TestMessage : public Message {
     }
     // Union fields.
     switch (u1_.Discriminator()) {
-    case 107:
-      if (absl::Status status = u1_.Serialize<0>(107, buffer); !status.ok()) {
-        return status;
-      }
-      break;
-    case 108:
-      if (absl::Status status = u1_.Serialize<1>(108, buffer); !status.ok()) {
-        return status;
-      }
-      break;
+      case 107:
+        if (absl::Status status = u1_.Serialize<0>(107, buffer); !status.ok()) {
+          return status;
+        }
+        break;
+      case 108:
+        if (absl::Status status = u1_.Serialize<1>(108, buffer); !status.ok()) {
+          return status;
+        }
+        break;
     }
 
     // u2.
     switch (u2_.Discriminator()) {
-    case 109:
-      if (absl::Status status = u2_.Serialize<0>(109, buffer); !status.ok()) {
-        return status;
-      }
-      break;
-    case 110:
-      if (absl::Status status = u2_.Serialize<1>(110, buffer); !status.ok()) {
-        return status;
-      }
-      break;
+      case 109:
+        if (absl::Status status = u2_.Serialize<0>(109, buffer); !status.ok()) {
+          return status;
+        }
+        break;
+      case 110:
+        if (absl::Status status = u2_.Serialize<1>(110, buffer); !status.ok()) {
+          return status;
+        }
+        break;
     }
 
     // u3.
     switch (u3_.Discriminator()) {
-    case 111:
-      if (absl::Status status = u3_.Serialize<0>(111, buffer); !status.ok()) {
-        return status;
-      }
-      break;
-    case 112:
-      if (absl::Status status = u3_.Serialize<1>(112, buffer); !status.ok()) {
-        return status;
-      }
-      break;
+      case 111:
+        if (absl::Status status = u3_.Serialize<0>(111, buffer); !status.ok()) {
+          return status;
+        }
+        break;
+      case 112:
+        if (absl::Status status = u3_.Serialize<1>(112, buffer); !status.ok()) {
+          return status;
+        }
+        break;
     }
 
     return absl::OkStatus();
   }
 
-  absl::Status Deserialize(phaser::ProtoBuffer &buffer) {
+  absl::Status Deserialize(phaser::ProtoBuffer& buffer) {
     while (!buffer.Eof()) {
       absl::StatusOr<uint32_t> tag =
           buffer.DeserializeVarint<uint32_t, false>();
@@ -792,87 +802,87 @@ struct TestMessage : public Message {
       }
       uint32_t field_number = *tag >> phaser::ProtoBuffer::kFieldIdShift;
       switch (field_number) {
-      case 100:
-        if (absl::Status status = x_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 101:
-        if (absl::Status status = y_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 102:
-        if (absl::Status status = s_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 103:
-        if (absl::Status status = m_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 104:
-        if (absl::Status status = vi32_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 105:
-        if (absl::Status status = vstr_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 106:
-        if (absl::Status status = vm_.Deserialize(buffer); !status.ok()) {
-          return status;
-        }
-        break;
-      case 107:
-        if (absl::Status status = u1_.Deserialize<0>(107, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      case 108:
-        if (absl::Status status = u1_.Deserialize<1>(108, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      case 109:
-        if (absl::Status status = u2_.Deserialize<0>(109, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      case 110:
-        if (absl::Status status = u2_.Deserialize<1>(110, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      case 111:
-        if (absl::Status status = u3_.Deserialize<0>(111, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      case 112:
-        if (absl::Status status = u3_.Deserialize<1>(112, buffer);
-            !status.ok()) {
-          return status;
-        }
-        break;
-      default:
-        if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
-          return status;
-        }
+        case 100:
+          if (absl::Status status = x_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 101:
+          if (absl::Status status = y_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 102:
+          if (absl::Status status = s_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 103:
+          if (absl::Status status = m_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 104:
+          if (absl::Status status = vi32_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 105:
+          if (absl::Status status = vstr_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 106:
+          if (absl::Status status = vm_.Deserialize(buffer); !status.ok()) {
+            return status;
+          }
+          break;
+        case 107:
+          if (absl::Status status = u1_.Deserialize<0>(107, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        case 108:
+          if (absl::Status status = u1_.Deserialize<1>(108, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        case 109:
+          if (absl::Status status = u2_.Deserialize<0>(109, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        case 110:
+          if (absl::Status status = u2_.Deserialize<1>(110, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        case 111:
+          if (absl::Status status = u3_.Deserialize<0>(111, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        case 112:
+          if (absl::Status status = u3_.Deserialize<1>(112, buffer);
+              !status.ok()) {
+            return status;
+          }
+          break;
+        default:
+          if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
+            return status;
+          }
       }
     }
     return absl::OkStatus();
   }
 
-  friend std::ostream &operator<<(std::ostream &os, const TestMessage &msg);
+  friend std::ostream& operator<<(std::ostream& os, const TestMessage& msg);
 
   void Indent(int indent) {
     x_.Indent(indent);
@@ -887,7 +897,7 @@ struct TestMessage : public Message {
     u3_.Indent(indent);
   }
 
-  absl::Status CloneFrom(const TestMessage &src) {
+  absl::Status CloneFrom(const TestMessage& src) {
     if (src.x_.IsPresent()) {
       x_.Set(src.x_.Get());
     } else {
@@ -904,7 +914,7 @@ struct TestMessage : public Message {
       s_.Clear();
     }
     if (src.m_.IsPresent()) {
-      auto *m = mutable_m();
+      auto* m = mutable_m();
       if (absl::Status s = m->CloneFrom(src.m()); !s.ok()) {
         return s;
       }
@@ -916,48 +926,49 @@ struct TestMessage : public Message {
       add_vstr(src.vstr(i));
     }
     for (size_t i = 0; i < src.vm_size(); ++i) {
-      auto *m = add_vm();
+      auto* m = add_vm();
       if (absl::Status s = m->CloneFrom(src.vm(i)); !s.ok()) {
         return s;
       }
     }
     switch (src.u1_.Discriminator()) {
-    case 107:
-      if (absl::Status status = u1_.CloneFrom<0, uint32_t>(src.u1a());
-          !status.ok()) {
-        return status;
-      }
-      break;
-    case 108:
-      if (absl::Status s = u1_.CloneFrom<1, uint64_t>(src.u1b()); !s.ok()) {
-        return s;
-      }
-      break;
+      case 107:
+        if (absl::Status status = u1_.CloneFrom<0, uint32_t>(src.u1a());
+            !status.ok()) {
+          return status;
+        }
+        break;
+      case 108:
+        if (absl::Status s = u1_.CloneFrom<1, uint64_t>(src.u1b()); !s.ok()) {
+          return s;
+        }
+        break;
     }
     switch (src.u2_.Discriminator()) {
-    case 109:
-      if (absl::Status s = u2_.CloneFrom<0, int64_t>(src.u2a()); !s.ok()) {
-        return s;
-      }
-      break;
-    case 110:
-      if (absl::Status s = u2_.CloneFrom<1, std::string_view>(src.u2b());
-          !s.ok()) {
-        return s;
-      }
-      break;
+      case 109:
+        if (absl::Status s = u2_.CloneFrom<0, int64_t>(src.u2a()); !s.ok()) {
+          return s;
+        }
+        break;
+      case 110:
+        if (absl::Status s = u2_.CloneFrom<1, std::string_view>(src.u2b());
+            !s.ok()) {
+          return s;
+        }
+        break;
     }
     switch (src.u3_.Discriminator()) {
-    case 111:
-      if (absl::Status s = u3_.CloneFrom<0, int64_t>(src.u3a()); !s.ok()) {
-        return s;
-      }
-      break;
-    case 112:
-      if (absl::Status s = u3_.CloneFrom<1, InnerMessage>(src.u3b()); !s.ok()) {
-        return s;
-      }
-      break;
+      case 111:
+        if (absl::Status s = u3_.CloneFrom<0, int64_t>(src.u3a()); !s.ok()) {
+          return s;
+        }
+        break;
+      case 112:
+        if (absl::Status s = u3_.CloneFrom<1, InnerMessage>(src.u3b());
+            !s.ok()) {
+          return s;
+        }
+        break;
     }
     return absl::OkStatus();
   }
@@ -974,13 +985,13 @@ struct TestMessage : public Message {
   bool has_y() const { return y_.IsPresent(); }
 
   std::string_view s() const { return s_.Get(); }
-  void set_s(const std::string &s) { s_.Set(s); }
+  void set_s(const std::string& s) { s_.Set(s); }
   void clear_s() { s_.Clear(); }
   bool has_s() const { return s_.IsPresent(); }
   absl::Span<char> allocate_s(size_t len) { return s_.Allocate(len); }
 
-  const InnerMessage &m() const { return m_.Get(); }
-  InnerMessage *mutable_m() { return m_.Mutable(); }
+  const InnerMessage& m() const { return m_.Get(); }
+  InnerMessage* mutable_m() { return m_.Mutable(); }
   void clear_m() { m_.Clear(); }
   bool has_m() const { return m_.IsPresent(); }
   void set_m(toolbelt::BufferOffset offset) { m_.SetOffset(offset); }
@@ -990,30 +1001,32 @@ struct TestMessage : public Message {
   void add_vi32(int32_t v) { vi32_.Add(v); }
   void set_vi32(size_t i, int32_t v) { vi32_.Set(i, v); }
   void clear_vi32() { vi32_.Clear(); }
-  phaser::PrimitiveVectorField<int32_t, false, false, true> &vi32() {
+  phaser::PrimitiveVectorField<int32_t, false, false, true>& vi32() {
     return vi32_;
   }
 
   size_t vstr_size() const { return vstr_.size(); }
-  std::string_view vstr(size_t i) const {
-    return vstr_.Get(i);
+  std::string_view vstr(size_t i) const { return vstr_.Get(i); }
+  template <typename Str>
+  void add_vstr(Str v) {
+    vstr_.Add(v);
   }
-  template <typename Str> void add_vstr(Str v) { vstr_.Add(v); }
-  template <typename Str> void set_vstr(size_t i, Str v) { vstr_.Set(i, v); }
+  template <typename Str>
+  void set_vstr(size_t i, Str v) {
+    vstr_.Set(i, v);
+  }
   void clear_vstr() { vstr_.Clear(); }
-  phaser::StringVectorField &vstr() {
+  phaser::StringVectorField& vstr() {
     vstr_.Populate();
     return vstr_;
   }
 
   size_t vm_size() const { return vm_.size(); }
-  const InnerMessage &vm(size_t i) const { return vm_.Get(i); }
-  InnerMessage *mutable_vm(size_t i) {
-    return vm_.Mutable(i);
-  }
-  InnerMessage *add_vm() { return vm_.Add(); }
+  const InnerMessage& vm(size_t i) const { return vm_.Get(i); }
+  InnerMessage* mutable_vm(size_t i) { return vm_.Mutable(i); }
+  InnerMessage* add_vm() { return vm_.Add(); }
   void clear_vm() { vm_.Clear(); }
-  phaser::MessageVectorField<InnerMessage> &vm() {
+  phaser::MessageVectorField<InnerMessage>& vm() {
     vm_.Populate();
     return vm_;
   }
@@ -1045,7 +1058,7 @@ struct TestMessage : public Message {
   void clear_u2a() { u2_.Clear<0>(); }
 
   std::string_view u2b() const { return u2_.GetValue<1, std::string_view>(); }
-  void set_u2b(const std::string &v) {
+  void set_u2b(const std::string& v) {
     u2_.Clear<0>();
     u2_.Set<1>(v);
   }
@@ -1060,10 +1073,10 @@ struct TestMessage : public Message {
   }
   void clear_u3a() { u3_.Clear<0>(); }
 
-  const InnerMessage &u3b() const {
+  const InnerMessage& u3b() const {
     return u3_.GetReference<1, InnerMessage>();
   }
-  InnerMessage *mutable_u3b() {
+  InnerMessage* mutable_u3b() {
     u3_.Clear<0>();
     return u3_.Mutable<1, InnerMessage>();
   }
@@ -1090,14 +1103,12 @@ struct TestMessage : public Message {
                      phaser::UnionMessageField<InnerMessage>>
       u3_;
 
-  void DebugDump() {
-    runtime->pb->Dump(std::cout);
-  }
+  void DebugDump() { runtime->pb->Dump(std::cout); }
 };
 
 #pragma clang diagnostic pop
 
-inline std::ostream &operator<<(std::ostream &os, const TestMessage &msg) {
+inline std::ostream& operator<<(std::ostream& os, const TestMessage& msg) {
   if (msg.x_.IsPresent()) {
     msg.x_.PrintIndent(os);
     os << "x: " << msg.x_ << std::endl;
@@ -1119,125 +1130,124 @@ inline std::ostream &operator<<(std::ostream &os, const TestMessage &msg) {
   }
 
   // Repeated Fields.
-  for (auto &v : msg.vi32_) {
+  for (auto& v : msg.vi32_) {
     msg.vi32_.PrintIndent(os);
     os << "vi32: " << v << std::endl;
   }
 
-  for (auto &v : msg.vstr_) {
+  for (auto& v : msg.vstr_) {
     msg.vstr_.PrintIndent(os);
     os << "vstr: " << v << std::endl;
   }
 
-  for (auto &v : msg.vm_) {
+  for (auto& v : msg.vm_) {
     msg.vm_.PrintIndent(os);
     os << "vm: " << v << std::endl;
   }
 
   // Unions
   switch (msg.u1_.Discriminator()) {
-  case 107:
-    msg.u1_.PrintIndent(os);
-    os << "u1a: ";
-    msg.u1_.Print<0>(os);
-    os << std::endl;
-    break;
-  case 108:
-    msg.u1_.PrintIndent(os);
-    os << "u1b: ";
-    msg.u1_.Print<1>(os);
-    os << std::endl;
-    break;
+    case 107:
+      msg.u1_.PrintIndent(os);
+      os << "u1a: ";
+      msg.u1_.Print<0>(os);
+      os << std::endl;
+      break;
+    case 108:
+      msg.u1_.PrintIndent(os);
+      os << "u1b: ";
+      msg.u1_.Print<1>(os);
+      os << std::endl;
+      break;
   }
 
   switch (msg.u2_.Discriminator()) {
-  case 109:
-    msg.u2_.PrintIndent(os);
-    os << "u2a: ";
-    msg.u2_.Print<0>(os);
-    os << std::endl;
-    break;
-  case 110:
-    msg.u2_.PrintIndent(os);
-    os << "u2b: ";
-    msg.u2_.Print<1>(os);
-    os << std::endl;
-    break;
+    case 109:
+      msg.u2_.PrintIndent(os);
+      os << "u2a: ";
+      msg.u2_.Print<0>(os);
+      os << std::endl;
+      break;
+    case 110:
+      msg.u2_.PrintIndent(os);
+      os << "u2b: ";
+      msg.u2_.Print<1>(os);
+      os << std::endl;
+      break;
   }
 
   switch (msg.u3_.Discriminator()) {
-  case 111:
-    msg.u3_.PrintIndent(os);
-    os << "u3a: ";
-    msg.u3_.Print<0>(os);
-    os << std::endl;
-    break;
-  case 112:
-    msg.u3_.PrintIndent(os);
-    os << "u3b: ";
-    msg.u3_.Print<1>(os);
-    os << std::endl;
-    break;
+    case 111:
+      msg.u3_.PrintIndent(os);
+      os << "u3a: ";
+      msg.u3_.Print<0>(os);
+      os << std::endl;
+      break;
+    case 112:
+      msg.u3_.PrintIndent(os);
+      os << "u3b: ";
+      msg.u3_.Print<1>(os);
+      os << std::endl;
+      break;
   }
 
   return os;
 }
 
-static void TestMessageStreamTo(const Message &msg, std::ostream &os,
+static void TestMessageStreamTo(const Message& msg, std::ostream& os,
                                 int /*indent*/) {
-  const TestMessage *m = static_cast<const TestMessage *>(&msg);
+  const TestMessage* m = static_cast<const TestMessage*>(&msg);
   os << *m;
 }
 
-static absl::Status TestMessageSerializeToBuffer(const Message &msg,
-                                                 phaser::ProtoBuffer &buffer) {
-  const TestMessage *m = static_cast<const TestMessage *>(&msg);
+static absl::Status TestMessageSerializeToBuffer(const Message& msg,
+                                                 phaser::ProtoBuffer& buffer) {
+  const TestMessage* m = static_cast<const TestMessage*>(&msg);
   return m->Serialize(buffer);
 }
 
-static absl::Status
-TestMessageDeserializeFromBuffer(Message &msg, phaser::ProtoBuffer &buffer) {
-  TestMessage *m = static_cast<TestMessage *>(&msg);
+static absl::Status TestMessageDeserializeFromBuffer(
+    Message& msg, phaser::ProtoBuffer& buffer) {
+  TestMessage* m = static_cast<TestMessage*>(&msg);
   return m->Deserialize(buffer);
 }
 
-static size_t TestMessageSerializedSize(const Message &msg) {
-  const TestMessage *m = static_cast<const TestMessage *>(&msg);
+static size_t TestMessageSerializedSize(const Message& msg) {
+  const TestMessage* m = static_cast<const TestMessage*>(&msg);
   return m->SerializedSize();
 }
 
-static Message *
-TestMessageAllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime,
-                            toolbelt::BufferOffset offset) {
+static Message* TestMessageAllocateAtOffset(
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset) {
   auto msg = new TestMessage(runtime, offset);
   msg->InstallMetadata<TestMessage>();
   return msg;
 }
 
-static std::pair<Message *, toolbelt::BufferOffset>
-TestMessageAllocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {
-  void *addr = toolbelt::PayloadBuffer::Allocate(
-      &runtime->pb, TestMessage::BinarySize());
+static std::pair<Message*, toolbelt::BufferOffset> TestMessageAllocate(
+    std::shared_ptr<::phaser::MessageRuntime> runtime) {
+  void* addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb,
+                                                 TestMessage::BinarySize());
   toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
   auto msg = new TestMessage(runtime, offset);
   msg->InstallMetadata<TestMessage>();
   return std::make_pair(msg, offset);
 }
 
-static void TestMessageClear(Message &msg) {
-  TestMessage *m = static_cast<TestMessage *>(&msg);
+static void TestMessageClear(Message& msg) {
+  TestMessage* m = static_cast<TestMessage*>(&msg);
   m->Clear();
 }
 
-static absl::Status TestMessageCopy(const Message &src, Message &dst) {
-  const TestMessage *src_m = static_cast<const TestMessage *>(&src);
-  TestMessage *dst_m = static_cast<TestMessage *>(&dst);
+static absl::Status TestMessageCopy(const Message& src, Message& dst) {
+  const TestMessage* src_m = static_cast<const TestMessage*>(&src);
+  TestMessage* dst_m = static_cast<TestMessage*>(&dst);
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message *
-TestMessageMakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime,
-                        const void *data) {
+static const Message* TestMessageMakeExisting(
+    std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data) {
   return new TestMessage(runtime, runtime->pb->ToOffset(data));
 }
 
@@ -1269,7 +1279,7 @@ static struct TestMessageBankRegister {
 } TestMessage_bank_register;
 
 TEST(MessageTest, Basic) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   msg.DebugDump();
 
@@ -1295,13 +1305,13 @@ TEST(MessageTest, Basic) {
   ASSERT_EQ("Hello, world!", s);
 
   ASSERT_TRUE(msg.m_.IsPresent());
-  auto &inner2 = msg.m_.Get();
+  auto& inner2 = msg.m_.Get();
   ASSERT_EQ("Inner message", inner2.str_.Get());
   ASSERT_EQ(0xdeadbeef, inner2.f_.Get());
 
   // Copy message to test reading.
   {
-    char *buffer2 = static_cast<char *>(calloc(4096, 1));
+    char* buffer2 = static_cast<char*>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1318,7 +1328,7 @@ TEST(MessageTest, Basic) {
     ASSERT_EQ("Hello, world!", ro_s);
 
     ASSERT_TRUE(ro_msg.m_.IsPresent());
-    auto &ro_inner = ro_msg.m_.Get();
+    auto& ro_inner = ro_msg.m_.Get();
     ASSERT_EQ("Inner message", ro_inner.str_.Get());
     ASSERT_EQ(0xdeadbeef, ro_inner.f_.Get());
     free(buffer2);
@@ -1327,7 +1337,7 @@ TEST(MessageTest, Basic) {
 }
 
 TEST(MessageTest, RepeatedPrimitive) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   // This field is absent.
@@ -1338,7 +1348,7 @@ TEST(MessageTest, RepeatedPrimitive) {
   msg.DebugDump();
 
   int i = 1;
-  for (auto &v : msg.vi32_) {
+  for (auto& v : msg.vi32_) {
     ASSERT_EQ(i, v);
     i++;
   }
@@ -1347,12 +1357,12 @@ TEST(MessageTest, RepeatedPrimitive) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = static_cast<char *>(calloc(4096, 1));
+    char* buffer2 = static_cast<char*>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
     int ro_i = 1;
-    for (auto &v : ro_msg.vi32_) {
+    for (auto& v : ro_msg.vi32_) {
       ASSERT_EQ(ro_i, v);
       ro_i++;
     }
@@ -1364,7 +1374,7 @@ TEST(MessageTest, RepeatedPrimitive) {
 }
 
 TEST(MessageTest, RepeatedString) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.DebugDump();
@@ -1374,9 +1384,9 @@ TEST(MessageTest, RepeatedString) {
 
   msg.DebugDump();
 
-  const char *strings[] = {"one", "two", "three", "four"};
+  const char* strings[] = {"one", "two", "three", "four"};
   int i = 0;
-  for (auto &v : msg.vstr_) {
+  for (auto& v : msg.vstr_) {
     ASSERT_EQ(strings[i], v.Get());
     i++;
   }
@@ -1390,12 +1400,12 @@ TEST(MessageTest, RepeatedString) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = static_cast<char *>(calloc(4096, 1));
+    char* buffer2 = static_cast<char*>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
     int ro_i = 0;
-    for (auto &v : ro_msg.vstr_) {
+    for (auto& v : ro_msg.vstr_) {
       ASSERT_EQ(strings[ro_i], v.Get());
       ro_i++;
     }
@@ -1409,40 +1419,40 @@ TEST(MessageTest, RepeatedString) {
 }
 
 TEST(MessageTest, RepeatedMessage) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
-  InnerMessage *inner1 = msg.vm_.Add();
+  InnerMessage* inner1 = msg.vm_.Add();
   inner1->str_.Set("one");
   inner1->f_.Set(0xdeadbeef);
 
-  InnerMessage *inner2 = msg.vm_.Mutable(2);
+  InnerMessage* inner2 = msg.vm_.Mutable(2);
   inner2->str_.Set("two");
   inner2->f_.Set(0x1234);
 
   msg.DebugDump();
 
   {
-    auto &ro_inner1 = msg.vm_.Get(0);
+    auto& ro_inner1 = msg.vm_.Get(0);
     ASSERT_EQ("one", ro_inner1.str_.Get());
     ASSERT_EQ(0xdeadbeef, ro_inner1.f_.Get());
 
-    auto &ro_inner2 = msg.vm_.Get(2);
+    auto& ro_inner2 = msg.vm_.Get(2);
     ASSERT_EQ("two", ro_inner2.str_.Get());
     ASSERT_EQ(0x1234, ro_inner2.f_.Get());
   }
 
   // Copy message to test reading.
   {
-    char *buffer2 = static_cast<char *>(calloc(4096, 1));
+    char* buffer2 = static_cast<char*>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
-    auto &ro_inner1 = ro_msg.vm_.Get(0);
+    auto& ro_inner1 = ro_msg.vm_.Get(0);
     ASSERT_EQ("one", ro_inner1.str_.Get());
     ASSERT_EQ(0xdeadbeef, ro_inner1.f_.Get());
 
-    auto &ro_inner2 = ro_msg.vm_.Get(2);
+    auto& ro_inner2 = ro_msg.vm_.Get(2);
     ASSERT_EQ("two", ro_inner2.str_.Get());
     ASSERT_EQ(0x1234, ro_inner2.f_.Get());
     free(buffer2);
@@ -1451,12 +1461,12 @@ TEST(MessageTest, RepeatedMessage) {
 }
 
 TEST(MessageTest, UnionField) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.u1_.Set<0>(1234u);
   msg.u2_.Set<1>("Hello, world!");
-  InnerMessage *inner = msg.u3_.Mutable<1, InnerMessage>();
+  InnerMessage* inner = msg.u3_.Mutable<1, InnerMessage>();
   inner->str_.Set("Inner message");
   inner->f_.Set(0xdeadbeef);
 
@@ -1479,7 +1489,7 @@ TEST(MessageTest, UnionField) {
 // in-buffer storage to a smaller block, which drives toolbelt's
 // PayloadBuffer::Realloc -> ShrinkBlock path.
 TEST(MessageTest, UnionArmSwitchInPlace) {
-  char *buffer = static_cast<char *>(calloc(8192, 1));
+  char* buffer = static_cast<char*>(calloc(8192, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 8192);
 
   // Grow then repeatedly shrink the string arm on the same message. Each shrink
@@ -1506,7 +1516,7 @@ TEST(MessageTest, UnionArmSwitchInPlace) {
 
   // Message arm: populate it, switch to the scalar arm, then back again.
   {
-    InnerMessage *inner = msg.mutable_u3b();
+    InnerMessage* inner = msg.mutable_u3b();
     inner->str_.Set("an inner message with a reasonably long string payload");
     inner->f_.Set(0xfeedface);
   }
@@ -1520,7 +1530,7 @@ TEST(MessageTest, UnionArmSwitchInPlace) {
 
   // Back to the message arm, then shrink the inner string in place.
   {
-    InnerMessage *inner = msg.mutable_u3b();
+    InnerMessage* inner = msg.mutable_u3b();
     inner->str_.Set("longer inner string to allocate a sizeable block here");
     inner->str_.Set("short");
   }
@@ -1532,7 +1542,7 @@ TEST(MessageTest, UnionArmSwitchInPlace) {
 }
 
 TEST(MessageTest, ClearBasic) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.x_.Set(1234);
@@ -1558,7 +1568,7 @@ TEST(MessageTest, ClearBasic) {
 }
 
 TEST(MessageTest, ClearRepeated) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.vi32_.Add(1);
@@ -1568,11 +1578,11 @@ TEST(MessageTest, ClearRepeated) {
   msg.vstr_.Add("one");
   msg.vstr_.Add("two");
 
-  auto *inner1 = msg.vm_.Add();
+  auto* inner1 = msg.vm_.Add();
   inner1->str_.Set("one");
   inner1->f_.Set(0xdeadbeef);
 
-  auto *inner2 = msg.vm_.Add();
+  auto* inner2 = msg.vm_.Add();
   inner2->str_.Set("two");
   inner2->f_.Set(0x1234);
 
@@ -1593,12 +1603,12 @@ TEST(MessageTest, ClearRepeated) {
 }
 
 TEST(MessageTest, ClearUnion) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.u1_.Set<0>(1234u);
   msg.u2_.Set<1>("Hello, world!");
-  InnerMessage *inner = msg.u3_.Mutable<1, InnerMessage>();
+  InnerMessage* inner = msg.u3_.Mutable<1, InnerMessage>();
   inner->str_.Set("Inner message");
   inner->f_.Set(0xdeadbeef);
 
@@ -1613,7 +1623,7 @@ TEST(MessageTest, ClearUnion) {
 }
 
 TEST(MessageTest, ProtobufBasic) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.set_x(1234);
@@ -1636,7 +1646,7 @@ TEST(MessageTest, ProtobufBasic) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = static_cast<char *>(calloc(4096, 1));
+    char* buffer2 = static_cast<char*>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1655,25 +1665,25 @@ TEST(MessageTest, ProtobufBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeBasic) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
-  msg.set_x(1); // Tag 100
+  msg.set_x(1);  // Tag 100
   ASSERT_EQ(3, msg.x_.SerializedSize());
   msg.set_x(0x80);
   ASSERT_EQ(4, msg.x_.SerializedSize());
-  msg.set_x(0x3fff); // Max can fit into 2 bytes for the value.
+  msg.set_x(0x3fff);  // Max can fit into 2 bytes for the value.
   ASSERT_EQ(4, msg.x_.SerializedSize());
-  msg.set_x(0x4000); // One more than can fit into 2 bytes for the value.
+  msg.set_x(0x4000);  // One more than can fit into 2 bytes for the value.
   ASSERT_EQ(5, msg.x_.SerializedSize());
 
   msg.set_s("Hello, world!");
   ASSERT_EQ(16, msg.s_.SerializedSize());
 
   auto inner = msg.mutable_m();
-  inner->set_str("Inner message");        // Tag 10, size: 15
-  inner->set_f(0xdeadbeef);               // Tag 20, size: 10
-  ASSERT_EQ(25, inner->SerializedSize()); // 25 bytes
+  inner->set_str("Inner message");         // Tag 10, size: 15
+  inner->set_f(0xdeadbeef);                // Tag 20, size: 10
+  ASSERT_EQ(25, inner->SerializedSize());  // 25 bytes
 
   size_t m_size = msg.m_.SerializedSize();
   size_t expected_size = 5 + 16 + m_size;
@@ -1683,7 +1693,7 @@ TEST(MessageTest, ProtobufSerializationSizeBasic) {
   foo::bar::TestMessage pb_msg;
   pb_msg.set_x(0x4000);
   pb_msg.set_s("Hello, world!");
-  auto *pb_inner = pb_msg.mutable_m();
+  auto* pb_inner = pb_msg.mutable_m();
   pb_inner->set_str("Inner message");
   pb_inner->set_f(0xdeadbeef);
 
@@ -1694,24 +1704,24 @@ TEST(MessageTest, ProtobufSerializationSizeBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeUnion) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
-  msg.set_u1a(1234); // Tag 107.
+  msg.set_u1a(1234);  // Tag 107.
   ASSERT_EQ(4, msg.u1_.SerializedSize<0>(107));
-  msg.set_u1b(0xdeadbeef); // Tag 108.
+  msg.set_u1b(0xdeadbeef);  // Tag 108.
   ASSERT_EQ(10, msg.u1_.SerializedSize<1>(108));
 
-  msg.set_u2a(1234); // Tag 109.
+  msg.set_u2a(1234);  // Tag 109.
   ASSERT_EQ(4, msg.u2_.SerializedSize<0>(109));
-  msg.set_u2b("Hello, world!"); // Tag 110.
+  msg.set_u2b("Hello, world!");  // Tag 110.
   ASSERT_EQ(16, msg.u2_.SerializedSize<1>(110));
 
   // u3
   auto inner = msg.mutable_u3b();
-  inner->set_str("Inner message");        // Tag 10, size: 15
-  inner->set_f(0xdeadbeef);               // Tag 20, size: 10
-  ASSERT_EQ(25, inner->SerializedSize()); // 25 bytes
+  inner->set_str("Inner message");         // Tag 10, size: 15
+  inner->set_f(0xdeadbeef);                // Tag 20, size: 10
+  ASSERT_EQ(25, inner->SerializedSize());  // 25 bytes
 
   size_t m_size = msg.u3_.SerializedSize<1>(112);
   size_t expected_size = 10 + 16 + m_size;
@@ -1721,7 +1731,7 @@ TEST(MessageTest, ProtobufSerializationSizeUnion) {
   foo::bar::TestMessage pb_msg;
   pb_msg.set_u1b(0xdeadbeef);
   pb_msg.set_u2b("Hello, world!");
-  auto *pb_inner = pb_msg.mutable_u3b();
+  auto* pb_inner = pb_msg.mutable_u3b();
   pb_inner->set_str("Inner message");
   pb_inner->set_f(0xdeadbeef);
 
@@ -1732,7 +1742,7 @@ TEST(MessageTest, ProtobufSerializationSizeUnion) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeRepeatedPrimitive) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   // Tag 104.
@@ -1768,7 +1778,7 @@ TEST(MessageTest, ProtobufSerializationSizeRepeatedPrimitive) {
 }
 
 TEST(MessageTest, ProtobufSerializationBasic) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1784,7 +1794,7 @@ TEST(MessageTest, ProtobufSerializationBasic) {
   pb_msg.set_x(1);
   pb_msg.set_y(0xffff);
   pb_msg.set_s("Hello, world!");
-  auto *pb_inner = pb_msg.mutable_m();
+  auto* pb_inner = pb_msg.mutable_m();
   pb_inner->set_str("Inner message");
   pb_inner->set_f(0xdeadbeef);
 
@@ -1795,7 +1805,7 @@ TEST(MessageTest, ProtobufSerializationBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationRepeated) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1808,11 +1818,11 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
   msg.add_vstr("two");
   msg.add_vstr("three");
 
-  auto *inner1 = msg.vm_.Add();
+  auto* inner1 = msg.vm_.Add();
   inner1->set_str("one");
   inner1->set_f(0xdeadbeef);
 
-  auto *inner2 = msg.vm_.Add();
+  auto* inner2 = msg.vm_.Add();
   inner2->set_str("two");
   inner2->set_f(0x1234);
 
@@ -1827,11 +1837,11 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
   pb_msg.add_vstr("two");
   pb_msg.add_vstr("three");
 
-  auto *pb_inner1 = pb_msg.add_vm();
+  auto* pb_inner1 = pb_msg.add_vm();
   pb_inner1->set_str("one");
   pb_inner1->set_f(0xdeadbeef);
 
-  auto *pb_inner2 = pb_msg.add_vm();
+  auto* pb_inner2 = pb_msg.add_vm();
   pb_inner2->set_str("two");
   pb_inner2->set_f(0x1234);
 
@@ -1842,7 +1852,7 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
 }
 
 TEST(MessageTest, ProtobufSerializationUnion) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1858,7 +1868,7 @@ TEST(MessageTest, ProtobufSerializationUnion) {
   pb_msg.set_u1a(1234);
   pb_msg.set_u2b("Hello, world!");
 
-  auto *pb_inner = pb_msg.mutable_u3b();
+  auto* pb_inner = pb_msg.mutable_u3b();
   pb_inner->set_str("Inner message");
   pb_inner->set_f(0xdeadbeef);
 
@@ -1875,12 +1885,12 @@ TEST(MessageTest, ProtobufDeserializationBasic) {
   pb_msg.set_y(0xffff);
   pb_msg.set_s("Hello, world!");
 
-  auto *pb_inner = pb_msg.mutable_m();
+  auto* pb_inner = pb_msg.mutable_m();
   pb_inner->set_str("Inner message");
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1908,16 +1918,16 @@ TEST(MessageTest, ProtobufDeserializationRepeated) {
   pb_msg.add_vstr("two");
   pb_msg.add_vstr("three");
 
-  auto *pb_inner1 = pb_msg.add_vm();
+  auto* pb_inner1 = pb_msg.add_vm();
   pb_inner1->set_str("one");
   pb_inner1->set_f(0xdeadbeef);
 
-  auto *pb_inner2 = pb_msg.add_vm();
+  auto* pb_inner2 = pb_msg.add_vm();
   pb_inner2->set_str("two");
   pb_inner2->set_f(0x1234);
 
   std::string str = pb_msg.SerializeAsString();
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1940,12 +1950,12 @@ TEST(MessageTest, ProtobufDeserializationUnion) {
   pb_msg.set_u1a(1234);
   pb_msg.set_u2b("Hello, world!");
 
-  auto *pb_inner = pb_msg.mutable_u3b();
+  auto* pb_inner = pb_msg.mutable_u3b();
   pb_inner->set_str("Inner message");
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -2003,18 +2013,18 @@ TEST(MessageTest, Print) {
   msg.vstr_.Add("one");
   msg.vstr_.Add("two");
 
-  auto *inner1 = msg.vm_.Add();
+  auto* inner1 = msg.vm_.Add();
   inner1->str_.Set("one");
   inner1->f_.Set(0xdeadbeef);
 
-  auto *inner2 = msg.vm_.Add();
+  auto* inner2 = msg.vm_.Add();
   inner2->str_.Set("two");
   inner2->f_.Set(0x1234);
 
   // Unions.
   msg.u1_.Set<0>(1234u);
   msg.u2_.Set<1>("Hello, world!");
-  InnerMessage *inner3 = msg.u3_.Mutable<1, InnerMessage>();
+  InnerMessage* inner3 = msg.u3_.Mutable<1, InnerMessage>();
   inner3->str_.Set("Inner message");
   inner3->f_.Set(0xdeadbeef);
 
@@ -2028,9 +2038,9 @@ TEST(MessageTest, Print) {
 }
 
 TEST(MessageTest, MessageInfo) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   InnerMessage msg = InnerMessage::CreateMutable(buffer, 4096);
-  const ::phaser::MessageInfo *info = msg.GetMessageInfo();
+  const ::phaser::MessageInfo* info = msg.GetMessageInfo();
   ASSERT_EQ("foo.bar.InnerMessage", info->full_name);
   ASSERT_EQ(5, info->fields_in_order.size());
   ASSERT_EQ("str", info->fields_in_order[0]->name);
@@ -2039,12 +2049,12 @@ TEST(MessageTest, MessageInfo) {
 }
 
 TEST(MessageTest, PhaserBank) {
-  char *buffer = static_cast<char *>(calloc(4096, 1));
+  char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   auto status = ::phaser::PhaserBankAllocate<InnerMessage>(
       "foo.bar.InnerMessage", msg.runtime);
   ASSERT_TRUE(status.ok());
-  auto[inner, offset] = *status;
+  auto [inner, offset] = *status;
   msg.set_m(offset);
   inner->set_str("Inner message");
 
@@ -2053,7 +2063,7 @@ TEST(MessageTest, PhaserBank) {
   free(buffer);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 
   return RUN_ALL_TESTS();

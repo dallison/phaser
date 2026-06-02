@@ -8,14 +8,14 @@
 
 namespace phaser {
 
-void EnumGenerator::GenerateHeader(std::ostream &os) {
+void EnumGenerator::GenerateHeader(std::ostream& os) {
   std::string name(enum_->name());
   if (enum_->containing_type() != nullptr) {
     name = std::string(enum_->containing_type()->name()) + "_" + name;
   }
   os << "enum " << name << " : int {\n";
   for (int i = 0; i < enum_->value_count(); i++) {
-    const google::protobuf::EnumValueDescriptor *value = enum_->value(i);
+    const google::protobuf::EnumValueDescriptor* value = enum_->value(i);
     std::string const_name(value->name());
     if (enum_->containing_type() != nullptr) {
       const_name = name + "_" + const_name;
@@ -29,7 +29,7 @@ void EnumGenerator::GenerateHeader(std::ostream &os) {
   os << "  std::string operator()(" << name << " e) {\n";
   os << "    switch (e) {\n";
   for (int i = 0; i < enum_->value_count(); i++) {
-    const google::protobuf::EnumValueDescriptor *value = enum_->value(i);
+    const google::protobuf::EnumValueDescriptor* value = enum_->value(i);
     std::string const_name(value->name());
     if (enum_->containing_type() != nullptr) {
       const_name = name + "_" + const_name;
@@ -46,7 +46,7 @@ void EnumGenerator::GenerateHeader(std::ostream &os) {
   os << "struct " << name << "Parser {\n";
   os << "   " << name << " operator()(const std::string &s) {\n";
   for (int i = 0; i < enum_->value_count(); i++) {
-    const google::protobuf::EnumValueDescriptor *value = enum_->value(i);
+    const google::protobuf::EnumValueDescriptor* value = enum_->value(i);
     std::string const_name(value->name());
     if (enum_->containing_type() != nullptr) {
       const_name = name + "_" + const_name;
@@ -65,10 +65,11 @@ void EnumGenerator::GenerateHeader(std::ostream &os) {
   os << "  return s(static_cast<" << name << ">(e));\n";
   os << "}\n\n";
 
-  os << "inline void " << name << "_Parse(const std::string &s, " << name << "* value) {\n";
+  os << "inline void " << name << "_Parse(const std::string &s, " << name
+     << "* value) {\n";
   os << "  " << name << "Parser p;\n";
   os << "  *value = p(s);\n";
   os << "}\n\n";
 }
 
-} // namespace phaser
+}  // namespace phaser

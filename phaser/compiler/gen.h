@@ -4,28 +4,27 @@
 
 #pragma once
 
+#include <iostream>
+#include <memory>
+#include <vector>
+
+#include "absl/status/status.h"
 #include "google/protobuf/compiler/code_generator.h"
 #include "google/protobuf/compiler/plugin.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/io/zero_copy_stream.h"
-#include "absl/status/status.h"
-
-#include "phaser/compiler/message_gen.h"
 #include "phaser/compiler/enum_gen.h"
-
-#include <iostream>
-#include <vector>
-#include <memory>
+#include "phaser/compiler/message_gen.h"
 
 namespace phaser {
 
 class CodeGenerator : public google::protobuf::compiler::CodeGenerator {
-public:
+ public:
   CodeGenerator() = default;
-  bool Generate(const google::protobuf::FileDescriptor *file,
-                const std::string &parameter,
-                google::protobuf::compiler::GeneratorContext *generator_context,
-                std::string *error) const override;
+  bool Generate(const google::protobuf::FileDescriptor* file,
+                const std::string& parameter,
+                google::protobuf::compiler::GeneratorContext* generator_context,
+                std::string* error) const override;
 
   uint64_t GetSupportedFeatures() const override {
     return FEATURE_PROTO3_OPTIONAL;
@@ -39,19 +38,20 @@ public:
   mutable bool generate_active_message_ = false;
 };
 
-
 class Generator {
-public:
-  Generator(const google::protobuf::FileDescriptor *file, const std::string& ns, const std::string& pn, const std::string& tn, bool generate_active_message = false);
+ public:
+  Generator(const google::protobuf::FileDescriptor* file, const std::string& ns,
+            const std::string& pn, const std::string& tn,
+            bool generate_active_message = false);
 
   void GenerateHeaders(std::ostream& os);
   void GenerateSources(std::ostream& os);
 
-private:
+ private:
   void OpenNamespace(std::ostream& os);
   void CloseNamespace(std::ostream& os);
 
-  const google::protobuf::FileDescriptor *file_;
+  const google::protobuf::FileDescriptor* file_;
   std::vector<std::unique_ptr<MessageGenerator>> message_gens_;
   std::vector<std::unique_ptr<EnumGenerator>> enum_gens_;
   const std::string& added_namespace_;
@@ -60,4 +60,4 @@ private:
   bool generate_active_message_;
 };
 
-} // namespace phaser
+}  // namespace phaser

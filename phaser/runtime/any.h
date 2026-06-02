@@ -9,17 +9,19 @@
 // 1. A string called 'type_url' that specifies the type of the message
 // 2. A bytes field called 'value' that contains a message.
 //
-// In memory, `value` holds phaser binary (zero-copy via PackFrom / As / MutableAny).
-// On protobuf wire, `value` is length-delimited *protobuf* bytes of the inner
-// message; Serialize/Deserialize transcode at this boundary.
+// In memory, `value` holds phaser binary (zero-copy via PackFrom / As /
+// MutableAny). On protobuf wire, `value` is length-delimited *protobuf* bytes
+// of the inner message; Serialize/Deserialize transcode at this boundary.
 //
-#include "phaser/runtime/fields.h"
-#include "phaser/runtime/phaser_bank.h"
-#include "toolbelt/hexdump.h"
 #include <stddef.h>
+
 #include <optional>
 #include <string>
 #include <utility>
+
+#include "phaser/runtime/fields.h"
+#include "phaser/runtime/phaser_bank.h"
+#include "toolbelt/hexdump.h"
 
 namespace phaser {
 
@@ -28,7 +30,7 @@ namespace phaser {
 
 // Hand-coded message class that represents a google.protobuf.Any message.
 class AnyMessage : public Message {
-public:
+ public:
   AnyMessage(phaser::InternalDefault /*d*/)
       : type_url_(offsetof(AnyMessage, type_url_), HeaderSize() + 0, 0, 1),
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
@@ -61,26 +63,32 @@ public:
   std::string GetName() const override { return Name(); }
   std::string GetFullName() const override { return FullName(); }
 
-  friend std::ostream &operator<<(std::ostream &os, const AnyMessage &msg);
+  friend std::ostream& operator<<(std::ostream& os, const AnyMessage& msg);
 
   void Indent(int indent) {
     type_url_.Indent(indent);
     value_.Indent(indent);
   }
 
-  const MessageInfo *GetMessageInfo() const override {
-    return nullptr; // Implement this.
+  const MessageInfo* GetMessageInfo() const override {
+    return nullptr;  // Implement this.
   }
 
   // Protobuf accessors.
   std::string_view type_url() const { return type_url_.Get(); }
-  template <typename Str> void set_type_url(Str str) { type_url_.Set(str); }
+  template <typename Str>
+  void set_type_url(Str str) {
+    type_url_.Set(str);
+  }
   void clear_type_url() { type_url_.Clear(); }
   bool has_type_url() const { return type_url_.IsPresent(); }
 
   std::string_view value() const { return value_.Get(); }
-  template <typename Str> void set_value(Str str) { value_.Set(str); }
-  void set_value(const char *data, size_t size) { value_.Set(data, size); }
+  template <typename Str>
+  void set_value(Str str) {
+    value_.Set(str);
+  }
+  void set_value(const char* data, size_t size) { value_.Set(data, size); }
   void clear_value() { value_.Clear(); }
   bool has_value() const { return value_.IsPresent(); }
 
@@ -89,10 +97,10 @@ public:
     value_.Clear();
   }
 
-  bool operator==(const AnyMessage &other) const {
+  bool operator==(const AnyMessage& other) const {
     return type_url_ == other.type_url_ && value_ == other.value_;
   }
-  bool operator!=(const AnyMessage &other) const {
+  bool operator!=(const AnyMessage& other) const {
     return type_url_ != other.type_url_ || value_ != other.value_;
   }
   size_t SerializedSize() const {
@@ -101,7 +109,7 @@ public:
       size += type_url_.SerializedSize();
     }
     if (value_.IsPresent()) {
-      absl::StatusOr<const Message *> embedded = EmbeddedMessageForWire();
+      absl::StatusOr<const Message*> embedded = EmbeddedMessageForWire();
       if (!embedded.ok()) {
         return 0;
       }
@@ -116,14 +124,14 @@ public:
     return size;
   }
 
-  absl::Status Serialize(phaser::ProtoBuffer &buffer) const {
+  absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
     if (type_url_.IsPresent()) {
       if (absl::Status status = type_url_.Serialize(buffer); !status.ok()) {
         return status;
       }
     }
     if (value_.IsPresent()) {
-      absl::StatusOr<const Message *> embedded = EmbeddedMessageForWire();
+      absl::StatusOr<const Message*> embedded = EmbeddedMessageForWire();
       if (!embedded.ok()) {
         return embedded.status();
       }
@@ -148,7 +156,7 @@ public:
     return absl::OkStatus();
   }
 
-  absl::Status Deserialize(phaser::ProtoBuffer &buffer) {
+  absl::Status Deserialize(phaser::ProtoBuffer& buffer) {
     clear_type_url();
     clear_value();
 
@@ -163,28 +171,28 @@ public:
       }
       uint32_t field_number = *tag >> phaser::ProtoBuffer::kFieldIdShift;
       switch (field_number) {
-      case 1: {
-        absl::StatusOr<std::string_view> url = buffer.DeserializeString();
-        if (!url.ok()) {
-          return url.status();
+        case 1: {
+          absl::StatusOr<std::string_view> url = buffer.DeserializeString();
+          if (!url.ok()) {
+            return url.status();
+          }
+          pending_type_url = std::string(*url);
+          break;
         }
-        pending_type_url = std::string(*url);
-        break;
-      }
-      case 2: {
-        absl::StatusOr<absl::Span<char>> wire =
-            buffer.DeserializeLengthDelimited();
-        if (!wire.ok()) {
-          return wire.status();
+        case 2: {
+          absl::StatusOr<absl::Span<char>> wire =
+              buffer.DeserializeLengthDelimited();
+          if (!wire.ok()) {
+            return wire.status();
+          }
+          pending_wire_value =
+              std::string(wire->data(), wire->data() + wire->size());
+          break;
         }
-        pending_wire_value =
-            std::string(wire->data(), wire->data() + wire->size());
-        break;
-      }
-      default:
-        if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
-          return status;
-        }
+        default:
+          if (absl::Status status = buffer.SkipTag(*tag); !status.ok()) {
+            return status;
+          }
       }
     }
 
@@ -206,7 +214,7 @@ public:
     return type;
   }
 
-  absl::Status CloneFrom(const AnyMessage &msg) {
+  absl::Status CloneFrom(const AnyMessage& msg) {
     if (msg.has_type_url()) {
       type_url_.Set(msg.type_url());
     }
@@ -216,12 +224,12 @@ public:
             "Any value without type_url cannot be cloned");
       }
       const std::string type = msg.MessageTypeName();
-      absl::StatusOr<Message *> dest = AllocateEmbeddedMessage(type);
+      absl::StatusOr<Message*> dest = AllocateEmbeddedMessage(type);
       if (!dest.ok()) {
         return dest.status();
       }
       std::unique_ptr<Message> dest_owner(*dest);
-      absl::StatusOr<const Message *> src =
+      absl::StatusOr<const Message*> src =
           PhaserBankMakeExisting(type, msg.runtime, msg.value().data());
       if (!src.ok()) {
         return src.status();
@@ -232,15 +240,16 @@ public:
     return absl::OkStatus();
   }
 
-  void CopyFrom(const Message &m) override {
-    const AnyMessage &msg = static_cast<const AnyMessage &>(m);
+  void CopyFrom(const Message& m) override {
+    const AnyMessage& msg = static_cast<const AnyMessage&>(m);
     (void)CloneFrom(msg);
   }
 
   // Create an instance of message T in the value field.  Returns
   // a message whose storage is in the payload buffer inside
   // the value.
-  template <typename T> T MutableAny() {
+  template <typename T>
+  T MutableAny() {
     set_type_url("type.googleapis.com/" + T::FullName());
     size_t size = T::BinarySize();
     absl::Span<char> memory = value_.Allocate(size, true);
@@ -251,32 +260,37 @@ public:
 
   // In phaser the embedded message isn't serialized so this is just a
   // copy from msg into the value field.
-  template <typename T> bool PackFrom(const T &msg) {
+  template <typename T>
+  bool PackFrom(const T& msg) {
     T m = MutableAny<T>();
     return m.CloneFrom(msg).ok();
   }
 
-  template <typename T> absl::Status PackFromOrStatus(const T &msg) {
+  template <typename T>
+  absl::Status PackFromOrStatus(const T& msg) {
     T m = MutableAny<T>();
     return m.CloneFrom(msg);
   }
 
-  template <typename T> bool UnpackTo(T *msg) const {
-    const char *addr = value().data();
+  template <typename T>
+  bool UnpackTo(T* msg) const {
+    const char* addr = value().data();
     std::unique_ptr<T> embedded_msg = std::make_unique<T>(
-        runtime, runtime->ToOffset(const_cast<char *>(addr)));
+        runtime, runtime->ToOffset(const_cast<char*>(addr)));
     return msg->CloneFrom(*embedded_msg).ok();
   }
 
-  template <typename T> absl::Status UnpackToOrStatus(T *msg) const {
-    const char *addr = value().data();
+  template <typename T>
+  absl::Status UnpackToOrStatus(T* msg) const {
+    const char* addr = value().data();
     std::unique_ptr<T> embedded_msg = std::make_unique<T>(
-        runtime, runtime->ToOffset(const_cast<char *>(addr)));
+        runtime, runtime->ToOffset(const_cast<char*>(addr)));
     return msg->CloneFrom(*embedded_msg);
   }
 
-  template <typename T> bool Is() const {
-    const std::string &msg_type = T::FullName();
+  template <typename T>
+  bool Is() const {
+    const std::string& msg_type = T::FullName();
     std::string t = MessageTypeName();
     return t == msg_type;
   }
@@ -284,12 +298,13 @@ public:
   // Gets the value of the any field as a message of type T.  This does not
   // check that the message is actually of type T, so it's up to you to call
   // the Is<T>() method first.  Caveat programmer.
-  template <typename T> const T As() const {
-    const T msg(runtime, runtime->ToOffset(const_cast<char *>(value().data())));
+  template <typename T>
+  const T As() const {
+    const T msg(runtime, runtime->ToOffset(const_cast<char*>(value().data())));
     return msg;
   }
 
-  bool ParseFromArray(const char *array, size_t size) {
+  bool ParseFromArray(const char* array, size_t size) {
     ProtoBuffer buffer(array, size);
     if (absl::Status status = Deserialize(buffer); !status.ok()) {
       return false;
@@ -297,11 +312,11 @@ public:
     return true;
   }
 
-  bool ParseFromString(const std::string &str) {
+  bool ParseFromString(const std::string& str) {
     return ParseFromArray(str.data(), str.size());
   }
 
-  bool SerializeToString(std::string *str) const {
+  bool SerializeToString(std::string* str) const {
     size_t size = SerializedSize();
     str->resize(size);
     if (size == 0) {
@@ -317,7 +332,7 @@ public:
     return str;
   }
 
-  bool SerializeToArray(char *array, size_t size) const {
+  bool SerializeToArray(char* array, size_t size) const {
     ProtoBuffer buffer(array, size);
     if (absl::Status status = Serialize(buffer); !status.ok()) {
       return false;
@@ -325,10 +340,10 @@ public:
     return true;
   }
 
-private:
+ private:
   static constexpr int kValueFieldNumber = 2;
 
-  absl::StatusOr<const Message *> EmbeddedMessageForWire() const {
+  absl::StatusOr<const Message*> EmbeddedMessageForWire() const {
     if (!has_type_url() || !has_value()) {
       return absl::FailedPreconditionError(
           "Any is missing type_url or embedded value");
@@ -337,7 +352,7 @@ private:
     return PhaserBankMakeExisting(type, runtime, value().data());
   }
 
-  absl::StatusOr<Message *> AllocateEmbeddedMessage(const std::string &type) {
+  absl::StatusOr<Message*> AllocateEmbeddedMessage(const std::string& type) {
     absl::StatusOr<size_t> binary_size = PhaserBankBinarySize(type);
     if (!binary_size.ok()) {
       return binary_size.status();
@@ -347,13 +362,12 @@ private:
                                       runtime->ToOffset(memory.data()));
   }
 
-  absl::Status MaterializeValueFromProtobufWire(const std::string &wire) {
+  absl::Status MaterializeValueFromProtobufWire(const std::string& wire) {
     if (!has_type_url()) {
-      return absl::InvalidArgumentError(
-          "Any value on wire requires type_url");
+      return absl::InvalidArgumentError("Any value on wire requires type_url");
     }
     const std::string type = MessageTypeName();
-    absl::StatusOr<Message *> embedded = AllocateEmbeddedMessage(type);
+    absl::StatusOr<Message*> embedded = AllocateEmbeddedMessage(type);
     if (!embedded.ok()) {
       return embedded.status();
     }
@@ -369,34 +383,44 @@ private:
 #pragma clang diagnostic pop
 
 class AnyField : public IndirectMessageField<AnyMessage> {
-public:
+ public:
   AnyField(uint32_t boff, uint32_t offset, int id, int number)
       : IndirectMessageField(boff, offset, id, number) {}
 
-  bool operator==(const AnyField &other) const {
+  bool operator==(const AnyField& other) const {
     return IndirectMessageField<AnyMessage>::operator==(other);
   }
-  bool operator!=(const AnyField &other) const {
+  bool operator!=(const AnyField& other) const {
     return IndirectMessageField<AnyMessage>::operator!=(other);
   }
 
-  template <typename T> bool PackFrom(const T &msg) {
+  template <typename T>
+  bool PackFrom(const T& msg) {
     return msg_.PackFrom(msg);
   }
 
-  template <typename T> bool UnpackTo(T *msg) const {
+  template <typename T>
+  bool UnpackTo(T* msg) const {
     return msg_.UnpackTo(msg);
   }
 
-  bool ParseFromString(const std::string &str) { return msg_.ParseFromString(str); }
+  bool ParseFromString(const std::string& str) {
+    return msg_.ParseFromString(str);
+  }
 
-  bool SerializeToString(std::string *str) const {
+  bool SerializeToString(std::string* str) const {
     return msg_.SerializeToString(str);
   }
 
-  template <typename T> bool Is() const { return msg_.Is<T>(); }
+  template <typename T>
+  bool Is() const {
+    return msg_.Is<T>();
+  }
 
-  template <typename T> void CloneFrom(const T &msg) { msg_.CloneFrom(msg); }
+  template <typename T>
+  void CloneFrom(const T& msg) {
+    msg_.CloneFrom(msg);
+  }
 
   bool has_type_url() const { return msg_.has_type_url(); }
   bool has_value() const { return msg_.has_value(); }
@@ -404,4 +428,4 @@ public:
   std::string_view value() const { return msg_.value(); }
 };
 
-} // namespace phaser
+}  // namespace phaser

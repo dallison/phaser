@@ -6,6 +6,13 @@
 
 // Single value fields.
 
+#include <stdint.h>
+#include <stdlib.h>
+
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -13,38 +20,34 @@
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/wireformat.h"
 #include "toolbelt/payload_buffer.h"
-#include <stdint.h>
-#include <stdlib.h>
-#include <string>
-#include <string_view>
-#include <vector>
 
 namespace phaser {
 
-template <typename T> constexpr size_t AlignedOffset(size_t offset) {
+template <typename T>
+constexpr size_t AlignedOffset(size_t offset) {
   return (offset + sizeof(T) - 1) & ~(sizeof(T) - 1);
 }
 
 class Field {
-public:
+ public:
   Field() = default;
   Field(int id, int number) : id_(id), number_(number) {}
-  Field(const Field &) = default;
-  Field &operator=(const Field &) = default;
+  Field(const Field&) = default;
+  Field& operator=(const Field&) = default;
   virtual ~Field() = default;
 
   // The presence bit is in a set of words immediately after
   // the metadata at the start of the message.
-  void SetPresence(::toolbelt::PayloadBuffer *buffer, uint32_t binary_offset) {
+  void SetPresence(::toolbelt::PayloadBuffer* buffer, uint32_t binary_offset) {
     buffer->SetPresenceBit(static_cast<uint32_t>(id_), binary_offset);
   }
 
-  void ClearPresence(::toolbelt::PayloadBuffer *buffer,
+  void ClearPresence(::toolbelt::PayloadBuffer* buffer,
                      uint32_t binary_offset) {
     buffer->ClearPresenceBit(static_cast<uint32_t>(id_), binary_offset);
   }
 
-  bool IsPresent(uint32_t field_id, ::toolbelt::PayloadBuffer *buffer,
+  bool IsPresent(uint32_t field_id, ::toolbelt::PayloadBuffer* buffer,
                  uint32_t binary_offset) const {
     if (field_id == static_cast<uint32_t>(-1)) {
       return false;
@@ -74,7 +77,7 @@ public:
 
   // For printing.
   void Indent(int indent) const { indent_ += indent; }
-  void PrintIndent(std::ostream &os) const {
+  void PrintIndent(std::ostream& os) const {
     for (int i = 0; i < indent_; i++) {
       os << " ";
     }
@@ -82,7 +85,7 @@ public:
 
   int GetIndent() const { return indent_; }
 
-protected:
+ protected:
   int id_ = 0;
   int number_ = 0;
   mutable ::toolbelt::BufferOffset cached_offset_ = 0xffffffff;
@@ -90,84 +93,86 @@ protected:
   mutable int indent_ = 0;
 };
 
-#define DEFINE_PRIMITIVE_FIELD(cname, type)                                    \
-  template <bool FixedSize = false, bool Signed = false>                       \
-  class cname##Field : public Field {                                          \
-  public:                                                                      \
-    cname##Field() = default;                                                  \
-    explicit cname##Field(uint32_t boff, uint32_t offset, int id, int number)  \
-        : Field(id, number), source_offset_(boff),                             \
-          relative_binary_offset_(offset) {}                                   \
-    type Get() const {                                                         \
-      int32_t offset = FindFieldOffset(source_offset_);                        \
-      if (offset < 0) {                                                        \
-        return type();                                                         \
-      }                                                                        \
-      return GetBuffer()->template Get<type>(                                  \
-          GetMessageBinaryStart() +                                            \
-          static_cast<::toolbelt::BufferOffset>(offset));                      \
-    }                                                                          \
-    type GetForPrinting() const { return Get(); }                              \
-    bool IsPresent() const {                                                   \
-      return Field::IsPresent(static_cast<uint32_t>(FindFieldId(source_offset_)), GetBuffer(),        \
-                              GetPresenceMaskStart());                         \
-    }                                                                          \
-                                                                               \
-    void Set(type v) {                                                         \
-      GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, v);  \
-      SetPresence(GetBuffer(), GetPresenceMaskStart());                        \
-    }                                                                          \
-    void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }       \
-    bool operator==(const cname##Field &other) const {                         \
-      return Get() == other.Get();                                             \
-    }                                                                          \
-    bool operator!=(const cname##Field &other) const {                         \
-      return !(*this == other);                                                \
-    }                                                                          \
-    size_t SerializedSize() const {                                            \
-      if constexpr (FixedSize) {                                               \
-        return ProtoBuffer::TagSize(Number(),                                  \
-                                    ProtoBuffer::FixedWireType<type>()) +      \
-               sizeof(type);                                                   \
-      } else {                                                                 \
-        return ProtoBuffer::TagSize(Number(), WireType::kVarint) +             \
-               ProtoBuffer::VarintSize<type, Signed>(Get());                   \
-      }                                                                        \
-    }                                                                          \
-    absl::Status Serialize(ProtoBuffer &buffer) const {                        \
-      if constexpr (FixedSize) {                                               \
-        return buffer.SerializeFixed<type>(Number(), Get());                   \
-      } else {                                                                 \
-        return buffer.SerializeVarint<type, Signed>(Number(), Get());          \
-      }                                                                        \
-    }                                                                          \
-                                                                               \
-    absl::Status Deserialize(ProtoBuffer &buffer) {                            \
-      absl::StatusOr<type> v;                                                  \
-      if constexpr (FixedSize) {                                               \
-        v = buffer.DeserializeFixed<type>();                                   \
-      } else {                                                                 \
-        v = buffer.DeserializeVarint<type, Signed>();                          \
-      }                                                                        \
-      if (!v.ok()) {                                                           \
-        return v.status();                                                     \
-      }                                                                        \
-      Set(*v);                                                                 \
-      return absl::OkStatus();                                                 \
-    }                                                                          \
-                                                                               \
-  private:                                                                     \
-    ::toolbelt::PayloadBuffer *GetBuffer() const {                             \
-      return Message::GetBuffer(this, source_offset_);                         \
-    }                                                                          \
-    ::toolbelt::BufferOffset GetMessageBinaryStart() const {                   \
-      return Message::GetMessageBinaryStart(this, source_offset_);             \
-    }                                                                          \
-    ::toolbelt::BufferOffset GetPresenceMaskStart() const {                    \
-      return Message::GetMessageBinaryStart(this, source_offset_) + 4;         \
-    }                                                                          \
-    uint32_t source_offset_;                                                   \
-    ::toolbelt::BufferOffset relative_binary_offset_;                          \
+#define DEFINE_PRIMITIVE_FIELD(cname, type)                                   \
+  template <bool FixedSize = false, bool Signed = false>                      \
+  class cname##Field : public Field {                                         \
+   public:                                                                    \
+    cname##Field() = default;                                                 \
+    explicit cname##Field(uint32_t boff, uint32_t offset, int id, int number) \
+        : Field(id, number),                                                  \
+          source_offset_(boff),                                               \
+          relative_binary_offset_(offset) {}                                  \
+    type Get() const {                                                        \
+      int32_t offset = FindFieldOffset(source_offset_);                       \
+      if (offset < 0) {                                                       \
+        return type();                                                        \
+      }                                                                       \
+      return GetBuffer()->template Get<type>(                                 \
+          GetMessageBinaryStart() +                                           \
+          static_cast<::toolbelt::BufferOffset>(offset));                     \
+    }                                                                         \
+    type GetForPrinting() const { return Get(); }                             \
+    bool IsPresent() const {                                                  \
+      return Field::IsPresent(                                                \
+          static_cast<uint32_t>(FindFieldId(source_offset_)), GetBuffer(),    \
+          GetPresenceMaskStart());                                            \
+    }                                                                         \
+                                                                              \
+    void Set(type v) {                                                        \
+      GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, v); \
+      SetPresence(GetBuffer(), GetPresenceMaskStart());                       \
+    }                                                                         \
+    void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }      \
+    bool operator==(const cname##Field& other) const {                        \
+      return Get() == other.Get();                                            \
+    }                                                                         \
+    bool operator!=(const cname##Field& other) const {                        \
+      return !(*this == other);                                               \
+    }                                                                         \
+    size_t SerializedSize() const {                                           \
+      if constexpr (FixedSize) {                                              \
+        return ProtoBuffer::TagSize(Number(),                                 \
+                                    ProtoBuffer::FixedWireType<type>()) +     \
+               sizeof(type);                                                  \
+      } else {                                                                \
+        return ProtoBuffer::TagSize(Number(), WireType::kVarint) +            \
+               ProtoBuffer::VarintSize<type, Signed>(Get());                  \
+      }                                                                       \
+    }                                                                         \
+    absl::Status Serialize(ProtoBuffer& buffer) const {                       \
+      if constexpr (FixedSize) {                                              \
+        return buffer.SerializeFixed<type>(Number(), Get());                  \
+      } else {                                                                \
+        return buffer.SerializeVarint<type, Signed>(Number(), Get());         \
+      }                                                                       \
+    }                                                                         \
+                                                                              \
+    absl::Status Deserialize(ProtoBuffer& buffer) {                           \
+      absl::StatusOr<type> v;                                                 \
+      if constexpr (FixedSize) {                                              \
+        v = buffer.DeserializeFixed<type>();                                  \
+      } else {                                                                \
+        v = buffer.DeserializeVarint<type, Signed>();                         \
+      }                                                                       \
+      if (!v.ok()) {                                                          \
+        return v.status();                                                    \
+      }                                                                       \
+      Set(*v);                                                                \
+      return absl::OkStatus();                                                \
+    }                                                                         \
+                                                                              \
+   private:                                                                   \
+    ::toolbelt::PayloadBuffer* GetBuffer() const {                            \
+      return Message::GetBuffer(this, source_offset_);                        \
+    }                                                                         \
+    ::toolbelt::BufferOffset GetMessageBinaryStart() const {                  \
+      return Message::GetMessageBinaryStart(this, source_offset_);            \
+    }                                                                         \
+    ::toolbelt::BufferOffset GetPresenceMaskStart() const {                   \
+      return Message::GetMessageBinaryStart(this, source_offset_) + 4;        \
+    }                                                                         \
+    uint32_t source_offset_;                                                  \
+    ::toolbelt::BufferOffset relative_binary_offset_;                         \
   };
 
 DEFINE_PRIMITIVE_FIELD(Int32, int32_t)
@@ -185,17 +190,18 @@ struct InternalIntStringizer {
 };
 
 struct InternalIntParser {
-  int operator()(const std::string &s) const { return std::stoi(s); }
+  int operator()(const std::string& s) const { return std::stoi(s); }
 };
 
 template <typename Enum = int, typename Stringizer = InternalIntStringizer,
           typename Parser = InternalIntParser>
 class EnumField : public Field {
-public:
+ public:
   using T = typename std::underlying_type<Enum>::type;
   EnumField() = default;
   explicit EnumField(uint32_t boff, uint32_t offset, int id, int number)
-      : Field(id, number), source_offset_(boff),
+      : Field(id, number),
+        source_offset_(boff),
         relative_binary_offset_(offset) {}
 
   Enum Get() const {
@@ -205,19 +211,20 @@ public:
     }
     return static_cast<Enum>(
         GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-            GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset)));
+            GetMessageBinaryStart() +
+            static_cast<::toolbelt::BufferOffset>(offset)));
   }
 
   std::string GetForPrinting() const { return ToString(); }
 
   bool IsPresent() const {
-    return Field::IsPresent(static_cast<uint32_t>(FindFieldId(source_offset_)), GetBuffer(),
-                            GetPresenceMaskStart());
+    return Field::IsPresent(static_cast<uint32_t>(FindFieldId(source_offset_)),
+                            GetBuffer(), GetPresenceMaskStart());
   }
 
   std::string ToString() const { return Stringizer()(Get()); }
 
-  Enum ParseFromString(const std::string &s) { Set(Parser(s)); }
+  Enum ParseFromString(const std::string& s) { Set(Parser(s)); }
 
   T GetUnderlying() const {
     int32_t offset = FindFieldOffset(source_offset_);
@@ -225,7 +232,8 @@ public:
       return 0;
     }
     return GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-        GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
+        GetMessageBinaryStart() +
+        static_cast<::toolbelt::BufferOffset>(offset));
   }
 
   void Set(Enum e) {
@@ -241,10 +249,10 @@ public:
 
   void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }
 
-  bool operator==(const EnumField &other) const {
+  bool operator==(const EnumField& other) const {
     return static_cast<Enum>(*this) == static_cast<Enum>(other);
   }
-  bool operator!=(const EnumField &other) const { return !(*this == other); }
+  bool operator!=(const EnumField& other) const { return !(*this == other); }
 
   size_t SerializedSize() const {
     return ProtoBuffer::TagSize(Number(), WireType::kVarint) +
@@ -252,12 +260,12 @@ public:
                static_cast<int32_t>(GetUnderlying()));
   }
 
-  absl::Status Serialize(ProtoBuffer &buffer) const {
+  absl::Status Serialize(ProtoBuffer& buffer) const {
     return buffer.SerializeVarint<int32_t, false>(
         Number(), static_cast<int32_t>(GetUnderlying()));
   }
 
-  absl::Status Deserialize(ProtoBuffer &buffer) {
+  absl::Status Deserialize(ProtoBuffer& buffer) {
     absl::StatusOr<T> v = buffer.DeserializeVarint<T, false>();
     if (!v.ok()) {
       return v.status();
@@ -266,8 +274,8 @@ public:
     return absl::OkStatus();
   }
 
-private:
-  ::toolbelt::PayloadBuffer *GetBuffer() const {
+ private:
+  ::toolbelt::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
   ::toolbelt::BufferOffset GetMessageBinaryStart() const {
@@ -283,11 +291,12 @@ private:
 
 // String field with an offset inline in the message.
 class StringField : public Field {
-public:
+ public:
   StringField() = default;
   explicit StringField(uint32_t source_offset, uint32_t relative_binary_offset,
                        int id, int number)
-      : Field(id, number), source_offset_(source_offset),
+      : Field(id, number),
+        source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
 
   std::string_view Get() const {
@@ -295,7 +304,9 @@ public:
     if (offset < 0) {
       return std::string_view();
     }
-    return GetBuffer()->GetStringView(GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
+    return GetBuffer()->GetStringView(
+        GetMessageBinaryStart() +
+        static_cast<::toolbelt::BufferOffset>(offset));
   }
 
   bool IsPresent() const {
@@ -303,25 +314,27 @@ public:
     if (offset < 0) {
       return false;
     }
-    const ::toolbelt::BufferOffset *addr =
+    const ::toolbelt::BufferOffset* addr =
         GetRuntime()->ToAddress<const ::toolbelt::BufferOffset>(
-            GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
+            GetMessageBinaryStart() +
+            static_cast<::toolbelt::BufferOffset>(offset));
     return *addr != 0;
   }
 
-  template <typename Str> void Set(Str s) {
+  template <typename Str>
+  void Set(Str s) {
     ::toolbelt::PayloadBuffer::SetString(
         GetBufferAddr(), s, GetMessageBinaryStart() + relative_binary_offset_);
   }
 
-  void Set(const char *data, size_t size) {
+  void Set(const char* data, size_t size) {
     ::toolbelt::PayloadBuffer::SetString(
         GetBufferAddr(), std::string_view(data, size),
         GetMessageBinaryStart() + relative_binary_offset_);
   }
 
-  void SetNoCopy(const void *data) {
-    toolbelt::StringHeader *header =
+  void SetNoCopy(const void* data) {
+    toolbelt::StringHeader* header =
         GetRuntime()->ToAddress<toolbelt::StringHeader>(
             GetMessageBinaryStart() + relative_binary_offset_);
     *header = GetRuntime()->ToOffset(data);
@@ -340,25 +353,29 @@ public:
         GetMessageBinaryStart() + relative_binary_offset_, clear);
   }
 
-  bool operator==(const StringField &other) const {
+  bool operator==(const StringField& other) const {
     return Get() == other.Get();
   }
-  bool operator!=(const StringField &other) const { return !(*this == other); }
+  bool operator!=(const StringField& other) const { return !(*this == other); }
 
   size_t size() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
       return 0;
     }
-    return GetBuffer()->StringSize(GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
+    return GetBuffer()->StringSize(
+        GetMessageBinaryStart() +
+        static_cast<::toolbelt::BufferOffset>(offset));
   }
 
-  const char *data() const {
+  const char* data() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
       return nullptr;
     }
-    return GetBuffer()->StringData(GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
+    return GetBuffer()->StringData(
+        GetMessageBinaryStart() +
+        static_cast<::toolbelt::BufferOffset>(offset));
   }
 
   size_t SerializedSize() const {
@@ -366,12 +383,12 @@ public:
     return ProtoBuffer::LengthDelimitedSize(Number(), s);
   }
 
-  absl::Status Serialize(ProtoBuffer &buffer) const {
+  absl::Status Serialize(ProtoBuffer& buffer) const {
     size_t s = size();
     return buffer.ProtoBuffer::SerializeLengthDelimited(Number(), data(), s);
   }
 
-  absl::Status Deserialize(ProtoBuffer &buffer) {
+  absl::Status Deserialize(ProtoBuffer& buffer) {
     absl::StatusOr<std::string_view> s = buffer.DeserializeString();
     if (!s.ok()) {
       return s.status();
@@ -381,18 +398,19 @@ public:
     return absl::OkStatus();
   }
 
-private:
-  template <int N> friend class StringArrayField;
+ private:
+  template <int N>
+  friend class StringArrayField;
 
-  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
+  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer *GetBuffer() const {
+  ::toolbelt::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer **GetBufferAddr() const {
+  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
   ::toolbelt::BufferOffset GetMessageBinaryStart() const {
@@ -407,9 +425,9 @@ private:
 // store the std::shared_ptr to the phaser::Runtime pointer instead of
 // an offset to the start of the message.
 class NonEmbeddedStringField {
-public:
+ public:
   NonEmbeddedStringField() = default;
-  explicit NonEmbeddedStringField(const Message *msg,
+  explicit NonEmbeddedStringField(const Message* msg,
                                   uint32_t absolute_binary_offset)
       : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
 
@@ -417,7 +435,8 @@ public:
     return GetBuffer()->GetStringView(absolute_binary_offset_);
   }
 
-  template <typename Str> void Set(Str s) {
+  template <typename Str>
+  void Set(Str s) {
     ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
                                          absolute_binary_offset_);
   }
@@ -427,10 +446,10 @@ public:
                                            absolute_binary_offset_);
   }
 
-  bool operator==(const NonEmbeddedStringField &other) const {
+  bool operator==(const NonEmbeddedStringField& other) const {
     return Get() == other.Get();
   }
-  bool operator!=(const NonEmbeddedStringField &other) const {
+  bool operator!=(const NonEmbeddedStringField& other) const {
     return !(*this == other);
   }
 
@@ -438,7 +457,7 @@ public:
     return GetBuffer()->StringSize(absolute_binary_offset_);
   }
 
-  const char *data() const {
+  const char* data() const {
     return GetBuffer()->StringData(absolute_binary_offset_);
   }
   bool empty() const { return size() == 0; }
@@ -451,18 +470,18 @@ public:
   // type intentionally has no standalone Serialize() of its own.
   size_t SerializedSize() const { return size(); }
 
-private:
-  ::toolbelt::PayloadBuffer *GetBuffer() const { return msg_->runtime->pb; }
+ private:
+  ::toolbelt::PayloadBuffer* GetBuffer() const { return msg_->runtime->pb; }
 
-  ::toolbelt::PayloadBuffer **GetBufferAddr() const {
+  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
     return &msg_->runtime->pb;
   }
 
-  const Message *msg_;
+  const Message* msg_;
   ::toolbelt::BufferOffset
-      absolute_binary_offset_; // Offset into
-                               // ::toolbelt::PayloadBuffer of
-                               // toolbelt::StringHeader
+      absolute_binary_offset_;  // Offset into
+                                // ::toolbelt::PayloadBuffer of
+                                // toolbelt::StringHeader
 };
 
 // This is a buffer offset containing the absolute offset of a message in the
@@ -478,25 +497,28 @@ private:
 //                          |            |
 //                          +------------+
 
-template <typename MessageType> class IndirectMessageField : public Field {
-public:
+template <typename MessageType>
+class IndirectMessageField : public Field {
+ public:
   IndirectMessageField() = default;
   explicit IndirectMessageField(uint32_t source_offset,
                                 uint32_t relative_binary_offset, int id,
                                 int number)
-      : Field(id, number), source_offset_(source_offset),
+      : Field(id, number),
+        source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset),
         msg_(InternalDefault{}) {}
 
-  const MessageType &Msg() const { return msg_; }
-  MessageType &MutableMsg() { return msg_; }
+  const MessageType& Msg() const { return msg_; }
+  MessageType& MutableMsg() { return msg_; }
 
-  const MessageType &Get() const {
+  const MessageType& Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
       return msg_;
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
+    ::toolbelt::BufferOffset* addr =
+        GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -510,19 +532,20 @@ public:
     if (offset < 0) {
       return false;
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
+    ::toolbelt::BufferOffset* addr =
+        GetIndirectAddress(static_cast<uint32_t>(offset));
     return *addr != 0;
   }
 
-  MessageType *Mutable() {
-    ::toolbelt::BufferOffset *addr =
+  MessageType* Mutable() {
+    ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (*addr != 0) {
       // Already allocated.
       return &msg_;
     }
     // Allocate a new message.
-    void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
+    void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
     ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
@@ -531,7 +554,7 @@ public:
 
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(relative_binary_offset_);
-    *addr = msg_offset; // Put message field offset into message.
+    *addr = msg_offset;  // Put message field offset into message.
 
     // Install the metadata into the binary message.
     msg_.template InstallMetadata<MessageType>();
@@ -539,7 +562,7 @@ public:
   }
 
   void SetOffset(toolbelt::BufferOffset offset) {
-    ::toolbelt::BufferOffset *addr =
+    ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (*addr != 0) {
       // Already set, clear the exising message
@@ -551,7 +574,7 @@ public:
   }
 
   void Clear() {
-    ::toolbelt::BufferOffset *addr =
+    ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (*addr == 0) {
       return;
@@ -564,10 +587,10 @@ public:
     *addr = 0;
   }
 
-  bool operator==(const IndirectMessageField<MessageType> &other) const {
+  bool operator==(const IndirectMessageField<MessageType>& other) const {
     return msg_ != other.msg_;
   }
-  bool operator!=(const IndirectMessageField<MessageType> &other) const {
+  bool operator!=(const IndirectMessageField<MessageType>& other) const {
     return !(*this == other);
   }
 
@@ -576,7 +599,8 @@ public:
     if (offset < 0) {
       return 0;
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
+    ::toolbelt::BufferOffset* addr =
+        GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -585,12 +609,13 @@ public:
     return ProtoBuffer::LengthDelimitedSize(Number(), msg_.SerializedSize());
   }
 
-  absl::Status Serialize(ProtoBuffer &buffer) const {
+  absl::Status Serialize(ProtoBuffer& buffer) const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
       return absl::OkStatus();
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
+    ::toolbelt::BufferOffset* addr =
+        GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -607,13 +632,13 @@ public:
     return msg_.Serialize(buffer);
   }
 
-  absl::Status Deserialize(ProtoBuffer &buffer) {
+  absl::Status Deserialize(ProtoBuffer& buffer) {
     absl::StatusOr<absl::Span<char>> s = buffer.DeserializeLengthDelimited();
     if (!s.ok()) {
       return s.status();
     }
     // Allocate a new message.
-    void *msg_addr = ::toolbelt::PayloadBuffer::Allocate(
+    void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
     ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
@@ -621,9 +646,9 @@ public:
     msg_.absolute_binary_offset = msg_offset;
 
     // Buffer might have moved, get address of indirect again.
-    ::toolbelt::BufferOffset *addr =
+    ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
-    *addr = msg_offset; // Put message field offset into message.
+    *addr = msg_offset;  // Put message field offset into message.
 
     // Install the metadata into the binary message.
     msg_.template InstallMetadata<MessageType>();
@@ -637,21 +662,21 @@ public:
     msg_.Indent(indent);
   }
 
-protected:
-  ::toolbelt::PayloadBuffer *GetBuffer() const {
+ protected:
+  ::toolbelt::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::BufferOffset *GetIndirectAddress(uint32_t abs_offset) const {
+  ::toolbelt::BufferOffset* GetIndirectAddress(uint32_t abs_offset) const {
     return GetBuffer()->template ToAddress<::toolbelt::BufferOffset>(
         GetMessageBinaryStart() + abs_offset);
   }
 
-  ::toolbelt::PayloadBuffer **GetBufferAddr() const {
+  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
 
-  const std::shared_ptr<MessageRuntime> &GetRuntime() const {
+  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
     return Message::GetRuntime(this, source_offset_);
   }
 
@@ -664,25 +689,26 @@ protected:
   mutable MessageType msg_;
 };
 
-template <typename MessageType> class MessageObject {
-public:
+template <typename MessageType>
+class MessageObject {
+ public:
   MessageObject() : msg_(InternalDefault{}) {}
   explicit MessageObject(std::shared_ptr<MessageRuntime> runtime,
                          uint32_t absolute_binary_offset)
       : msg_(runtime, absolute_binary_offset) {}
 
-  const MessageType &Get() const { return msg_; }
+  const MessageType& Get() const { return msg_; }
 
-  const MessageType &operator*() const { return msg_; }
-  MessageType &operator*() { return msg_; }
-  MessageType *operator->() { return &msg_; }
+  const MessageType& operator*() const { return msg_; }
+  MessageType& operator*() { return msg_; }
+  MessageType* operator->() { return &msg_; }
 
-  MessageType *Mutable() { return &msg_; }
+  MessageType* Mutable() { return &msg_; }
 
-  bool operator==(const MessageObject<MessageType> &other) const {
+  bool operator==(const MessageObject<MessageType>& other) const {
     return msg_ != other.msg_;
   }
-  bool operator!=(const MessageObject<MessageType> &other) const {
+  bool operator!=(const MessageObject<MessageType>& other) const {
     return !(*this == other);
   }
 
@@ -699,20 +725,21 @@ public:
     msg_.Clear();
   }
 
-  const MessageType &Msg() const { return msg_; }
-  MessageType &MutableMsg() { return msg_; }
+  const MessageType& Msg() const { return msg_; }
+  MessageType& MutableMsg() { return msg_; }
 
-  template <typename T> absl::Status CloneFrom(const T &other) {
+  template <typename T>
+  absl::Status CloneFrom(const T& other) {
     return msg_.CloneFrom(other.msg_);
   }
 
   size_t SerializedSize() const { return msg_.SerializedSize(); }
 
-  absl::Status Serialize(ProtoBuffer &buffer) const {
+  absl::Status Serialize(ProtoBuffer& buffer) const {
     return msg_.Serialize(buffer);
   }
 
-  absl::Status Deserialize(ProtoBuffer &buffer) {
+  absl::Status Deserialize(ProtoBuffer& buffer) {
     absl::StatusOr<absl::Span<char>> s = buffer.DeserializeLengthDelimited();
     if (!s.ok()) {
       return s.status();
@@ -726,15 +753,15 @@ public:
     msg_.Indent(indent);
   }
 
-  void PrintIndent(std::ostream &os) const {
+  void PrintIndent(std::ostream& os) const {
     for (int i = 0; i < indent_; i++) {
       os << " ";
     }
   }
 
-private:
+ private:
   mutable MessageType msg_;
   mutable int indent_ = 0;
 };
 
-} // namespace phaser
+}  // namespace phaser

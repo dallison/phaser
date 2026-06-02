@@ -3,15 +3,17 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
+
+#include <sstream>
+
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "phaser/testdata/TestMessage.phaser.h"
+#include "test_helpers.h"
 #include "toolbelt/hexdump.h"
 #include "toolbelt/payload_buffer.h"
-#include <gtest/gtest.h>
-#include <sstream>
 
 TEST(PhaserTest, ProtobufCompat) {
   foo::bar::phaser::TestMessage msg;
@@ -93,7 +95,7 @@ TEST(PhaserTest, ProtobufCompat) {
 }
 
 TEST(PhaserTest, Expansion) {
-  foo::bar::phaser::TestMessage msg; // 1K buffer by default.
+  foo::bar::phaser::TestMessage msg;  // 1K buffer by default.
   msg.set_x(1234);
   msg.set_y(5678);
   msg.set_s("hello world");
@@ -385,7 +387,7 @@ TEST(PhaserTest, GarbageWithValidMagic) {
     buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic.
-  *reinterpret_cast<uint32_t *>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
 
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -424,11 +426,11 @@ TEST(PhaserTest, GarbageWithTailoring) {
     buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic and the header fields.
-  *reinterpret_cast<uint32_t *>(buffer) = ::toolbelt::kFixedBufferMagic;
-  *reinterpret_cast<uint32_t *>(buffer + 4) = 0x1c;  // message location.
-  *reinterpret_cast<uint32_t *>(buffer + 8) = 1024;  // hwm.
-  *reinterpret_cast<uint32_t *>(buffer + 12) = 1000; // full_size
-  *reinterpret_cast<uint32_t *>(buffer + 16) = 50;   // free list
+  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer + 4) = 0x1c;   // message location.
+  *reinterpret_cast<uint32_t*>(buffer + 8) = 1024;   // hwm.
+  *reinterpret_cast<uint32_t*>(buffer + 12) = 1000;  // full_size
+  *reinterpret_cast<uint32_t*>(buffer + 16) = 50;    // free list
 
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -481,7 +483,7 @@ TEST(PhaserTest, Reflection) {
   msg.set_u1a(4321);
   msg.set_u2a(8765);
 
-  absl::StatusOr<const ::phaser::MessageInfo *> info =
+  absl::StatusOr<const ::phaser::MessageInfo*> info =
       ::phaser::PhaserBankMessageInfo("foo.bar.TestMessage");
   ASSERT_TRUE(info.ok());
   ASSERT_NE(nullptr, *info);
@@ -492,8 +494,8 @@ TEST(PhaserTest, Reflection) {
   ASSERT_EQ(100, field_x->number);
   ASSERT_EQ(::phaser::FieldType::kFieldInt32, field_x->type);
 
-  ::phaser::PrimitiveFieldInfo *pf_x =
-      static_cast<::phaser::PrimitiveFieldInfo *>(field_x.get());
+  ::phaser::PrimitiveFieldInfo* pf_x =
+      static_cast<::phaser::PrimitiveFieldInfo*>(field_x.get());
   ASSERT_NE(nullptr, pf_x);
   ASSERT_FALSE(pf_x->is_repeated);
   ASSERT_FALSE(pf_x->is_packed);
@@ -508,7 +510,7 @@ TEST(PhaserTest, Reflection) {
   int x_number = it->second->number;
 
   // Let's print all the fields.
-  for (const auto &field : (*info)->fields_in_order) {
+  for (const auto& field : (*info)->fields_in_order) {
     std::cout << field->name << " " << field->number << " "
               << static_cast<int>(field->type) << " " << field->offset
               << std::endl;
@@ -517,7 +519,7 @@ TEST(PhaserTest, Reflection) {
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);
   ASSERT_TRUE(has_x.ok());
 
-  absl::StatusOr<::phaser::Int32Field<> *> x =
+  absl::StatusOr<::phaser::Int32Field<>*> x =
       ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
           "foo.bar.TestMessage", msg, 100);
   ASSERT_TRUE(x.ok());
@@ -534,11 +536,11 @@ TEST(PhaserTest, Reflection) {
   ASSERT_TRUE(vi32.ok());
   ASSERT_NE(nullptr, *vi32);
 
-  ::phaser::PrimitiveVectorField<int32_t> &vi32r = **vi32;
+  ::phaser::PrimitiveVectorField<int32_t>& vi32r = **vi32;
   ASSERT_EQ(3, vi32r.Size());
   ASSERT_EQ(1, vi32r[0]);
 
-  for (auto &v : vi32r) {
+  for (auto& v : vi32r) {
     std::cout << v << std::endl;
   }
 }
@@ -571,7 +573,7 @@ TEST(DebugRedaction, DoesNotStripMidContentMarker) {
   ASSERT_EQ(original, s);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 
   return RUN_ALL_TESTS();

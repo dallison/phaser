@@ -5,6 +5,10 @@
 // It would be in your interests to build this optimized or you will be
 // waiting a while...
 
+#include <gtest/gtest.h>
+
+#include <sstream>
+
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/vision.pb.h"
@@ -12,8 +16,6 @@
 #include "toolbelt/clock.h"
 #include "toolbelt/hexdump.h"
 #include "toolbelt/payload_buffer.h"
-#include <gtest/gtest.h>
-#include <sstream>
 
 // This test builds a camera image in a fixed size buffer.  The protobuf version
 // has to serialize it into the buffer, but with phaser we build it directly in
@@ -264,7 +266,7 @@ TEST(PerfTest, ProtobufAllLidars) {
     constexpr int kNumLidars = 100;
     constexpr int kNumBeams = 100000;
     for (int j = 0; j < kNumLidars; ++j) {
-      robot::LidarScan *scan = lidars.add_scans();
+      robot::LidarScan* scan = lidars.add_scans();
       scan->mutable_header()->set_timestamp(1234567890);
 
       for (int k = 0; k < kNumBeams; ++k) {
@@ -280,7 +282,7 @@ TEST(PerfTest, ProtobufAllLidars) {
     ASSERT_EQ(lidars2.header().timestamp(), 1234567890);
     ASSERT_EQ(lidars2.scans_size(), kNumLidars);
     for (int j = 0; j < kNumLidars; ++j) {
-      const robot::LidarScan &scan = lidars2.scans(j);
+      const robot::LidarScan& scan = lidars2.scans(j);
       ASSERT_EQ(scan.header().timestamp(), 1234567890);
       ASSERT_EQ(scan.beams_size(), kNumBeams);
       for (int k = 0; k < kNumBeams; ++k) {
@@ -310,7 +312,7 @@ TEST(PerfTest, PhaserAllLidarsPush) {
     constexpr int kNumBeams = 100000;
     lidars.reserve_scans(kNumLidars);
     for (int j = 0; j < kNumLidars; ++j) {
-      robot::phaser::LidarScan *scan = lidars.add_scans();
+      robot::phaser::LidarScan* scan = lidars.add_scans();
       scan->mutable_header()->set_timestamp(1234567890);
 
       scan->reserve_beams(kNumBeams);
@@ -325,7 +327,7 @@ TEST(PerfTest, PhaserAllLidarsPush) {
     ASSERT_EQ(lidars2.header().timestamp(), 1234567890);
     ASSERT_EQ(lidars2.scans_size(), kNumLidars);
     for (int j = 0; j < kNumLidars; ++j) {
-      const robot::phaser::LidarScan &scan = lidars2.scans(j);
+      const robot::phaser::LidarScan& scan = lidars2.scans(j);
       ASSERT_EQ(scan.header().timestamp(), 1234567890);
       ASSERT_EQ(scan.beams_size(), kNumBeams);
       for (int k = 0; k < kNumBeams; ++k) {
@@ -355,7 +357,7 @@ TEST(PerfTest, PhaserAllLidarsZeroCopy) {
     constexpr int kNumBeams = 100000;
 
     // Allocate all the scans at once.
-    std::vector<robot::phaser::LidarScan *> lidar_scans =
+    std::vector<robot::phaser::LidarScan*> lidar_scans =
         lidars.allocate_scans(kNumLidars);
     for (auto scan : lidar_scans) {
       scan->mutable_header()->set_timestamp(1234567890);
@@ -371,9 +373,9 @@ TEST(PerfTest, PhaserAllLidarsZeroCopy) {
         robot::phaser::AllLidars::CreateReadonly(buffer.data(), lidars.Size());
     ASSERT_EQ(lidars2.header().timestamp(), 1234567890);
     ASSERT_EQ(lidars2.scans_size(), kNumLidars);
-    auto &scans = lidars2.scans();
+    auto& scans = lidars2.scans();
     for (int j = 0; j < kNumLidars; ++j) {
-      const robot::phaser::LidarScan &scan = *(scans[j]);
+      const robot::phaser::LidarScan& scan = *(scans[j]);
       ASSERT_EQ(scan.header().timestamp(), 1234567890);
       ASSERT_EQ(scan.beams_size(), kNumBeams);
       absl::Span<const double> beams = scan.beams_as_span();
@@ -387,7 +389,7 @@ TEST(PerfTest, PhaserAllLidarsZeroCopy) {
   std::cout << absl::StrFormat("Phaser zero-copy: %d ns\n", end - start);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 
   return RUN_ALL_TESTS();

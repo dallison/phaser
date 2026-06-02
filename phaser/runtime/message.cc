@@ -3,8 +3,10 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/runtime/message.h"
-#include "toolbelt/hexdump.h"
+
 #include <cstring>
+
+#include "toolbelt/hexdump.h"
 
 namespace phaser {
 
@@ -13,14 +15,14 @@ int32_t Message::FindFieldOffset(uint32_t field_number) const {
     return -1;
   }
   // First 4 bytes of message are the the offset to the field data.
-  ::toolbelt::BufferOffset *field_data =
+  ::toolbelt::BufferOffset* field_data =
       runtime->ToAddress<::toolbelt::BufferOffset>(absolute_binary_offset);
   if (field_data == nullptr) {
     return -1;
   }
   // Dereference offset to get a pointer to the field data (in the payload
   // buffer)l
-  FieldData *fd = runtime->ToAddress<FieldData>(*field_data);
+  FieldData* fd = runtime->ToAddress<FieldData>(*field_data);
   if (fd == nullptr) {
     return -1;
   }
@@ -46,7 +48,7 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
     return -1;
   }
   // First 4 bytes of message are the the offset to the field data.
-  ::toolbelt::BufferOffset *field_data =
+  ::toolbelt::BufferOffset* field_data =
       runtime->ToAddress<::toolbelt::BufferOffset>(absolute_binary_offset);
 
   if (field_data == nullptr) {
@@ -54,7 +56,7 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
   }
   // Dereference offset to get a pointer to the field data (in the payload
   // buffer)l
-  FieldData *fd = runtime->ToAddress<FieldData>(*field_data);
+  FieldData* fd = runtime->ToAddress<FieldData>(*field_data);
   if (fd == nullptr) {
     return -1;
   }
@@ -75,11 +77,11 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
   return -1;
 }
 
-::toolbelt::PayloadBuffer *NewDynamicBuffer(size_t initial_size,
+::toolbelt::PayloadBuffer* NewDynamicBuffer(size_t initial_size,
                                             Tuning tuning) {
-  absl::StatusOr<::toolbelt::PayloadBuffer *> r = NewDynamicBuffer(
-      initial_size, [](size_t size) -> void * { return ::malloc(size); },
-      [](void *p, size_t /*old_size*/, size_t new_size) -> void * {
+  absl::StatusOr<::toolbelt::PayloadBuffer*> r = NewDynamicBuffer(
+      initial_size, [](size_t size) -> void* { return ::malloc(size); },
+      [](void* p, size_t /*old_size*/, size_t new_size) -> void* {
         return ::realloc(p, new_size);
       },
       tuning);
@@ -91,11 +93,11 @@ int32_t Message::FindFieldId(uint32_t field_number) const {
   return *r;
 }
 
-absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
-    size_t initial_size, std::function<absl::StatusOr<void *>(size_t)> alloc,
-    std::function<absl::StatusOr<void *>(void *, size_t, size_t)> realloc,
+absl::StatusOr<::toolbelt::PayloadBuffer*> NewDynamicBuffer(
+    size_t initial_size, std::function<absl::StatusOr<void*>(size_t)> alloc,
+    std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc,
     Tuning tuning) {
-  absl::StatusOr<void *> buffer = alloc(initial_size);
+  absl::StatusOr<void*> buffer = alloc(initial_size);
   if (!buffer.ok()) {
     return buffer.status();
   }
@@ -103,11 +105,11 @@ absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
   // initialized. This avoids spurious "uninitialised value" reports from tools
   // like valgrind when the allocator scans or copies free space.
   memset(*buffer, 0, initial_size);
-  ::toolbelt::PayloadBuffer *pb = new (*buffer)::toolbelt::PayloadBuffer(
+  ::toolbelt::PayloadBuffer* pb = new (*buffer)::toolbelt::PayloadBuffer(
       static_cast<uint32_t>(initial_size),
-      [ initial_size, realloc_fn = std::move(realloc) ](
-          ::toolbelt::PayloadBuffer * *p, size_t old_size, size_t new_size) {
-        absl::StatusOr<void *> r = realloc_fn(*p, old_size, new_size);
+      [initial_size, realloc_fn = std::move(realloc)](
+          ::toolbelt::PayloadBuffer** p, size_t old_size, size_t new_size) {
+        absl::StatusOr<void*> r = realloc_fn(*p, old_size, new_size);
         if (!r.ok()) {
           std::cerr << "Failed to resize PayloadBuffer from " << initial_size
                     << " to " << new_size << std::endl;
@@ -115,12 +117,12 @@ absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
         }
         // Zero the newly grown region for the same reason as above.
         if (new_size > old_size) {
-          memset(reinterpret_cast<char *>(*r) + old_size, 0,
+          memset(reinterpret_cast<char*>(*r) + old_size, 0,
                  new_size - old_size);
         }
-        *p = reinterpret_cast<::toolbelt::PayloadBuffer *>(*r);
+        *p = reinterpret_cast<::toolbelt::PayloadBuffer*>(*r);
       },
       tuning == Tuning::kPerformance);
   return pb;
 }
-} // namespace phaser
+}  // namespace phaser
