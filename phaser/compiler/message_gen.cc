@@ -703,7 +703,7 @@ void MessageGenerator::GenerateInternalDefaultConstructor(std::ostream &os,
     return;
   }
   os << MessageName(message_) << "::" << MessageName(message_)
-     << "(::phaser::InternalDefault d)\n";
+     << "(::phaser::InternalDefault)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os);
   os << "{}\n\n";
@@ -718,9 +718,9 @@ void MessageGenerator::GenerateMainConstructor(std::ostream &os, bool decl) {
     return;
   }
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
-  os << "std::shared_ptr<::phaser::MessageRuntime> runtime, "
+  os << "std::shared_ptr<::phaser::MessageRuntime> runtime_ptr, "
         "::toolbelt::BufferOffset "
-        "offset) : Message(runtime, offset)\n";
+        "offset) : Message(runtime_ptr, offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
   os << "{}\n\n";
@@ -778,7 +778,7 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
         "  ::toolbelt::PayloadBuffer *pb = new (addr) "
-        "::toolbelt::PayloadBuffer(size, tuning == "
+        "::toolbelt::PayloadBuffer(static_cast<uint32_t>(size), tuning == "
         "::phaser::Tuning::kPerformance);\n"
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
@@ -843,7 +843,7 @@ void MessageGenerator::GenerateCreators(std::ostream &os, bool decl) {
   os << "  return CreateDynamicMutable(initial_size, [](size_t size) -> "
         "absl::StatusOr<void*>{ return ::malloc(size);},"
         " ::free,"
-        " [](void* p, size_t old_size, size_t new_size) -> "
+        " [](void* p, size_t /*old_size*/, size_t new_size) -> "
         "absl::StatusOr<void*> { return ::realloc(p, new_size);}, tuning);\n";
   os << "}\n\n";
 
