@@ -42,6 +42,7 @@ cc_test(
     name = "active_message_test",
     srcs = ["active_message_test.cc"],
     copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
     deps = [
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:foo_active_message_phaser",
