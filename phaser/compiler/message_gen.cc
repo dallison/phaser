@@ -899,7 +899,11 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream &os) {
       uint32_t offset : 24;
       uint32_t id : 8;
 )";
-  os << "    } fields[" << all_fields.size() << "];\n";
+  // A message with no fields would otherwise emit `fields[0]`, a zero-length
+  // array (a non-standard extension). Reserve one (zero-initialized, never read
+  // because num == 0) element instead so the generated header stays clean.
+  os << "    } fields[" << (all_fields.empty() ? size_t{1} : all_fields.size())
+     << "];\n";
   os << "  };\n";
 
   // Generate the field data.
@@ -1451,7 +1455,7 @@ void MessageGenerator::GenerateProtobufSerialization(std::ostream &os) {
 }
 
 void MessageGenerator::GenerateIndent(std::ostream &os) {
-  os << "  void Indent(int indent) const {\n";
+  os << "  void Indent([[maybe_unused]] int indent) const {\n";
   for (auto &field : fields_) {
     os << "    " << field->member_name << ".Indent(indent);\n";
   }
@@ -1462,7 +1466,7 @@ void MessageGenerator::GenerateIndent(std::ostream &os) {
 }
 
 void MessageGenerator::GenerateStreamer(std::ostream &os) {
-  os << "inline std::ostream &operator<<(std::ostream &os, const "
+  os << "inline std::ostream &operator<<(std::ostream &os, [[maybe_unused]] const "
      << MessageName(message_) << " &msg) {\n";
   // We need to print the fields in the same order as they appear in the
   // message definition.  This is to match the output from the protobuf
@@ -1538,7 +1542,7 @@ void MessageGenerator::GenerateCopy(std::ostream &os, bool decl) {
   // CloneFrom.
   os << "template <typename T>\n";
   os << "inline absl::Status " << MessageName(message_)
-     << "::CloneFrom(const T & other) {\n";
+     << "::CloneFrom([[maybe_unused]] const T & other) {\n";
   for (auto &field : fields_) {
     if (field->field->is_repeated()) {
       os << "  for (auto& v : other." << field->field->name() << "()) {\n";

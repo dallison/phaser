@@ -804,7 +804,7 @@ public:
     return (*this)[static_cast<int>(index)].Get();
   }
 
-  T *Mutable(int index) {
+  T *Mutable(size_t index) {
     if (static_cast<size_t>(index) >= msgs_.size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
           GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);
@@ -1137,9 +1137,11 @@ public:
   void Add(const char *s, size_t len) { push_back(std::string(s, len)); }
   template <typename Str> void Add(Str s) { push_back(s); }
 
-  std::string_view Get(int index) const { return (*this)[index].Get(); }
+  std::string_view Get(size_t index) const {
+    return (*this)[static_cast<int>(index)].Get();
+  }
 
-  template <typename Str> void Set(int index, Str s) {
+  template <typename Str> void Set(size_t index, Str s) {
     if (static_cast<size_t>(index) >= strings_.size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
           GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);

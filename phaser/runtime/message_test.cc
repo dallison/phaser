@@ -996,7 +996,7 @@ struct TestMessage : public Message {
 
   size_t vstr_size() const { return vstr_.size(); }
   std::string_view vstr(size_t i) const {
-    return vstr_.Get(static_cast<int>(i));
+    return vstr_.Get(i);
   }
   template <typename Str> void add_vstr(Str v) { vstr_.Add(v); }
   template <typename Str> void set_vstr(size_t i, Str v) { vstr_.Set(i, v); }
@@ -1009,7 +1009,7 @@ struct TestMessage : public Message {
   size_t vm_size() const { return vm_.size(); }
   const InnerMessage &vm(size_t i) const { return vm_.Get(i); }
   InnerMessage *mutable_vm(size_t i) {
-    return vm_.Mutable(static_cast<int>(i));
+    return vm_.Mutable(i);
   }
   InnerMessage *add_vm() { return vm_.Add(); }
   void clear_vm() { vm_.Clear(); }

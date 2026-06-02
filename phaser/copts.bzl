@@ -53,14 +53,6 @@ _PHASER_CLANG_COPTS = [
     # clang 16/18 only (older clang silently ignores unknown -Wno-* flags).
     "-Wno-documentation-unknown-command",
     "-Wno-unsafe-buffer-usage",
-
-    # The zero-copy runtime deliberately interconverts signed indices with
-    # unsigned 32-bit buffer offsets/sizes, and uses a handful of C-style casts
-    # when interfacing with the payload buffer. Auditing every such conversion
-    # is a separate effort; keep these off so the meaningful warnings stand out.
-    "-Wno-sign-conversion",
-    "-Wno-shorten-64-to-32",
-    "-Wno-old-style-cast",
 ]
 
 # GCC has no single -Weverything switch, so we approximate the clang coverage by
