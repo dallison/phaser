@@ -7,6 +7,7 @@
 #include "absl/strings/str_replace.h"
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <ctype.h>
 
 namespace phaser {
@@ -196,6 +197,8 @@ std::string MessageGenerator::FieldCFieldType(
     std::cerr << "Groups are not supported\n";
     exit(1);
   }
+  // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
 }
 
 std::string MessageGenerator::FieldInfoType(
@@ -240,6 +243,8 @@ std::string MessageGenerator::FieldInfoType(
     std::cerr << "Groups are not supported\n";
     exit(1);
   }
+  // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
 }
 
 std::string
@@ -276,6 +281,8 @@ MessageGenerator::FieldCType(const google::protobuf::FieldDescriptor *field) {
     std::cerr << "Groups are not supported\n";
     exit(1);
   }
+  // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
 }
 
 std::string MessageGenerator::FieldRepeatedCType(
@@ -322,6 +329,8 @@ std::string MessageGenerator::FieldRepeatedCType(
     std::cerr << "Groups are not supported\n";
     exit(1);
   }
+  // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
 }
 
 std::string MessageGenerator::FieldUnionCType(
@@ -367,6 +376,8 @@ std::string MessageGenerator::FieldUnionCType(
     std::cerr << "Groups are not supported\n";
     exit(1);
   }
+  // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
 }
 
 uint32_t MessageGenerator::FieldBinarySize(
@@ -403,6 +414,8 @@ uint32_t MessageGenerator::FieldBinarySize(
     std::cerr << "Groups are not supported\n";
     exit(1);
   }
+  // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
 }
 
 bool MessageGenerator::IsAny(const google::protobuf::Descriptor *desc) {
@@ -451,12 +464,12 @@ void MessageGenerator::CompileUnions() {
 void MessageGenerator::CompileFields() {
   uint32_t offset = 0;
   uint32_t id = 0;
-  fields_.reserve(message_->field_count());
+  fields_.reserve(static_cast<size_t>(message_->field_count()));
   for (int i = 0; i < message_->field_count(); i++) {
     const auto &field = message_->field(i);
     std::string field_type;
     const google::protobuf::OneofDescriptor *oneof = field->containing_oneof();
-    int32_t field_size;
+    uint32_t field_size;
     uint32_t next_id = id;
     if (oneof != nullptr) {
       // In order to keep oneof fields in the correct position for printing so
@@ -507,7 +520,8 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
   for (auto &field : fields_) {
     max_id = std::max(max_id, int32_t(field->id));
   }
-  presence_mask_size_ = max_id == -1 ? 0 : ((max_id >> 5) + 1) * 4;
+  presence_mask_size_ =
+      max_id == -1 ? 0 : static_cast<uint32_t>(((max_id >> 5) + 1) * 4);
   size += presence_mask_size_;
 
   // Finalize the offsets in the fields vector now that we know the header size.
@@ -520,7 +534,7 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
       fields_.empty() ? size
                       : (fields_.back()->offset + fields_.back()->binary_size);
   // Align offset to 4 bytes.
-  offset = (offset + 3) & ~3;
+  offset = (offset + 3) & ~3u;
   size = offset;
 
   // Add the offset to the unions.
@@ -1839,7 +1853,7 @@ void MessageGenerator::GenerateMessageInfo(std::ostream &os, bool decl) {
   os << "#pragma clang diagnostic ignored \"-Winvalid-offsetof\"\n";
 
   // Generate fields_in_order.
-  size_t index = 0;
+  int index = 0;
   os << "  info.fields_in_order.resize(" << fields_in_order_.size() << ");\n";
   for (auto &field : fields_in_order_) {
     if (field->IsUnion()) {
@@ -1871,7 +1885,8 @@ void MessageGenerator::GenerateMessageInfo(std::ostream &os, bool decl) {
       os << "    u->fields_in_order.resize(" << u->members.size() << ");\n";
       for (size_t i = 0; i < u->members.size(); i++) {
         auto &member = u->members[i];
-        GenerateFieldInfo(i, member, u, int(i), os);
+        GenerateFieldInfo(static_cast<int>(i), member, u, static_cast<int>(i),
+                          os);
       }
       os << R"XXX(  for (auto &f : u->fields_in_order) {
     info.fields_by_number[f->number] = f;

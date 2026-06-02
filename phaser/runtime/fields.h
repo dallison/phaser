@@ -36,12 +36,12 @@ public:
   // The presence bit is in a set of words immediately after
   // the metadata at the start of the message.
   void SetPresence(::toolbelt::PayloadBuffer *buffer, uint32_t binary_offset) {
-    buffer->SetPresenceBit(id_, binary_offset);
+    buffer->SetPresenceBit(static_cast<uint32_t>(id_), binary_offset);
   }
 
   void ClearPresence(::toolbelt::PayloadBuffer *buffer,
                      uint32_t binary_offset) {
-    buffer->ClearPresenceBit(id_, binary_offset);
+    buffer->ClearPresenceBit(static_cast<uint32_t>(id_), binary_offset);
   }
 
   bool IsPresent(uint32_t field_id, ::toolbelt::PayloadBuffer *buffer,
@@ -57,16 +57,17 @@ public:
 
   int32_t FindFieldOffset(uint32_t source_offset) const {
     if (cached_offset_ == 0xffffffff) {
-      cached_offset_ =
-          Message::GetMessage(this, source_offset)->FindFieldOffset(number_);
+      cached_offset_ = static_cast<::toolbelt::BufferOffset>(
+          Message::GetMessage(this, source_offset)
+              ->FindFieldOffset(static_cast<uint32_t>(number_)));
     }
-    return cached_offset_;
+    return static_cast<int32_t>(cached_offset_);
   }
 
   int32_t FindFieldId(uint32_t source_offset) const {
     if (cached_field_id_ == -1) {
-      cached_field_id_ =
-          Message::GetMessage(this, source_offset)->FindFieldId(number_);
+      cached_field_id_ = Message::GetMessage(this, source_offset)
+                             ->FindFieldId(static_cast<uint32_t>(number_));
     }
     return cached_field_id_;
   }
@@ -102,12 +103,13 @@ protected:
       if (offset < 0) {                                                        \
         return type();                                                         \
       }                                                                        \
-      return GetBuffer()->template Get<type>(GetMessageBinaryStart() +         \
-                                             offset);                          \
+      return GetBuffer()->template Get<type>(                                  \
+          GetMessageBinaryStart() +                                            \
+          static_cast<::toolbelt::BufferOffset>(offset));                      \
     }                                                                          \
     type GetForPrinting() const { return Get(); }                              \
     bool IsPresent() const {                                                   \
-      return Field::IsPresent(FindFieldId(source_offset_), GetBuffer(),        \
+      return Field::IsPresent(static_cast<uint32_t>(FindFieldId(source_offset_)), GetBuffer(),        \
                               GetPresenceMaskStart());                         \
     }                                                                          \
                                                                                \
@@ -203,13 +205,13 @@ public:
     }
     return static_cast<Enum>(
         GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-            GetMessageBinaryStart() + offset));
+            GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset)));
   }
 
   std::string GetForPrinting() const { return ToString(); }
 
   bool IsPresent() const {
-    return Field::IsPresent(FindFieldId(source_offset_), GetBuffer(),
+    return Field::IsPresent(static_cast<uint32_t>(FindFieldId(source_offset_)), GetBuffer(),
                             GetPresenceMaskStart());
   }
 
@@ -223,7 +225,7 @@ public:
       return 0;
     }
     return GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-        GetMessageBinaryStart() + offset);
+        GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
   }
 
   void Set(Enum e) {
@@ -293,7 +295,7 @@ public:
     if (offset < 0) {
       return std::string_view();
     }
-    return GetBuffer()->GetStringView(GetMessageBinaryStart() + offset);
+    return GetBuffer()->GetStringView(GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
   }
 
   bool IsPresent() const {
@@ -303,7 +305,7 @@ public:
     }
     const ::toolbelt::BufferOffset *addr =
         GetRuntime()->ToAddress<const ::toolbelt::BufferOffset>(
-            GetMessageBinaryStart() + offset);
+            GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
     return *addr != 0;
   }
 
@@ -348,7 +350,7 @@ public:
     if (offset < 0) {
       return 0;
     }
-    return GetBuffer()->StringSize(GetMessageBinaryStart() + offset);
+    return GetBuffer()->StringSize(GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
   }
 
   const char *data() const {
@@ -356,7 +358,7 @@ public:
     if (offset < 0) {
       return nullptr;
     }
-    return GetBuffer()->StringData(GetMessageBinaryStart() + offset);
+    return GetBuffer()->StringData(GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(offset));
   }
 
   size_t SerializedSize() const {
@@ -494,7 +496,7 @@ public:
     if (offset < 0) {
       return msg_;
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -508,7 +510,7 @@ public:
     if (offset < 0) {
       return false;
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
     return *addr != 0;
   }
 
@@ -574,7 +576,7 @@ public:
     if (offset < 0) {
       return 0;
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -588,7 +590,7 @@ public:
     if (offset < 0) {
       return absl::OkStatus();
     }
-    ::toolbelt::BufferOffset *addr = GetIndirectAddress(offset);
+    ::toolbelt::BufferOffset *addr = GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
@@ -640,9 +642,9 @@ protected:
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::BufferOffset *GetIndirectAddress(uint32_t offset) const {
+  ::toolbelt::BufferOffset *GetIndirectAddress(uint32_t abs_offset) const {
     return GetBuffer()->template ToAddress<::toolbelt::BufferOffset>(
-        GetMessageBinaryStart() + offset);
+        GetMessageBinaryStart() + abs_offset);
   }
 
   ::toolbelt::PayloadBuffer **GetBufferAddr() const {

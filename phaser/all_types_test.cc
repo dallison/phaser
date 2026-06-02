@@ -200,7 +200,7 @@ void FillRepeatedPacked(RepeatedPrimitivesPacked &msg) {
   for (int i = -3; i < 10; i++) {
     msg.add_vi32(i);
     msg.add_vi64(i * 1000LL);
-    msg.add_vf64(static_cast<uint64_t>(i * 100000ULL));
+    msg.add_vf64(static_cast<uint64_t>(i) * 100000);
   }
 }
 
@@ -222,9 +222,9 @@ void ExpectRepeatedPackedMatchPb(const PbRepeatedPacked &pb,
   ASSERT_EQ(pb.vi64_size(), static_cast<int>(msg.vi64_size()));
   ASSERT_EQ(pb.vf64_size(), static_cast<int>(msg.vf64_size()));
   for (int i = 0; i < pb.vi32_size(); i++) {
-    EXPECT_EQ(pb.vi32(i), msg.vi32(i));
-    EXPECT_EQ(pb.vi64(i), msg.vi64(i));
-    EXPECT_EQ(pb.vf64(i), msg.vf64(i));
+    EXPECT_EQ(pb.vi32(i), msg.vi32(static_cast<size_t>(i)));
+    EXPECT_EQ(pb.vi64(i), msg.vi64(static_cast<size_t>(i)));
+    EXPECT_EQ(pb.vf64(i), msg.vf64(static_cast<size_t>(i)));
   }
 }
 
@@ -246,7 +246,7 @@ void ExpectRepeatedUnpackedMatchPb(const PbRepeatedUnpacked &pb,
                                    const RepeatedPrimitivesUnpacked &msg) {
   ASSERT_EQ(pb.vi32_size(), static_cast<int>(msg.vi32_size()));
   for (int i = 0; i < pb.vi32_size(); i++) {
-    EXPECT_EQ(pb.vi32(i), msg.vi32(i));
+    EXPECT_EQ(pb.vi32(i), msg.vi32(static_cast<size_t>(i)));
   }
 }
 
@@ -277,7 +277,7 @@ void ExpectRepeatedStringsMatchPb(const PbRepeatedStrings &pb,
                                   const RepeatedStrings &msg) {
   ASSERT_EQ(pb.vstr_size(), static_cast<int>(msg.vstr_size()));
   for (int i = 0; i < pb.vstr_size(); i++) {
-    EXPECT_EQ(pb.vstr(i), msg.vstr(i));
+    EXPECT_EQ(pb.vstr(i), msg.vstr(static_cast<size_t>(i)));
   }
 }
 
@@ -297,7 +297,7 @@ void ExpectRepeatedBytesMatchPb(const PbRepeatedBytes &pb,
                                 const RepeatedBytes &msg) {
   ASSERT_EQ(pb.vbytes_size(), static_cast<int>(msg.vbytes_size()));
   for (int i = 0; i < pb.vbytes_size(); i++) {
-    EXPECT_EQ(pb.vbytes(i), msg.vbytes(i));
+    EXPECT_EQ(pb.vbytes(i), msg.vbytes(static_cast<size_t>(i)));
   }
 }
 
@@ -321,7 +321,7 @@ void ExpectRepeatedMessagesMatchPb(const PbRepeatedMessages &pb,
                                    const RepeatedMessages &msg) {
   ASSERT_EQ(pb.items_size(), static_cast<int>(msg.items_size()));
   for (int i = 0; i < pb.items_size(); i++) {
-    ExpectAllScalarsMatchPb(pb.items(i), msg.items(i));
+    ExpectAllScalarsMatchPb(pb.items(i), msg.items(static_cast<size_t>(i)));
   }
 }
 
@@ -386,7 +386,7 @@ void FillRepeatedPacked(PbRepeatedPacked &msg) {
   for (int i = -3; i < 10; i++) {
     msg.add_vi32(i);
     msg.add_vi64(i * 1000LL);
-    msg.add_vf64(static_cast<uint64_t>(i * 100000ULL));
+    msg.add_vf64(static_cast<uint64_t>(i) * 100000);
   }
 }
 
@@ -607,7 +607,7 @@ TEST(AllTypesTest, RepeatedPackedInt32GrowAndResize) {
   }
   ASSERT_EQ(static_cast<size_t>(kCount), msg.vi32_size());
   for (int i = 0; i < kCount; i++) {
-    EXPECT_EQ(i, msg.vi32(i));
+    EXPECT_EQ(i, msg.vi32(static_cast<size_t>(i)));
   }
   msg.resize_vi32(10);
   ASSERT_EQ(10u, msg.vi32_size());
@@ -637,7 +637,7 @@ TEST(AllTypesTest, RepeatedStringChurn) {
     ASSERT_EQ(100u, msg.vstr_size());
     for (int i = 0; i < 100; i++) {
       EXPECT_EQ(::phaser::test::MakePatternString(32, static_cast<char>('a' + (i % 26))),
-                msg.vstr(i));
+                msg.vstr(static_cast<size_t>(i)));
     }
   }
 }

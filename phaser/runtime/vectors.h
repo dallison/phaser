@@ -39,17 +39,17 @@ class ProtoBuffer;
                                                                                \
   iterator begin() { return iterator(this, BaseOffset()); }                    \
   iterator end() {                                                             \
-    return iterator(this, BaseOffset() + NumElements() * sizeof(value_type));  \
+    return iterator(this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(NumElements() * sizeof(value_type)));  \
   }                                                                            \
   const_iterator begin() const { return const_iterator(this, BaseOffset()); }  \
   const_iterator end() const {                                                 \
     return const_iterator(this,                                                \
-                          BaseOffset() + NumElements() * sizeof(value_type));  \
+                          BaseOffset() + static_cast<::toolbelt::BufferOffset>(NumElements() * sizeof(value_type)));  \
   }                                                                            \
   const_iterator cbegin() const { return const_iterator(this, BaseOffset()); } \
   const_iterator cend() const {                                                \
     return const_iterator(this,                                                \
-                          BaseOffset() + NumElements() * sizeof(value_type));  \
+                          BaseOffset() + static_cast<::toolbelt::BufferOffset>(NumElements() * sizeof(value_type)));  \
   }                                                                            \
                                                                                \
   reverse_iterator rbegin() {                                                  \
@@ -57,21 +57,21 @@ class ProtoBuffer;
   }                                                                            \
   reverse_iterator rend() {                                                    \
     return reverse_iterator(                                                   \
-        this, BaseOffset() + NumElements() * sizeof(value_type), true);        \
+        this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(NumElements() * sizeof(value_type)), true);        \
   }                                                                            \
   const_reverse_iterator rbegin() const {                                      \
     return const_reverse_iterator(this, BaseOffset(), true);                   \
   }                                                                            \
   const_reverse_iterator rend() const {                                        \
     return const_reverse_iterator(                                             \
-        this, BaseOffset() + NumElements() * sizeof(value_type), true);        \
+        this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(NumElements() * sizeof(value_type)), true);        \
   }                                                                            \
   const_reverse_iterator crbegin() const {                                     \
     return const_reverse_iterator(this, BaseOffset(), true);                   \
   }                                                                            \
   const_reverse_iterator crend() const {                                       \
     return const_reverse_iterator(                                             \
-        this, BaseOffset() + NumElements() * sizeof(value_type), true);        \
+        this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(NumElements() * sizeof(value_type)), true);        \
   }
 
 // vtype: value type
@@ -141,7 +141,7 @@ public:
   T back() { return (*this)[size() - 1]; }
   const T back() const { return (*this)[size() - 1]; }
 
-  T Get(size_t index) const { return (*this)[index]; }
+  T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
 
   void Set(size_t index, T v) {
     T *base = GetRuntime()->template ToAddress<T>(BaseOffset());
@@ -208,7 +208,7 @@ public:
     if (offset < 0) {
       return absl::Span<T>();
     }
-    toolbelt::VectorHeader *hdr = Header(offset);
+    toolbelt::VectorHeader *hdr = Header(static_cast<uint32_t>(offset));
     const T *base = GetRuntime()->template ToAddress<const T>(hdr->data);
     if (base == nullptr) {
       return absl::Span<const T>();
@@ -406,7 +406,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->data;
+    return Header(static_cast<uint32_t>(offset))->data;
   }
 
   size_t NumElements() const {
@@ -414,7 +414,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->num_elements;
+    return Header(static_cast<uint32_t>(offset))->num_elements;
   }
 
   ::toolbelt::PayloadBuffer *GetBuffer() const {
@@ -478,7 +478,7 @@ public:
     return r;
   }
 
-  Enum Get(size_t index) const { return (*this)[index]; }
+  Enum Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
 
   void Set(size_t index, Enum v) {
     Enum *base = GetRuntime()->template ToAddress<Enum>(BaseOffset());
@@ -508,7 +508,7 @@ public:
     if (offset < 0) {
       return absl::Span<Enum>();
     }
-    toolbelt::VectorHeader *hdr = Header(offset);
+    toolbelt::VectorHeader *hdr = Header(static_cast<uint32_t>(offset));
     const Enum *base = GetRuntime()->template ToAddress<const Enum>(hdr->data);
     if (base == nullptr) {
       return absl::Span<const Enum>();
@@ -695,7 +695,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->data;
+    return Header(static_cast<uint32_t>(offset))->data;
   }
 
   size_t NumElements() const {
@@ -703,7 +703,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->num_elements;
+    return Header(static_cast<uint32_t>(offset))->num_elements;
   }
 
   ::toolbelt::PayloadBuffer *GetBuffer() const {
@@ -741,7 +741,7 @@ public:
     if (offset == -1) {
       return empty_;
     }
-    auto hdr = Header(offset);
+    auto hdr = Header(static_cast<uint32_t>(offset));
     if (static_cast<uint32_t>(index) >= hdr->num_elements) {
       return empty_;
     }
@@ -751,12 +751,12 @@ public:
       return empty_;
     }
     if (static_cast<size_t>(index) >= msgs_.size()) {
-      msgs_.resize(index + 1);
+      msgs_.resize(static_cast<size_t>(index) + 1);
     }
-    if (msgs_[index].empty()) {
-      msgs_[index] = MessageObject<T>(GetRuntime(), data[index]);
+    if (msgs_[static_cast<size_t>(index)].empty()) {
+      msgs_[static_cast<size_t>(index)] = MessageObject<T>(GetRuntime(), data[index]);
     }
-    return msgs_[index];
+    return msgs_[static_cast<size_t>(index)];
   }
 
   MessageObject<T> &front() { return msgs_.front(); }
@@ -800,16 +800,18 @@ public:
     return msgs_.back().Mutable();
   }
 
-  const T &Get(size_t index) const { return (*this)[index].Get(); }
+  const T &Get(size_t index) const {
+    return (*this)[static_cast<int>(index)].Get();
+  }
 
   T *Mutable(int index) {
     if (static_cast<size_t>(index) >= msgs_.size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), Header(), index + 1);
-      msgs_.resize(index + 1);
+          GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);
+      msgs_.resize(static_cast<size_t>(index) + 1);
     }
 
-    if (msgs_[index].IsPlaceholder()) {
+    if (msgs_[static_cast<size_t>(index)].IsPlaceholder()) {
       void *binary = ::toolbelt::PayloadBuffer::Allocate(
           GetBufferAddr(), T::BinarySize());
       ::toolbelt::BufferOffset absolute_binary_offset =
@@ -822,24 +824,24 @@ public:
 
       auto obj = MessageObject<T>(GetRuntime(), absolute_binary_offset);
       obj.InstallMetadata();
-      msgs_[index] = std::move(obj);
+      msgs_[static_cast<size_t>(index)] = std::move(obj);
     }
-    return msgs_[index].Mutable();
+    return msgs_[static_cast<size_t>(index)].Mutable();
   }
 
   void SetOffset(int index, toolbelt::BufferOffset offset) {
     if (static_cast<size_t>(index) >= msgs_.size()) {
-      msgs_.resize(index + 1);
+      msgs_.resize(static_cast<size_t>(index) + 1);
     }
     auto hdr = Header();
     ::toolbelt::BufferOffset *data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    if (!msgs_[index].IsPlaceholder() && data[index] != 0) {
+    if (!msgs_[static_cast<size_t>(index)].IsPlaceholder() && data[index] != 0) {
       // Already set, free the current value.
-      msgs_[index].Clear();
+      msgs_[static_cast<size_t>(index)].Clear();
     }
     data[index] = offset;
-    msgs_[index] = MessageObject<T>(GetRuntime(), offset);
+    msgs_[static_cast<size_t>(index)] = MessageObject<T>(GetRuntime(), offset);
   }
 
   // Allocate a bunch of empty messages.
@@ -849,7 +851,7 @@ public:
     this->resize(n);
     // Allocate memory for n messages in the payload buffer.
     std::vector<void *> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
-        GetBufferAddr(), T::BinarySize(), n, true);
+        GetBufferAddr(), T::BinarySize(), static_cast<uint32_t>(n), true);
 
     toolbelt::VectorHeader *hdr = Header();
     ::toolbelt::BufferOffset *data =
@@ -945,7 +947,7 @@ public:
     if (offset == -1) {
       return;
     }
-    auto hdr = Header(offset);
+    auto hdr = Header(static_cast<uint32_t>(offset));
     msgs_.resize(hdr->num_elements);
     ::toolbelt::BufferOffset *data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
@@ -1018,7 +1020,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->data;
+    return Header(static_cast<uint32_t>(offset))->data;
   }
 
   size_t NumElements() const {
@@ -1026,7 +1028,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->num_elements;
+    return Header(static_cast<uint32_t>(offset))->num_elements;
   }
 
   ::toolbelt::PayloadBuffer *GetBuffer() const {
@@ -1079,7 +1081,7 @@ public:
     if (offset == -1) {
       return empty_;
     }
-    auto hdr = Header(offset);
+    auto hdr = Header(static_cast<uint32_t>(offset));
     if (static_cast<uint32_t>(index) >= hdr->num_elements) {
       return empty_;
     }
@@ -1089,13 +1091,13 @@ public:
       return empty_;
     }
     if (static_cast<size_t>(index) >= strings_.size()) {
-      strings_.resize(index + 1);
+      strings_.resize(static_cast<size_t>(index) + 1);
     }
-    if (strings_[index].IsPlaceholder()) {
-      strings_[index] = NonEmbeddedStringField(
+    if (strings_[static_cast<size_t>(index)].IsPlaceholder()) {
+      strings_[static_cast<size_t>(index)] = NonEmbeddedStringField(
           Message::GetMessage(this, source_offset_), data[index]);
     }
-    return strings_[index];
+    return strings_[static_cast<size_t>(index)];
   }
 
 #define RTYPE std::vector<NonEmbeddedStringField>
@@ -1140,11 +1142,11 @@ public:
   template <typename Str> void Set(int index, Str s) {
     if (static_cast<size_t>(index) >= strings_.size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), Header(), index + 1);
-      strings_.resize(index + 1);
+          GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);
+      strings_.resize(static_cast<size_t>(index) + 1);
     }
 
-    if (strings_[index].IsPlaceholder()) {
+    if (strings_[static_cast<size_t>(index)].IsPlaceholder()) {
       // Allocate string header in buffer.
       void *str_hdr = ::toolbelt::PayloadBuffer::Allocate(
           GetBufferAddr(), sizeof(toolbelt::StringHeader));
@@ -1158,9 +1160,9 @@ public:
       // Add a source string field.
       NonEmbeddedStringField field(Message::GetMessage(this, source_offset_),
                                    hdr_offset);
-      strings_[index] = std::move(field);
+      strings_[static_cast<size_t>(index)] = std::move(field);
     }
-    strings_[index].Set(s);
+    strings_[static_cast<size_t>(index)].Set(s);
   }
 
   size_t capacity() const {
@@ -1223,7 +1225,7 @@ public:
     if (offset == -1) {
       return;
     }
-    auto hdr = Header(offset);
+    auto hdr = Header(static_cast<uint32_t>(offset));
     strings_.resize(hdr->num_elements);
     ::toolbelt::BufferOffset *data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
@@ -1299,7 +1301,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->data;
+    return Header(static_cast<uint32_t>(offset))->data;
   }
 
   size_t NumElements() const {
@@ -1307,7 +1309,7 @@ private:
     if (offset < 0) {
       return 0;
     }
-    return Header(offset)->num_elements;
+    return Header(static_cast<uint32_t>(offset))->num_elements;
   }
 
   ::toolbelt::PayloadBuffer *GetBuffer() const {

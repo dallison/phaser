@@ -77,7 +77,7 @@ public:
     }
   }
 
-  size_t Size() const { return addr_ - start_; }
+  size_t Size() const { return static_cast<size_t>(addr_ - start_); }
 
   size_t size() const { return Size(); }
 
@@ -85,10 +85,13 @@ public:
 
   char *data() { return Data<char>(); }
 
-  std::string AsString() const { return std::string(start_, addr_ - start_); }
+  std::string AsString() const {
+    return std::string(start_, static_cast<size_t>(addr_ - start_));
+  }
 
   template <typename T> absl::Span<const T> AsSpan() const {
-    return absl::Span<T>(reinterpret_cast<const T *>(start_), addr_ - start_);
+    return absl::Span<T>(reinterpret_cast<const T *>(start_),
+                         static_cast<size_t>(addr_ - start_));
   }
 
   bool Eof() const { return addr_ == end_; }
@@ -127,7 +130,8 @@ public:
 
   // Size functions.
   static size_t TagSize(int field_number, WireType wire_type) {
-    return VarintSize<int32_t, false>(MakeTag(field_number, wire_type));
+    return VarintSize<int32_t, false>(
+        static_cast<int32_t>(MakeTag(field_number, wire_type)));
   }
 
   template <typename T, bool Signed> static uint64_t ToVarintWire(T value) {
@@ -158,7 +162,7 @@ public:
 
   inline static size_t LengthDelimitedSize(int field_number, size_t length) {
     return TagSize(field_number, WireType::kLengthDelimited) +
-           VarintSize<int32_t, false>(length) + length;
+           VarintSize<int32_t, false>(static_cast<int32_t>(length)) + length;
   }
 
   inline static size_t StringSize(int field_number, std::string_view str) {
@@ -195,7 +199,7 @@ public:
 
   absl::Status SerializeTag(int field_number, WireType wire_type) {
     return SerializeRawVarint<uint32_t, false>(
-        MakeTag(field_number, wire_type));
+        static_cast<uint32_t>(MakeTag(field_number, wire_type)));
   }
 
   template <typename T> absl::Status SerializeFixed(int field_number, T value) {
@@ -218,7 +222,8 @@ public:
         !status.ok()) {
       return status;
     }
-    if (absl::Status status = SerializeRawVarint<int32_t, false>(length);
+    if (absl::Status status =
+            SerializeRawVarint<int32_t, false>(static_cast<int32_t>(length));
         !status.ok()) {
       return status;
     }
@@ -235,7 +240,7 @@ public:
         !status.ok()) {
       return status;
     }
-    return SerializeRawVarint<int32_t, false>(length);
+    return SerializeRawVarint<int32_t, false>(static_cast<int32_t>(length));
   }
 
   absl::Status SerializeRaw(const void *data, size_t length) {
@@ -344,11 +349,12 @@ public:
     if (!length.ok()) {
       return length.status();
     }
-    if (absl::Status status = Check(*length); !status.ok()) {
+    const size_t len = static_cast<size_t>(*length);
+    if (absl::Status status = Check(len); !status.ok()) {
       return status;
     }
-    absl::Span<char> span(addr_, *length);
-    addr_ += *length;
+    absl::Span<char> span(addr_, len);
+    addr_ += len;
     return span;
   }
 
@@ -357,11 +363,12 @@ public:
     if (!length.ok()) {
       return length.status();
     }
-    if (absl::Status status = Check(*length); !status.ok()) {
+    const size_t len = static_cast<size_t>(*length);
+    if (absl::Status status = Check(len); !status.ok()) {
       return status;
     }
-    std::string_view str(addr_, *length);
-    addr_ += *length;
+    std::string_view str(addr_, len);
+    addr_ += len;
     return str;
   }
 
@@ -394,7 +401,7 @@ private:
         }
         // Zero the newly grown region.
         memset(new_start + size_, 0, new_size - size_);
-        size_t curr_length = addr_ - start_;
+        size_t curr_length = static_cast<size_t>(addr_ - start_);
         start_ = new_start;
         addr_ = start_ + curr_length;
         end_ = start_ + new_size;

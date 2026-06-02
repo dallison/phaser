@@ -24,17 +24,17 @@ template <typename Field, typename T> struct FieldIterator {
 
   FieldIterator &operator++() {
     if (reverse) {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }
   FieldIterator &operator--() {
     if (reverse) {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }
@@ -125,17 +125,17 @@ template <typename Field, typename T> struct EnumFieldIterator {
 
   EnumFieldIterator &operator++() {
     if (reverse) {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }
   EnumFieldIterator &operator--() {
     if (reverse) {
-      offset += sizeof(T);
+      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
     } else {
-      offset -= sizeof(T);
+      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
     }
     return *this;
   }

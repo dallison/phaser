@@ -22,8 +22,9 @@ WriteToZeroCopyStream(const std::string &data,
       break;
     }
     int to_copy = std::min(size, static_cast<int>(data.size() - offset));
-    std::memcpy(data_buffer, data.data() + offset, to_copy);
-    offset += to_copy;
+    std::memcpy(data_buffer, data.data() + offset,
+                static_cast<size_t>(to_copy));
+    offset += static_cast<size_t>(to_copy);
     stream->BackUp(size - to_copy);
   }
 }

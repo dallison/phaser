@@ -118,7 +118,7 @@ TEST(StressTest, MapManyEntries) {
   }
   ASSERT_EQ(500u, msg.values_size());
   for (int i = 0; i < 500; i++) {
-    EXPECT_EQ(i, msg.values(i).value());
+    EXPECT_EQ(i, msg.values(static_cast<size_t>(i)).value());
   }
 }
 

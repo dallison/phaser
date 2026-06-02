@@ -5,6 +5,13 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["valgrind.supp"])
 
+# True when building with clang, which gates the clang-only -Weverything set in
+# PHASER_COPTS (GCC does not understand -Weverything).
+config_setting(
+    name = "is_clang",
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "clang"},
+)
+
 cc_library(
     name = "test_helpers",
     hdrs = ["test_helpers.h"],

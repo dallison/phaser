@@ -41,7 +41,7 @@ TEST(PhaserTest, ProtobufCompat) {
 
   std::string buffer_data;
   for (int i = 0; i < 100; i++) {
-    buffer_data.push_back(rand() & 0xff);
+    buffer_data.push_back(static_cast<char>(rand() & 0xff));
   }
   buffer_data.push_back('\n');
   buffer_data.push_back('\r');
@@ -272,7 +272,7 @@ TEST(PhaserTest, Any) {
 TEST(PhaserTest, Garbage) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -308,7 +308,7 @@ TEST(PhaserTest, Garbage) {
 TEST(PhaserTest, GarbageSmall) {
   char buffer[10];
   for (int i = 0; i < 10; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -345,7 +345,7 @@ TEST(PhaserTest, GarbageLoop) {
   char buffer[256];
   for (int i = 0; i < 1000; i++) {
     for (int j = 0; j < 256; j++) {
-      buffer[j] = rand() & 0xff;
+      buffer[j] = static_cast<char>(rand() & 0xff);
     }
     auto msg =
         foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -382,7 +382,7 @@ TEST(PhaserTest, GarbageLoop) {
 TEST(PhaserTest, GarbageWithValidMagic) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic.
   *reinterpret_cast<uint32_t *>(buffer) = ::toolbelt::kFixedBufferMagic;
@@ -421,7 +421,7 @@ TEST(PhaserTest, GarbageWithValidMagic) {
 TEST(PhaserTest, GarbageWithTailoring) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
-    buffer[i] = rand() & 0xff;
+    buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic and the header fields.
   *reinterpret_cast<uint32_t *>(buffer) = ::toolbelt::kFixedBufferMagic;
@@ -509,8 +509,9 @@ TEST(PhaserTest, Reflection) {
 
   // Let's print all the fields.
   for (const auto &field : (*info)->fields_in_order) {
-    std::cout << field->name << " " << field->number << " " << (int)field->type
-              << " " << field->offset << std::endl;
+    std::cout << field->name << " " << field->number << " "
+              << static_cast<int>(field->type) << " " << field->offset
+              << std::endl;
   }
   absl::StatusOr<bool> has_x =
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);

@@ -62,9 +62,9 @@ inline std::string StringWithOctalNonPrintables(std::string_view str) {
         result.push_back('t');
         break;
       default:
-        result.push_back('0' + ((uc >> 6) & 7));
-        result.push_back('0' + ((uc >> 3) & 7));
-        result.push_back('0' + (uc & 7));
+        result.push_back(static_cast<char>('0' + ((uc >> 6) & 7)));
+        result.push_back(static_cast<char>('0' + ((uc >> 3) & 7)));
+        result.push_back(static_cast<char>('0' + (uc & 7)));
         break;
       }
     }

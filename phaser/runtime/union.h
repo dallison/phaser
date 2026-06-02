@@ -271,7 +271,8 @@ public:
                         uint32_t abs_offset) const {
     size_t sz = size(runtime, abs_offset);
     return ProtoBuffer::TagSize(number, WireType::kLengthDelimited) +
-           ProtoBuffer::VarintSize<int32_t, false>(sz) + sz;
+           ProtoBuffer::VarintSize<int32_t, false>(static_cast<int32_t>(sz)) +
+           sz;
   }
 
   absl::Status Serialize(int number, ProtoBuffer &buffer,
@@ -493,7 +494,7 @@ template <typename... T> class UnionField : public Field {
 public:
   UnionField() = default;
   UnionField(uint32_t source_offset, uint32_t relative_binary_offset, int id,
-             int number, std::vector<int> field_numbers)
+             int number, std::vector<uint32_t> field_numbers)
       : Field(id, number), source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset),
         field_numbers_(field_numbers) {}
@@ -505,7 +506,7 @@ public:
       return std::get<Id>(value_).Get(nullptr, 0);
     }
     return std::get<Id>(value_).Get(GetRuntime(), GetMessageBinaryStart() +
-                                                      relative_offset + 4);
+                                                      static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id, typename F> F GetValue() const {
@@ -515,7 +516,7 @@ public:
       return std::get<Id>(value_).Get(nullptr, 0);
     }
     return std::get<Id>(value_).Get(GetRuntime(), GetMessageBinaryStart() +
-                                                      relative_offset + 4);
+                                                      static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id> void Print(std::ostream &os) const {
@@ -525,19 +526,19 @@ public:
       return;
     }
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_offset);
-    if (*discrim != field_numbers_[Id]) {
+        GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(relative_offset));
+    if (*discrim != static_cast<int32_t>(field_numbers_[Id])) {
       return;
     }
     std::get<Id>(value_).Print(os, indent_, GetRuntime(),
-                               GetMessageBinaryStart() + relative_offset + 4);
+                               GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id, typename U> void Set(const U &v) {
     // Write the field number into the discriminator.
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    *discrim = field_numbers_[Id];
+    *discrim = static_cast<int32_t>(field_numbers_[Id]);
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
     auto &t = std::get<Id>(value_);
@@ -549,7 +550,7 @@ public:
     // Write the field number into the discriminator.
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    *discrim = field_numbers_[Id];
+    *discrim = static_cast<int32_t>(field_numbers_[Id]);
 
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
@@ -563,7 +564,7 @@ public:
     // Write the field number into the discriminator.
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    *discrim = field_numbers_[Id];
+    *discrim = static_cast<int32_t>(field_numbers_[Id]);
 
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
@@ -594,14 +595,14 @@ public:
       return 0; // No field present in message (all fields have been removed).
     }
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_offset);
+        GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(relative_offset));
     return *discrim;
   }
 
   template <int Id> void Clear() {
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    int field_number = field_numbers_[Id];
+    int32_t field_number = static_cast<int32_t>(field_numbers_[Id]);
     if (*discrim != field_number) {
       return;
     }
@@ -627,7 +628,7 @@ public:
     }
     return std::get<Id>(value_).SerializedSize(discriminator, GetRuntime(),
                                                GetMessageBinaryStart() +
-                                                   relative_offset + 4);
+                                                   static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id>
@@ -639,7 +640,7 @@ public:
     }
     return std::get<Id>(value_).Serialize(discriminator, buffer, GetRuntime(),
                                           GetMessageBinaryStart() +
-                                              relative_offset + 4);
+                                              static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id>
@@ -651,14 +652,14 @@ public:
     }
     if (absl::Status status = std::get<Id>(value_).Deserialize(
             buffer, GetRuntime(),
-            GetMessageBinaryStart() + relative_offset + 4);
+            GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
         !status.ok()) {
       return status;
     }
     // Set the discriminator.
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    *discrim = field_numbers_[Id];
+    *discrim = static_cast<int32_t>(field_numbers_[Id]);
     return absl::OkStatus();
   }
 
@@ -670,10 +671,10 @@ public:
     }
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    *discrim = field_numbers_[Id];
+    *discrim = static_cast<int32_t>(field_numbers_[Id]);
     // TODO: this isn't right.  If the field is a message, it can fail to clone.
     std::get<Id>(value_).Set(other, GetRuntime(),
-                             GetMessageBinaryStart() + relative_offset + 4);
+                             GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
     return absl::OkStatus();
   }
 
@@ -684,14 +685,14 @@ public:
       return false;
     }
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_offset);
-    return *discrim == field_numbers_[Id];
+        GetMessageBinaryStart() + static_cast<::toolbelt::BufferOffset>(relative_offset));
+    return *discrim == static_cast<int32_t>(field_numbers_[Id]);
   }
 
   template <int Id> void SetOffset(toolbelt::BufferOffset offset) {
     int32_t *discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
-    *discrim = field_numbers_[Id];
+    *discrim = static_cast<int32_t>(field_numbers_[Id]);
 
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
@@ -718,7 +719,7 @@ private:
 
   uint32_t source_offset_;
   ::toolbelt::BufferOffset relative_binary_offset_;
-  std::vector<int> field_numbers_; // field number for each tuple type
+  std::vector<uint32_t> field_numbers_; // field number for each tuple type
   mutable std::tuple<T...> value_;
 };
 } // namespace phaser

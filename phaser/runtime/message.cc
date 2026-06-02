@@ -104,7 +104,7 @@ absl::StatusOr<::toolbelt::PayloadBuffer *> NewDynamicBuffer(
   // like valgrind when the allocator scans or copies free space.
   memset(*buffer, 0, initial_size);
   ::toolbelt::PayloadBuffer *pb = new (*buffer)::toolbelt::PayloadBuffer(
-      initial_size,
+      static_cast<uint32_t>(initial_size),
       [ initial_size, realloc_fn = std::move(realloc) ](
           ::toolbelt::PayloadBuffer * *p, size_t old_size, size_t new_size) {
         absl::StatusOr<void *> r = realloc_fn(*p, old_size, new_size);

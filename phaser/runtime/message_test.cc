@@ -32,6 +32,7 @@ struct EnumTestStringizer {
     case EnumTest::UNSET:
       return "UNSET";
     }
+    return "UNKNOWN";
   }
 };
 
@@ -144,7 +145,7 @@ struct InnerMessage : public Message {
   }
 
   static InnerMessage CreateMutable(void *addr, size_t size) {
-    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(size);
+    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    InnerMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
@@ -548,7 +549,7 @@ struct TestMessage : public Message {
         u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0, {111, 112}) {}
 
   static TestMessage CreateMutable(void *addr, size_t size) {
-    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(size);
+    ::toolbelt::PayloadBuffer *pb = new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
     auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
@@ -578,8 +579,8 @@ struct TestMessage : public Message {
     ::toolbelt::PayloadBuffer *pb = phaser::NewDynamicBuffer(initial_size);
     ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
-    this->runtime = runtime;
+    auto rt = std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
+    this->runtime = rt;
     this->absolute_binary_offset = pb->message;
     this->InstallMetadata<TestMessage>();
   }
@@ -994,7 +995,9 @@ struct TestMessage : public Message {
   }
 
   size_t vstr_size() const { return vstr_.size(); }
-  std::string_view vstr(size_t i) const { return vstr_.Get(i); }
+  std::string_view vstr(size_t i) const {
+    return vstr_.Get(static_cast<int>(i));
+  }
   template <typename Str> void add_vstr(Str v) { vstr_.Add(v); }
   template <typename Str> void set_vstr(size_t i, Str v) { vstr_.Set(i, v); }
   void clear_vstr() { vstr_.Clear(); }
@@ -1005,7 +1008,9 @@ struct TestMessage : public Message {
 
   size_t vm_size() const { return vm_.size(); }
   const InnerMessage &vm(size_t i) const { return vm_.Get(i); }
-  InnerMessage *mutable_vm(size_t i) { return vm_.Mutable(i); }
+  InnerMessage *mutable_vm(size_t i) {
+    return vm_.Mutable(static_cast<int>(i));
+  }
   InnerMessage *add_vm() { return vm_.Add(); }
   void clear_vm() { vm_.Clear(); }
   phaser::MessageVectorField<InnerMessage> &vm() {
@@ -1264,7 +1269,7 @@ static struct TestMessageBankRegister {
 } TestMessage_bank_register;
 
 TEST(MessageTest, Basic) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   msg.DebugDump();
 
@@ -1296,7 +1301,7 @@ TEST(MessageTest, Basic) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)calloc(4096, 1);
+    char *buffer2 = static_cast<char *>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1322,7 +1327,7 @@ TEST(MessageTest, Basic) {
 }
 
 TEST(MessageTest, RepeatedPrimitive) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   // This field is absent.
@@ -1342,7 +1347,7 @@ TEST(MessageTest, RepeatedPrimitive) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)calloc(4096, 1);
+    char *buffer2 = static_cast<char *>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1359,7 +1364,7 @@ TEST(MessageTest, RepeatedPrimitive) {
 }
 
 TEST(MessageTest, RepeatedString) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.DebugDump();
@@ -1385,7 +1390,7 @@ TEST(MessageTest, RepeatedString) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)calloc(4096, 1);
+    char *buffer2 = static_cast<char *>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1404,7 +1409,7 @@ TEST(MessageTest, RepeatedString) {
 }
 
 TEST(MessageTest, RepeatedMessage) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   InnerMessage *inner1 = msg.vm_.Add();
@@ -1429,7 +1434,7 @@ TEST(MessageTest, RepeatedMessage) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)calloc(4096, 1);
+    char *buffer2 = static_cast<char *>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1446,10 +1451,10 @@ TEST(MessageTest, RepeatedMessage) {
 }
 
 TEST(MessageTest, UnionField) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
-  msg.u1_.Set<0>(1234);
+  msg.u1_.Set<0>(1234u);
   msg.u2_.Set<1>("Hello, world!");
   InnerMessage *inner = msg.u3_.Mutable<1, InnerMessage>();
   inner->str_.Set("Inner message");
@@ -1474,7 +1479,7 @@ TEST(MessageTest, UnionField) {
 // in-buffer storage to a smaller block, which drives toolbelt's
 // PayloadBuffer::Realloc -> ShrinkBlock path.
 TEST(MessageTest, UnionArmSwitchInPlace) {
-  char *buffer = (char *)calloc(8192, 1);
+  char *buffer = static_cast<char *>(calloc(8192, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 8192);
 
   // Grow then repeatedly shrink the string arm on the same message. Each shrink
@@ -1484,9 +1489,9 @@ TEST(MessageTest, UnionArmSwitchInPlace) {
   ASSERT_EQ(std::string(512, 'x'), msg.u2b());
 
   for (int len : {256, 64, 16, 4, 1}) {
-    msg.set_u2b(std::string(len, 'y'));
+    msg.set_u2b(std::string(static_cast<size_t>(len), 'y'));
     ASSERT_EQ(110, msg.u2_case());
-    ASSERT_EQ(std::string(len, 'y'), msg.u2b());
+    ASSERT_EQ(std::string(static_cast<size_t>(len), 'y'), msg.u2b());
   }
 
   // Switch to the scalar arm and back. The high-level setters clear the
@@ -1527,7 +1532,7 @@ TEST(MessageTest, UnionArmSwitchInPlace) {
 }
 
 TEST(MessageTest, ClearBasic) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.x_.Set(1234);
@@ -1553,7 +1558,7 @@ TEST(MessageTest, ClearBasic) {
 }
 
 TEST(MessageTest, ClearRepeated) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.vi32_.Add(1);
@@ -1588,10 +1593,10 @@ TEST(MessageTest, ClearRepeated) {
 }
 
 TEST(MessageTest, ClearUnion) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
-  msg.u1_.Set<0>(1234);
+  msg.u1_.Set<0>(1234u);
   msg.u2_.Set<1>("Hello, world!");
   InnerMessage *inner = msg.u3_.Mutable<1, InnerMessage>();
   inner->str_.Set("Inner message");
@@ -1608,7 +1613,7 @@ TEST(MessageTest, ClearUnion) {
 }
 
 TEST(MessageTest, ProtobufBasic) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.set_x(1234);
@@ -1631,7 +1636,7 @@ TEST(MessageTest, ProtobufBasic) {
 
   // Copy message to test reading.
   {
-    char *buffer2 = (char *)calloc(4096, 1);
+    char *buffer2 = static_cast<char *>(calloc(4096, 1));
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
@@ -1650,7 +1655,7 @@ TEST(MessageTest, ProtobufBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeBasic) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.set_x(1); // Tag 100
@@ -1689,7 +1694,7 @@ TEST(MessageTest, ProtobufSerializationSizeBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeUnion) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   msg.set_u1a(1234); // Tag 107.
@@ -1727,7 +1732,7 @@ TEST(MessageTest, ProtobufSerializationSizeUnion) {
 }
 
 TEST(MessageTest, ProtobufSerializationSizeRepeatedPrimitive) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   // Tag 104.
@@ -1763,7 +1768,7 @@ TEST(MessageTest, ProtobufSerializationSizeRepeatedPrimitive) {
 }
 
 TEST(MessageTest, ProtobufSerializationBasic) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1790,7 +1795,7 @@ TEST(MessageTest, ProtobufSerializationBasic) {
 }
 
 TEST(MessageTest, ProtobufSerializationRepeated) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1837,7 +1842,7 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
 }
 
 TEST(MessageTest, ProtobufSerializationUnion) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
   phaser::ProtoBuffer pb;
@@ -1875,7 +1880,7 @@ TEST(MessageTest, ProtobufDeserializationBasic) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1912,7 +1917,7 @@ TEST(MessageTest, ProtobufDeserializationRepeated) {
   pb_inner2->set_f(0x1234);
 
   std::string str = pb_msg.SerializeAsString();
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1940,7 +1945,7 @@ TEST(MessageTest, ProtobufDeserializationUnion) {
   pb_inner->set_f(0xdeadbeef);
 
   std::string str = pb_msg.SerializeAsString();
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   phaser::ProtoBuffer pb_buffer(str);
 
@@ -1989,7 +1994,7 @@ TEST(MessageTest, Print) {
   inner->e_.Set(EnumTest::BAR);
   inner->ev_.Add(EnumTest::FOO);
   inner->ev_.Add(EnumTest::BAR);
-  inner->uv_.Set<0>(1234);
+  inner->uv_.Set<0>(1234u);
 
   msg.vi32_.Add(1);
   msg.vi32_.Add(2);
@@ -2007,7 +2012,7 @@ TEST(MessageTest, Print) {
   inner2->f_.Set(0x1234);
 
   // Unions.
-  msg.u1_.Set<0>(1234);
+  msg.u1_.Set<0>(1234u);
   msg.u2_.Set<1>("Hello, world!");
   InnerMessage *inner3 = msg.u3_.Mutable<1, InnerMessage>();
   inner3->str_.Set("Inner message");
@@ -2023,7 +2028,7 @@ TEST(MessageTest, Print) {
 }
 
 TEST(MessageTest, MessageInfo) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   InnerMessage msg = InnerMessage::CreateMutable(buffer, 4096);
   const ::phaser::MessageInfo *info = msg.GetMessageInfo();
   ASSERT_EQ("foo.bar.InnerMessage", info->full_name);
@@ -2034,7 +2039,7 @@ TEST(MessageTest, MessageInfo) {
 }
 
 TEST(MessageTest, PhaserBank) {
-  char *buffer = (char *)calloc(4096, 1);
+  char *buffer = static_cast<char *>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
   auto status = ::phaser::PhaserBankAllocate<InnerMessage>(
       "foo.bar.InnerMessage", msg.runtime);

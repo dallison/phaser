@@ -305,7 +305,8 @@ struct Message {
 
   void *Allocate(size_t size, size_t alignment = 4, bool clear = true) {
     (void)alignment;
-    return toolbelt::PayloadBuffer::Allocate(&runtime->pb, size, clear);
+    return toolbelt::PayloadBuffer::Allocate(
+        &runtime->pb, static_cast<uint32_t>(size), clear);
   }
 
   void Free(void *ptr) { runtime->pb->Free(ptr); }
@@ -313,7 +314,8 @@ struct Message {
   void *Realloc(void *ptr, size_t size, size_t alignment = 4,
                 bool clear = true) {
     (void)alignment;
-    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr, size, clear);
+    return toolbelt::PayloadBuffer::Realloc(
+        &runtime->pb, ptr, static_cast<uint32_t>(size), clear);
   }
 
   toolbelt::BufferOffset ToOffset(void *addr) {
