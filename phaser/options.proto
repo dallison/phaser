@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package phaser;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  // Fixed logical extent for a repeated field. Must be a positive integer.
+  // Only valid on non-map repeated fields. ROS frontend generation exposes a
+  // fixed-extent array facade; protobuf frontend keeps repeated accessors.
+  uint32 array_size = 50001;
+}

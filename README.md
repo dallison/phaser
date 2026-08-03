@@ -114,6 +114,7 @@ proto_library(
 phaser_library(
     name = "foo_phaser",
     add_namespace = "phaser",  # optional: avoids clashing with protobuf classes
+    frontend = "protobuf",     # default; use "ros" for public field proxies
     deps = [":foo_proto"],
 )
 ```
@@ -125,6 +126,37 @@ any protobuf header:
 ```c++
 #include "foo/bar/Foo.phaser.h"
 ```
+
+Phaser can generate either the default protobuf-style accessors or a ROS-style
+struct interface. The ROS frontend preserves the same native payload layout and
+protobuf wire transcoding:
+
+```python
+phaser_library(
+    name = "foo_ros_phaser",
+    frontend = "ros",
+    deps = [":foo_proto"],
+)
+```
+
+```c++
+Foo msg;
+msg.count = 3;
+msg.name = "sensor";
+msg.samples.push_back(1.5);
+```
+
+Fixed-size ROS fields are repeated protobuf fields annotated with
+`[(phaser.array_size) = N]`; import `phaser/options.proto` in the schema. ROS
+`oneof` fields expose a variant-like proxy with generated alternative tags.
+See the user guide for the complete array and oneof APIs.
+
+The ROS frontend also maps singular `google.protobuf.Timestamp`,
+`google.protobuf.Duration`, and `std_msgs.Header` message fields to
+`ros::Time`, `ros::Duration`, and `std_msgs::Header`. This allows existing ROS1
+functions taking values, const references, or mutable references to accept the
+generated fields unchanged. Add the corresponding ROS C++ targets through the
+`cc_deps` attribute.
 
 ### 2. Create and use a message
 

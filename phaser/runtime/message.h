@@ -243,6 +243,7 @@ struct Message {
   virtual std::string GetFullName() const { return "phaser.Message"; }
   virtual void Clear() {}
   virtual void CopyFrom(const Message& /*src*/) {}
+  virtual void SyncToPayload() const {}
 
   std::shared_ptr<MessageRuntime> runtime;
   ::toolbelt::BufferOffset absolute_binary_offset;
@@ -363,13 +364,23 @@ struct Message {
   int32_t FindFieldId(uint32_t field_number) const;
 
   void* BinaryData() const {
+    SyncToPayload();
     return runtime->pb->ToAddress(absolute_binary_offset);
   }
 
-  void* Data() const { return reinterpret_cast<void*>(runtime->pb); }
+  void* Data() const {
+    SyncToPayload();
+    return reinterpret_cast<void*>(runtime->pb);
+  }
 
-  size_t Size() const { return runtime->pb->Size(); }
-  size_t ZeroCopySize() const { return runtime->pb->Size(); }
+  size_t Size() const {
+    SyncToPayload();
+    return runtime->pb->Size();
+  }
+  size_t ZeroCopySize() const {
+    SyncToPayload();
+    return runtime->pb->Size();
+  }
 };
 
 ::toolbelt::PayloadBuffer* NewDynamicBuffer(

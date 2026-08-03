@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package foo.bar;
+
+import "phaser/options.proto";
+
+enum RosColor {
+  ROS_COLOR_UNSPECIFIED = 0;
+  ROS_COLOR_RED = 1;
+  ROS_COLOR_BLUE = 2;
+}
+
+message RosInner {
+  int32 id = 1;
+}
+
+message RosCompileMessage {
+  int32 x = 1;
+  string name = 2;
+  bool flag = 3;
+  double value = 4;
+  RosColor color = 5;
+  RosInner inner = 6;
+  repeated int32 xs = 7;
+  repeated string names = 8;
+  repeated RosColor colors = 9;
+  repeated RosInner inners = 10;
+
+  repeated int32 fixed_ints = 11 [(phaser.array_size) = 4];
+  repeated RosColor fixed_colors = 12 [(phaser.array_size) = 3];
+  repeated string fixed_names = 13 [(phaser.array_size) = 2];
+  repeated RosInner fixed_inners = 14 [(phaser.array_size) = 2];
+
+  oneof choice {
+    int32 choice_count = 15;
+    int32 choice_code = 16;
+    string choice_name = 17;
+    RosInner choice_inner = 18;
+  }
+}

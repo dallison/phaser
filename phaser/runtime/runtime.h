@@ -6,6 +6,7 @@
 #include <iostream>
 
 #include "phaser/runtime/any.h"
+#include "phaser/runtime/arrays.h"
 #include "phaser/runtime/fields.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"

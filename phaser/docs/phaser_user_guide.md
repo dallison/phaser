@@ -221,6 +221,169 @@ The actual command used by Bazel to build the Phaser files is:
 
 I haven't done this with `cmake` or any other build system but I guess it will be reasonably easy.
 
+## Protobuf and ROS frontends
+`phaser_library` supports two generated C++ interfaces over the same Phaser
+payload layout:
+
+- `frontend = "protobuf"` (the default) generates protobuf-style getters and
+  setters.
+- `frontend = "ros"` generates a struct with public field proxies.
+
+```python
+phaser_library(
+    name = "foo_ros_phaser",
+    frontend = "ros",
+    deps = [":foo_proto"],
+)
+```
+
+When invoking the plugin directly, pass `frontend=ros` in `--phaser_out`.
+Unknown frontend values are rejected.
+
+### ROS field syntax
+Scalar, enum, string, message, and repeated fields provide value-like syntax,
+but remain handles into the message's `PayloadBuffer`:
+
+```c++
+Foo msg;
+msg.count = 10;
+int count = msg.count;
+
+msg.name = "camera";
+std::string_view name = msg.name;
+
+msg.child->id = 7;              // materializes child when needed
+msg.values.push_back(1);
+msg.values[0] = 2;
+for (int value : msg.values) { /* ... */ }
+```
+
+Assigning one field proxy to another copies the field value; it does not rebind
+the destination proxy to the source message. Copying a generated ROS message
+deep-copies its payload. Iterators, references, pointers, and string views into
+a dynamic message can be invalidated by an operation that grows or compacts its
+payload buffer, so reacquire them after mutation.
+
+`CreateReadonly` messages support const field access and serialization. A
+non-const proxy operation requires a mutable message.
+
+### ROS1 intrinsic types
+The ROS frontend recognizes three singular protobuf message declarations and
+presents their fields as the corresponding ROS1 C++ types:
+
+- `google.protobuf.Timestamp` as `ros::Time`
+- `google.protobuf.Duration` as `ros::Duration`
+- `std_msgs.Header` as `std_msgs::Header`
+
+`std_msgs.Header` is expected to contain `uint32 seq`, a
+`google.protobuf.Timestamp stamp`, and `string frame_id`. Generate it with a
+non-empty `add_namespace` so the Phaser backend type does not collide with the
+real ROS class.
+
+The proxies support values and both const and mutable references, so existing
+functions can be called without adapters:
+
+```c++
+void Advance(ros::Time& stamp);
+void UpdateHeader(std_msgs::Header& header);
+void Observe(const std_msgs::Header& header);
+
+Advance(msg.stamp);
+UpdateHeader(msg.header);
+Observe(msg.header);
+```
+
+`ros::Time`, `ros::Duration`, and especially `std_msgs::Header` are cached
+source objects rather than in-buffer overlays. Mutable-reference changes are
+automatically copied into the payload before native `Data()`/size access,
+protobuf serialization, copying, and recursive parent synchronization. Avoid
+accessing `runtime->pb` directly while such a mutable borrow may be dirty.
+
+Pass the ROS libraries needed by generated headers through `cc_deps`:
+
+```python
+phaser_library(
+    name = "messages_phaser",
+    add_namespace = "phaser",
+    frontend = "ros",
+    deps = [":messages_proto"],
+    cc_deps = [
+        "@ros//:roscpp",
+        "@ros//std_msgs",
+    ],
+)
+```
+
+Intrinsic fields are currently required to be singular and outside a `oneof`;
+the generator rejects unsupported repeated or union forms rather than silently
+emitting a non-ROS-compatible type.
+
+### Fixed arrays
+Fixed arrays use a repeated protobuf field plus the `phaser.array_size` option:
+
+```proto
+import "phaser/options.proto";
+
+message Scan {
+  repeated float ranges = 1 [(phaser.array_size) = 360];
+  repeated string frame_names = 2 [(phaser.array_size) = 2];
+}
+```
+
+The option is used as a fixed-array facade only by the ROS frontend. The field
+has `size() == N`, indexing, front/back, and iteration, while its native payload
+storage remains the same vector-backed representation as a repeated field.
+During protobuf wire parsing, fewer than `N` elements are default-filled and
+more than `N` elements are rejected. `array_size` must be positive and may only
+annotate a non-map repeated field.
+
+The proto target must depend on Phaser's options proto:
+
+```python
+proto_library(
+    name = "scan_proto",
+    srcs = ["Scan.proto"],
+    deps = ["@phaser//phaser:options_proto"],
+)
+```
+
+### Variant-like oneofs
+In the ROS frontend, each `oneof` is a public variant-like proxy. Phaser
+generates a named tag for every arm:
+
+```proto
+oneof command {
+  int32 sequence = 3;
+  string frame = 4;
+  Child child = 5;
+}
+```
+
+```c++
+using Sequence = Foo::SequenceAlternative;
+using Frame = Foo::FrameAlternative;
+using ChildArm = Foo::ChildAlternative;
+
+msg.command.emplace<Sequence>(12);
+if (msg.command.holds_alternative<Sequence>()) {
+  int sequence = msg.command.get<Sequence>();
+}
+
+msg.command.emplace<Frame>("map");       // clears the sequence arm
+msg.command.emplace<ChildArm>().id = 9;  // returns the mutable child
+msg.command.reset();
+```
+
+`index()` returns the zero-based arm index or `std::variant_npos`;
+`case_number()` returns the active protobuf field number or zero. `get<Tag>()`
+throws `std::bad_variant_access` for an inactive arm. Switching arms clears and
+releases any string or message storage owned by the previous arm.
+
+Both frontends use the same native binary metadata and protobuf wire
+serialization. A protobuf-style target and a ROS-style target generated from
+the same schema can therefore exchange native Phaser buffers and protobuf wire
+bytes.
+
 ## Creating a message
 In protobuf, you generally create messages on the local stack frame or from the heap. 
 Submessages (fields whose type is a message) are allocated from the heap.

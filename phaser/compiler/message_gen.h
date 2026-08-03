@@ -16,6 +16,8 @@
 
 namespace phaser {
 
+enum class FrontendStyle { kProtobuf, kRos };
+
 struct FieldInfo {
   // Constructor.
   FieldInfo(const google::protobuf::FieldDescriptor* f, uint32_t o, uint32_t i,
@@ -54,15 +56,17 @@ class MessageGenerator {
   MessageGenerator(const google::protobuf::Descriptor* message,
                    const std::string& added_namespace,
                    const std::string& package_name,
-                   bool generate_active_message = false)
+                   bool generate_active_message = false,
+                   FrontendStyle frontend_style = FrontendStyle::kProtobuf)
       : message_(message),
         added_namespace_(added_namespace),
         package_name_(package_name),
-        generate_active_message_(generate_active_message) {
+        generate_active_message_(generate_active_message),
+        frontend_style_(frontend_style) {
     for (int i = 0; i < message_->nested_type_count(); i++) {
       nested_message_gens_.push_back(std::make_unique<MessageGenerator>(
           message_->nested_type(i), added_namespace, package_name,
-          generate_active_message));
+          generate_active_message, frontend_style));
     }
     // Enums
     for (int i = 0; i < message_->enum_type_count(); i++) {
@@ -71,7 +75,7 @@ class MessageGenerator {
     }
   }
 
-  void GenerateHeader(std::ostream& os);
+  absl::Status GenerateHeader(std::ostream& os);
   void GenerateSource(std::ostream& os);
 
   void GenerateFieldDeclarations(std::ostream& os);
@@ -93,6 +97,10 @@ class MessageGenerator {
   void GenerateCreators(std::ostream& os, bool decl);
   void GenerateClear(std::ostream& os, bool decl);
 
+  void GeneratePublicFieldDeclarations(std::ostream& os);
+  void GenerateRosOneofTypes(std::ostream& os);
+  void GenerateRosOwnerCopyMove(std::ostream& os, bool decl);
+  void GenerateRosSyncToPayload(std::ostream& os);
   void GenerateProtobufAccessors(std::ostream& os);
   void GenerateFieldProtobufAccessors(std::ostream& os);
   void GenerateFieldProtobufAccessors(std::shared_ptr<FieldInfo> field,
@@ -128,9 +136,36 @@ class MessageGenerator {
   std::string FieldCType(const google::protobuf::FieldDescriptor* field);
   std::string FieldRepeatedCType(
       const google::protobuf::FieldDescriptor* field);
+  std::string FieldRepeatedVectorCType(
+      const google::protobuf::FieldDescriptor* field);
+  std::string FieldRepeatedArrayCType(
+      const google::protobuf::FieldDescriptor* field, int array_size);
   std::string FieldUnionCType(const google::protobuf::FieldDescriptor* field);
   uint32_t FieldBinarySize(const google::protobuf::FieldDescriptor* field);
   std::string FieldInfoType(const google::protobuf::FieldDescriptor* field);
+  std::string SanitizedIdentifier(const std::string& name) const;
+  std::string MemberVariableName(const std::string& proto_name) const;
+  std::string OneofVariantTypeName(
+      const google::protobuf::OneofDescriptor* oneof) const;
+  std::string OneofAlternativeTypeName(
+      const google::protobuf::FieldDescriptor* field) const;
+  int GetArraySize(const google::protobuf::FieldDescriptor* field) const;
+  bool UsesArrayFacade(const google::protobuf::FieldDescriptor* field) const;
+  bool IsRosTime(const google::protobuf::Descriptor* desc) const;
+  bool IsRosDuration(const google::protobuf::Descriptor* desc) const;
+  bool IsRosHeader(const google::protobuf::Descriptor* desc) const;
+  bool IsRosIntrinsic(const google::protobuf::FieldDescriptor* field) const;
+  std::string RosIntrinsicFieldType(
+      const google::protobuf::FieldDescriptor* field);
+  std::string RosIntrinsicCType(
+      const google::protobuf::FieldDescriptor* field);
+  absl::Status ValidateFieldOptions() const;
+  absl::Status ValidateArraySizeOption(
+      const google::protobuf::FieldDescriptor* field) const;
+  absl::Status ValidateRosHeaderDescriptor() const;
+  bool IsRosFrontend() const {
+    return frontend_style_ == FrontendStyle::kRos;
+  }
 
   const google::protobuf::Descriptor* message_;
   std::vector<std::unique_ptr<MessageGenerator>> nested_message_gens_;
@@ -144,6 +179,7 @@ class MessageGenerator {
   std::string added_namespace_;
   std::string package_name_;
   bool generate_active_message_ = false;
+  FrontendStyle frontend_style_ = FrontendStyle::kProtobuf;
 };
 
 }  // namespace phaser

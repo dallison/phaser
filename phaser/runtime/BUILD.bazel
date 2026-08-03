@@ -12,6 +12,7 @@ cc_library(
     copts = PHASER_COPTS,
     hdrs = [
         "any.h",
+        "arrays.h",
         "fields.h",
         "iterators.h",
         "message.h",
@@ -20,6 +21,7 @@ cc_library(
         "vectors.h",
         "wireformat.h",
         "phaser_bank.h",
+        "ros.h",
     ],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",

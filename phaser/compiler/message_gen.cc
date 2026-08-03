@@ -12,6 +12,7 @@
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
+#include "phaser/options.pb.h"
 
 namespace phaser {
 
@@ -118,6 +119,136 @@ static bool IsCppReservedWord(const std::string& s) {
   return reserved_words.contains(s);
 }
 
+std::string MessageGenerator::SanitizedIdentifier(
+    const std::string& name) const {
+  if (IsCppReservedWord(name)) {
+    return name + "_";
+  }
+  return name;
+}
+
+std::string MessageGenerator::MemberVariableName(
+    const std::string& proto_name) const {
+  if (IsRosFrontend()) {
+    return SanitizedIdentifier(proto_name);
+  }
+  return proto_name + "_";
+}
+
+std::string MessageGenerator::OneofVariantTypeName(
+    const google::protobuf::OneofDescriptor* oneof) const {
+  std::string name;
+  bool capitalize = true;
+  for (char c : oneof->name()) {
+    if (c == '_') {
+      capitalize = true;
+      continue;
+    }
+    name.push_back(capitalize ? static_cast<char>(std::toupper(c)) : c);
+    capitalize = false;
+  }
+  return SanitizedIdentifier(name + "Variant");
+}
+
+std::string MessageGenerator::OneofAlternativeTypeName(
+    const google::protobuf::FieldDescriptor* field) const {
+  std::string name(field->camelcase_name());
+  if (!name.empty()) {
+    name[0] = static_cast<char>(std::toupper(name[0]));
+  }
+  return SanitizedIdentifier(name + "Alternative");
+}
+
+int MessageGenerator::GetArraySize(
+    const google::protobuf::FieldDescriptor* field) const {
+  if (!field->options().HasExtension(phaser::array_size)) {
+    return 0;
+  }
+  return static_cast<int>(field->options().GetExtension(phaser::array_size));
+}
+
+bool MessageGenerator::UsesArrayFacade(
+    const google::protobuf::FieldDescriptor* field) const {
+  return IsRosFrontend() && GetArraySize(field) > 0;
+}
+
+absl::Status MessageGenerator::ValidateArraySizeOption(
+    const google::protobuf::FieldDescriptor* field) const {
+  if (!field->options().HasExtension(phaser::array_size)) {
+    return absl::OkStatus();
+  }
+  const int array_size = GetArraySize(field);
+  const std::string context = absl::StrFormat("%s.%s", message_->full_name(),
+                                              field->name());
+  if (array_size <= 0) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("phaser.array_size must be positive on field %s",
+                        context));
+  }
+  if (!field->is_repeated()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "phaser.array_size is only valid on repeated fields: %s", context));
+  }
+  if (field->is_map()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "phaser.array_size is not valid on map fields: %s", context));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MessageGenerator::ValidateFieldOptions() const {
+  if (IsRosFrontend() && IsRosHeader(message_) && added_namespace_.empty()) {
+    return absl::InvalidArgumentError(
+        "ROS frontend generation for std_msgs.Header requires add_namespace "
+        "to avoid colliding with the ROS std_msgs::Header type");
+  }
+  if (IsRosFrontend()) {
+    if (absl::Status status = ValidateRosHeaderDescriptor(); !status.ok()) {
+      return status;
+    }
+  }
+  for (int i = 0; i < message_->field_count(); i++) {
+    const auto* field = message_->field(i);
+    if (absl::Status status = ValidateArraySizeOption(field);
+        !status.ok()) {
+      return status;
+    }
+    if (IsRosFrontend() && IsRosIntrinsic(field) &&
+        (field->is_repeated() || field->containing_oneof() != nullptr)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "ROS intrinsic field %s.%s must be singular and cannot be in a "
+          "oneof",
+          message_->full_name(), field->name()));
+    }
+  }
+  for (const auto& nested : nested_message_gens_) {
+    if (absl::Status status = nested->ValidateFieldOptions(); !status.ok()) {
+      return status;
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MessageGenerator::ValidateRosHeaderDescriptor() const {
+  if (!IsRosHeader(message_)) {
+    return absl::OkStatus();
+  }
+  const auto* seq = message_->FindFieldByName("seq");
+  const auto* stamp = message_->FindFieldByName("stamp");
+  const auto* frame_id = message_->FindFieldByName("frame_id");
+  if (seq == nullptr ||
+      seq->type() != google::protobuf::FieldDescriptor::TYPE_UINT32 ||
+      stamp == nullptr ||
+      stamp->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+      !IsRosTime(stamp->message_type()) || frame_id == nullptr ||
+      frame_id->type() != google::protobuf::FieldDescriptor::TYPE_STRING) {
+    return absl::InvalidArgumentError(
+        "std_msgs.Header must declare uint32 seq, "
+        "google.protobuf.Timestamp stamp, and string frame_id");
+  }
+  return absl::OkStatus();
+}
+
 std::string MessageGenerator::EnumName(
     const google::protobuf::EnumDescriptor* desc) {
   std::string name(desc->name());
@@ -191,6 +322,9 @@ std::string MessageGenerator::FieldCFieldType(
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
       if (IsAny(field)) {
         return "AnyField";
+      }
+      if (IsRosFrontend() && IsRosIntrinsic(field)) {
+        return RosIntrinsicFieldType(field);
       }
       return "IndirectMessageField<" +
              MessageName(field->message_type(), true) + ">";
@@ -278,6 +412,9 @@ std::string MessageGenerator::FieldCType(
     case google::protobuf::FieldDescriptor::TYPE_BYTES:
       return "std::string_view";
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsRosFrontend() && IsRosIntrinsic(field)) {
+        return RosIntrinsicCType(field);
+      }
       return MessageName(field->message_type(), true);
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
       std::cerr << "Groups are not supported\n";
@@ -288,6 +425,15 @@ std::string MessageGenerator::FieldCType(
 }
 
 std::string MessageGenerator::FieldRepeatedCType(
+    const google::protobuf::FieldDescriptor* field) {
+  const int array_size = GetArraySize(field);
+  if (IsRosFrontend() && array_size > 0) {
+    return FieldRepeatedArrayCType(field, array_size);
+  }
+  return FieldRepeatedVectorCType(field);
+}
+
+std::string MessageGenerator::FieldRepeatedVectorCType(
     const google::protobuf::FieldDescriptor* field) {
   std::string packed = field->is_packed() ? ", true>" : ", false>";
   switch (field->type()) {
@@ -332,6 +478,65 @@ std::string MessageGenerator::FieldRepeatedCType(
       exit(1);
   }
   // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
+}
+
+std::string MessageGenerator::FieldRepeatedArrayCType(
+    const google::protobuf::FieldDescriptor* field, int array_size) {
+  const std::string extent = std::to_string(array_size);
+  const std::string packed = field->is_packed() ? ", true>" : ", false>";
+  switch (field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+      return "PrimitiveArrayField<int32_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+      return "PrimitiveArrayField<int32_t, " + extent + ", false, true" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+      return "PrimitiveArrayField<int32_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+      return "PrimitiveArrayField<int64_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+      return "PrimitiveArrayField<int64_t, " + extent + ", false, true" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+      return "PrimitiveArrayField<int64_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+      return "PrimitiveArrayField<uint32_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+      return "PrimitiveArrayField<uint32_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+      return "PrimitiveArrayField<uint64_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+      return "PrimitiveArrayField<uint64_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      return "PrimitiveArrayField<double, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+      return "PrimitiveArrayField<float, " + extent + ", true, false" + packed;
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+      return "PrimitiveArrayField<bool, " + extent + ", false, false" + packed;
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+      return "EnumArrayField<" + EnumName(field->enum_type()) + ", " + extent +
+             ", " + EnumName(field->enum_type()) + "Stringizer, " +
+             EnumName(field->enum_type()) + "Parser" + packed;
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
+      return "StringArrayField<" + extent + ">";
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      return "MessageArrayField<" + MessageName(field->message_type(), true) +
+             ", " + extent + ">";
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      std::cerr << "Groups are not supported\n";
+      exit(1);
+  }
   abort();
 }
 
@@ -424,6 +629,58 @@ bool MessageGenerator::IsAny(const google::protobuf::Descriptor* desc) {
   return desc->full_name() == "google.protobuf.Any";
 }
 
+bool MessageGenerator::IsRosTime(
+    const google::protobuf::Descriptor* desc) const {
+  return desc != nullptr &&
+         desc->full_name() == "google.protobuf.Timestamp";
+}
+
+bool MessageGenerator::IsRosDuration(
+    const google::protobuf::Descriptor* desc) const {
+  return desc != nullptr &&
+         desc->full_name() == "google.protobuf.Duration";
+}
+
+bool MessageGenerator::IsRosHeader(
+    const google::protobuf::Descriptor* desc) const {
+  return desc != nullptr && desc->full_name() == "std_msgs.Header";
+}
+
+bool MessageGenerator::IsRosIntrinsic(
+    const google::protobuf::FieldDescriptor* field) const {
+  if (field == nullptr ||
+      field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+    return false;
+  }
+  const auto* desc = field->message_type();
+  return IsRosTime(desc) || IsRosDuration(desc) || IsRosHeader(desc);
+}
+
+std::string MessageGenerator::RosIntrinsicFieldType(
+    const google::protobuf::FieldDescriptor* field) {
+  const std::string backend = MessageName(field->message_type(), true);
+  if (IsRosTime(field->message_type())) {
+    return "RosTimeField<" + backend + ">";
+  }
+  if (IsRosDuration(field->message_type())) {
+    return "RosDurationField<" + backend + ">";
+  }
+  assert(IsRosHeader(field->message_type()));
+  return "RosHeaderField<" + backend + ">";
+}
+
+std::string MessageGenerator::RosIntrinsicCType(
+    const google::protobuf::FieldDescriptor* field) {
+  if (IsRosTime(field->message_type())) {
+    return "::ros::Time";
+  }
+  if (IsRosDuration(field->message_type())) {
+    return "::ros::Duration";
+  }
+  assert(IsRosHeader(field->message_type()));
+  return "::std_msgs::Header";
+}
+
 bool MessageGenerator::IsAny(const google::protobuf::FieldDescriptor* field) {
   return field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
          field->message_type()->full_name() == "google.protobuf.Any";
@@ -453,7 +710,8 @@ void MessageGenerator::CompileUnions() {
     union_info->member_type += "::phaser::" + field_type;
     uint32_t field_size = FieldBinarySize(field);
     union_info->members.push_back(std::make_shared<FieldInfo>(
-        field, 0, union_info->id, std::string(field->name()) + "_", field_type,
+        field, 0, union_info->id,
+        MemberVariableName(std::string(field->name())), field_type,
         FieldCType(field), field_size));
     union_info->binary_size = std::max(union_info->binary_size, 4 + field_size);
     union_info->id++;
@@ -483,7 +741,7 @@ void MessageGenerator::CompileFields() {
       auto it = unions_.find(oneof);
       if (it == unions_.end()) {
         auto union_info = std::make_shared<UnionInfo>(
-            oneof, 4, std::string(oneof->name()) + "_", "UnionField");
+            oneof, 4, MemberVariableName(std::string(oneof->name())), "UnionField");
         unions_[oneof] = union_info;
         fields_in_order_.push_back(union_info);
       }
@@ -505,8 +763,8 @@ void MessageGenerator::CompileFields() {
     }
     offset = (offset + (field_size - 1)) & ~(field_size - 1);
     fields_.push_back(std::make_shared<FieldInfo>(
-        field, offset, id, std::string(field->name()) + "_", field_type,
-        FieldCType(field), field_size));
+        field, offset, id, MemberVariableName(std::string(field->name())),
+        field_type, FieldCType(field), field_size));
     fields_in_order_.push_back(fields_.back());
     offset += field_size;
     id = next_id;
@@ -550,16 +808,25 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
   binary_size_ = size;
 }
 
-void MessageGenerator::GenerateHeader(std::ostream& os) {
+absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
+  if (absl::Status status = ValidateFieldOptions(); !status.ok()) {
+    return status;
+  }
   for (const auto& nested : nested_message_gens_) {
-    nested->GenerateHeader(os);
+    if (absl::Status status = nested->GenerateHeader(os); !status.ok()) {
+      return status;
+    }
   }
   CompileFields();
   CompileUnions();
   FinalizeOffsetsAndSizes();
 
-  os << "class " << MessageName(message_) << " : public ::phaser::Message {\n";
+  os << (IsRosFrontend() ? "struct " : "class ") << MessageName(message_)
+     << " : public ::phaser::Message {\n";
   os << " public:\n";
+  if (IsRosFrontend()) {
+    GenerateRosOneofTypes(os);
+  }
   if (generate_active_message_) {
     os << "  // Optional user-attached payload, not part of the wire format.\n";
     os << "  std::any active_message;\n\n";
@@ -572,6 +839,9 @@ void MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateCreators(os, true);
   // Generate clear function.
   GenerateClear(os, true);
+  if (IsRosFrontend()) {
+    GenerateRosSyncToPayload(os);
+  }
   // Generate field metadata.
   GenerateFieldMetadata(os);
 
@@ -602,8 +872,15 @@ void MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateCopy(os, true);
   GenerateDebugString(os);
 
+  if (IsRosFrontend()) {
+    GenerateRosOwnerCopyMove(os, true);
+    GeneratePublicFieldDeclarations(os);
+  }
+
   // Generate protobuf accessors.
-  GenerateProtobufAccessors(os);
+  if (!IsRosFrontend()) {
+    GenerateProtobufAccessors(os);
+  }
 
   GenerateProtobufSerialization(os);
 
@@ -614,13 +891,104 @@ void MessageGenerator::GenerateHeader(std::ostream& os) {
   // Generate deserializer.
   GenerateDeserializer(os, true);
 
-  os << " private:\n";
-  GenerateFieldDeclarations(os);
+  if (!IsRosFrontend()) {
+    os << " private:\n";
+    GenerateFieldDeclarations(os);
+  }
   os << "};\n\n";
 
   // Steamer outside the class.
   GenerateStreamer(os);
   GenerateCopy(os, false);
+  return absl::OkStatus();
+}
+
+void MessageGenerator::GenerateRosSyncToPayload(std::ostream& os) {
+  os << "  void SyncToPayload() const override {\n";
+  for (const auto& field : fields_) {
+    if (field->field->type() !=
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+        (!field->field->is_repeated() && IsAny(field->field))) {
+      continue;
+    }
+    os << "    " << field->member_name << ".SyncToPayload();\n";
+  }
+  for (const auto& [oneof, union_info] : unions_) {
+    os << "    switch (" << union_info->member_name
+       << ".Discriminator()) {\n";
+    for (size_t i = 0; i < union_info->members.size(); ++i) {
+      const auto& member = union_info->members[i];
+      if (member->field->type() !=
+          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+        continue;
+      }
+      os << "      case " << member->field->number() << ":\n";
+      os << "        " << union_info->member_name << ".template GetReference<"
+         << i << ", " << member->c_type << ">().SyncToPayload();\n";
+      os << "        break;\n";
+    }
+    os << "      default:\n";
+    os << "        break;\n";
+    os << "    }\n";
+  }
+  os << "  }\n\n";
+}
+
+void MessageGenerator::GenerateRosOwnerCopyMove(std::ostream& os, bool decl) {
+  if (!IsRosFrontend()) {
+    return;
+  }
+  const std::string name = MessageName(message_);
+  if (decl) {
+    os << "  " << name << "(const " << name << "& other);\n";
+    os << "  " << name << "& operator=(const " << name << "& other);\n";
+    os << "  " << name << "(" << name << "&& other) noexcept;\n";
+    os << "  " << name << "& operator=(" << name << "&& other) noexcept;\n\n";
+    return;
+  }
+
+  os << name << "::" << name << "(const " << name << "& other)\n";
+  GenerateFieldInitializers(os);
+  os << R"XXX({
+  size_t initial_size = other.BinarySize() * 2;
+  if (initial_size < 8192) {
+    initial_size = 8192;
+  }
+  InitDynamicMutable(initial_size, ::phaser::Tuning::kPerformance);
+  (void)CloneFrom(other);
+}
+
+)XXX";
+
+  os << name << "& " << name << "::operator=(const " << name << "& other) {\n";
+  os << "  if (this != &other) {\n";
+  os << "    (void)CloneFrom(other);\n";
+  os << "  }\n";
+  os << "  return *this;\n";
+  os << "}\n\n";
+
+  os << name << "::" << name << "(" << name << "&& other) noexcept\n";
+  os << "  : Message(std::move(other))\n";
+  const char* sep = ", ";
+  for (auto& field : fields_) {
+    os << sep << field->member_name << "(std::move(other." << field->member_name
+       << "))\n";
+    sep = ", ";
+  }
+  for (auto& [oneof, u] : unions_) {
+    os << sep << u->member_name << "(std::move(other." << u->member_name
+       << "))\n";
+  }
+  os << "{}\n\n";
+
+  os << name << "& " << name << "::operator=(" << name << "&& other) noexcept "
+     << "{\n";
+  os << "  if (this != &other) {\n";
+  os << "    (void)CloneFrom(other);\n";
+  os << "    other.Clear();\n";
+  os << "  }\n";
+  os << "  return *this;\n";
+  os << "}\n\n";
 }
 
 void MessageGenerator::GenerateSource(std::ostream& os) {
@@ -629,6 +997,9 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
   }
 
   GenerateConstructors(os, false);
+  if (IsRosFrontend()) {
+    GenerateRosOwnerCopyMove(os, false);
+  }
 
   // Generate creators.
   GenerateCreators(os, false);
@@ -654,8 +1025,56 @@ void MessageGenerator::GenerateFieldDeclarations(std::ostream& os) {
        << ";\n";
   }
   for (auto& [oneof, u] : unions_) {
-    os << "  ::phaser::" << u->member_type << " " << u->member_name << ";\n";
+    if (IsRosFrontend()) {
+      os << "  " << OneofVariantTypeName(oneof) << " " << u->member_name
+         << ";\n";
+    } else {
+      os << "  ::phaser::" << u->member_type << " " << u->member_name << ";\n";
+    }
   }
+}
+
+void MessageGenerator::GenerateRosOneofTypes(std::ostream& os) {
+  for (auto& [oneof, u] : unions_) {
+    const std::string variant_name = OneofVariantTypeName(oneof);
+    os << "  struct " << variant_name << " : public ::phaser::"
+       << u->member_type << " {\n";
+    os << "    using Base = ::phaser::" << u->member_type << ";\n";
+    os << "    using Base::Base;\n";
+    for (size_t i = 0; i < u->members.size(); ++i) {
+      const auto& field = u->members[i];
+      const std::string alternative_name =
+          OneofAlternativeTypeName(field->field);
+      os << "    struct " << alternative_name << " {\n";
+      os << "      using value_type = " << field->c_type << ";\n";
+      os << "      static constexpr size_t kIndex = " << i << ";\n";
+      os << "      static constexpr int kFieldNumber = "
+         << field->field->number() << ";\n";
+      os << "      static constexpr bool kIsMessage = "
+         << (field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_MESSAGE
+                 ? "true"
+                 : "false")
+         << ";\n";
+      os << "    };\n";
+    }
+    os << "  };\n";
+    for (const auto& field : u->members) {
+      const std::string alternative_name =
+          OneofAlternativeTypeName(field->field);
+      os << "  using " << alternative_name << " = " << variant_name << "::"
+         << alternative_name << ";\n";
+    }
+    os << "\n";
+  }
+}
+
+void MessageGenerator::GeneratePublicFieldDeclarations(std::ostream& os) {
+  if (fields_.empty() && unions_.empty()) {
+    return;
+  }
+  os << "\n";
+  GenerateFieldDeclarations(os);
 }
 
 void MessageGenerator::GenerateEnums(std::ostream& os) {
@@ -938,6 +1357,9 @@ void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
 }
 
 void MessageGenerator::GenerateProtobufAccessors(std::ostream& os) {
+  if (IsRosFrontend()) {
+    return;
+  }
   // Generate field accessors.
   GenerateFieldProtobufAccessors(os);
   // Union accessors.
@@ -1377,6 +1799,21 @@ void MessageGenerator::GenerateDeserializer(std::ostream& os, bool decl) {
   }
   os << "absl::Status " << MessageName(message_)
      << "::Deserialize(::phaser::ProtoBuffer &buffer) {";
+  bool has_array_fields = false;
+  for (auto& field : fields_) {
+    if (UsesArrayFacade(field->field)) {
+      has_array_fields = true;
+      break;
+    }
+  }
+  if (has_array_fields) {
+    os << "\n";
+    for (auto& field : fields_) {
+      if (UsesArrayFacade(field->field)) {
+        os << "  " << field->member_name << ".BeginDeserialize();\n";
+      }
+    }
+  }
   os << R"XXX(
   while (!buffer.Eof()) {
     absl::StatusOr<uint32_t> tag =
@@ -1411,6 +1848,15 @@ void MessageGenerator::GenerateDeserializer(std::ostream& os, bool decl) {
     }
   }
 )XXX";
+  if (has_array_fields) {
+    os << "\n";
+    for (auto& field : fields_) {
+      if (UsesArrayFacade(field->field)) {
+        os << "  if (absl::Status status = " << field->member_name
+           << ".FinalizeDeserialize(); !status.ok()) return status;\n";
+      }
+    }
+  }
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
 }
@@ -1546,45 +1992,153 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
   os << "template <typename T>\n";
   os << "inline absl::Status " << MessageName(message_)
      << "::CloneFrom([[maybe_unused]] const T & other) {\n";
-  for (auto& field : fields_) {
-    if (field->field->is_repeated()) {
-      os << "  for (auto& v : other." << field->field->name() << "()) {\n";
-      if (field->field->type() ==
-          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-        os << "    auto* m = add_" << field->field->name() << "();\n";
-        os << "    if (absl::Status s = m->CloneFrom(v.Msg()); !s.ok()) return "
-              "s;\n";
+  if (IsRosFrontend()) {
+    for (auto& field : fields_) {
+      if (field->field->is_repeated()) {
+        os << "  " << field->member_name << ".Clear();\n";
+        if (UsesArrayFacade(field->field)) {
+          const int array_size = GetArraySize(field->field);
+          if (field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+            os << "  for (size_t i = 0; i < static_cast<size_t>(" << array_size
+               << "); i++) {\n";
+            os << "    if (!other." << field->member_name << "[i].empty()) {\n";
+            os << "      if (absl::Status s = " << field->member_name
+               << "[i].Mutable()->CloneFrom(other." << field->member_name
+               << ".Get(i)); !s.ok()) return s;\n";
+            os << "    }\n";
+            os << "  }\n";
+          } else if (field->field->type() ==
+                         google::protobuf::FieldDescriptor::TYPE_STRING ||
+                     field->field->type() ==
+                         google::protobuf::FieldDescriptor::TYPE_BYTES) {
+            os << "  for (size_t i = 0; i < static_cast<size_t>(" << array_size
+               << "); i++) {\n";
+            os << "    " << field->member_name << ".Set(i, other."
+               << field->member_name << ".Get(i));\n";
+            os << "  }\n";
+          } else {
+            os << "  for (size_t i = 0; i < static_cast<size_t>(" << array_size
+               << "); i++) {\n";
+            os << "    " << field->member_name << ".Set(i, other."
+               << field->member_name << ".Get(i));\n";
+            os << "  }\n";
+          }
+        } else if (field->field->type() ==
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+          os << "  for (auto& v : other." << field->member_name << ") {\n";
+          os << "    auto* m = " << field->member_name << ".Add();\n";
+          os << "    if (absl::Status s = m->CloneFrom(v.Msg()); !s.ok()) return "
+                "s;\n";
+          os << "  }\n";
+        } else {
+          os << "  for (auto& v : other." << field->member_name << ") {\n";
+          os << "    " << field->member_name << ".Add(v);\n";
+          os << "  }\n";
+        }
+      } else if (field->field->type() ==
+                 google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        if (IsRosIntrinsic(field->field)) {
+          os << "    " << field->member_name << ".Set(other."
+             << field->member_name << ".Get());\n";
+        } else {
+          os << "    if (absl::Status s = " << field->member_name
+             << ".Mutable()->CloneFrom(other." << field->member_name
+             << ".Get()); !s.ok()) return s;\n";
+        }
+        os << "  } else {\n";
+        os << "    " << field->member_name << ".Clear();\n";
+        os << "  }\n";
+      } else if (field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_STRING ||
+                 field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_BYTES) {
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        os << "    " << field->member_name << ".Set(other."
+           << field->member_name << ".Get());\n";
+        os << "  } else {\n";
+        os << "    " << field->member_name << ".Clear();\n";
+        os << "  }\n";
       } else {
-        os << "    add_" << field->field->name() << "(v);\n";
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        os << "    " << field->member_name << ".Set(other."
+           << field->member_name << ".Get());\n";
+        os << "  } else {\n";
+        os << "    " << field->member_name << ".Clear();\n";
+        os << "  }\n";
       }
-      os << "  }\n";
-
-    } else {
-      os << "  if (other." << field->member_name << ".IsPresent()) {\n";
-      if (field->field->type() ==
-          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-        os << "    auto* m = mutable_" << field->field->name() << "();\n";
-        os << "    if (absl::Status s = m->CloneFrom(other."
-           << field->field->name() << "()); !s.ok()) return s;\n";
-      } else {
-        os << "    set_" << field->field->name() << "(other."
-           << field->field->name() << "());\n";
-      }
-      os << "  }\n";
     }
-  }
-  if (!unions_.empty()) {
-    for (auto& [oneof, u] : unions_) {
-      os << "  switch (other." << u->member_name << ".Discriminator()) {\n";
-      for (size_t i = 0; i < u->members.size(); i++) {
-        auto& field = u->members[i];
-        os << "  case " << field->field->number() << ":\n";
-        os << "    if (absl::Status s = " << u->member_name
-           << ".template CloneFrom<" << i << ">(other." << field->field->name()
-           << "()); !s.ok()) return s;\n";
+    if (!unions_.empty()) {
+      for (auto& [oneof, u] : unions_) {
+        os << "  switch (other." << u->member_name << ".Discriminator()) {\n";
+        for (size_t i = 0; i < u->members.size(); i++) {
+          auto& field = u->members[i];
+          os << "  case " << field->field->number() << ":\n";
+          if (field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+            os << "    if (absl::Status s = " << u->member_name
+               << ".template CloneFrom<" << i << ">(other." << u->member_name
+               << ".template GetReference<" << i << ", "
+               << MessageName(field->field->message_type()) << ">()); !s.ok()) "
+                  "return s;\n";
+          } else {
+            os << "    if (absl::Status s = " << u->member_name
+               << ".template CloneFrom<" << i << ">(other." << u->member_name
+               << ".template GetValue<" << i << ", " << field->c_type
+               << ">()); !s.ok()) return s;\n";
+          }
+          os << "    break;\n";
+        }
+        os << "  default:\n";
+        for (size_t i = 0; i < u->members.size(); i++) {
+          os << "    " << u->member_name << ".Clear<" << i << ">();\n";
+        }
         os << "    break;\n";
+        os << "  }\n";
       }
-      os << "  }\n";
+    }
+  } else {
+    for (auto& field : fields_) {
+      if (field->field->is_repeated()) {
+        os << "  for (auto& v : other." << field->field->name() << "()) {\n";
+        if (field->field->type() ==
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+          os << "    auto* m = add_" << field->field->name() << "();\n";
+          os << "    if (absl::Status s = m->CloneFrom(v.Msg()); !s.ok()) return "
+                "s;\n";
+        } else {
+          os << "    add_" << field->field->name() << "(v);\n";
+        }
+        os << "  }\n";
+
+      } else {
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        if (field->field->type() ==
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+          os << "    auto* m = mutable_" << field->field->name() << "();\n";
+          os << "    if (absl::Status s = m->CloneFrom(other."
+             << field->field->name() << "()); !s.ok()) return s;\n";
+        } else {
+          os << "    set_" << field->field->name() << "(other."
+             << field->field->name() << "());\n";
+        }
+        os << "  }\n";
+      }
+    }
+    if (!unions_.empty()) {
+      for (auto& [oneof, u] : unions_) {
+        os << "  switch (other." << u->member_name << ".Discriminator()) {\n";
+        for (size_t i = 0; i < u->members.size(); i++) {
+          auto& field = u->members[i];
+          os << "  case " << field->field->number() << ":\n";
+          os << "    if (absl::Status s = " << u->member_name
+             << ".template CloneFrom<" << i << ">(other." << field->field->name()
+             << "()); !s.ok()) return s;\n";
+          os << "    break;\n";
+        }
+        os << "  }\n";
+      }
     }
   }
   os << "  return absl::OkStatus();\n";
@@ -1689,7 +2243,13 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "  switch (number) {\n";
   for (auto& field : fields_) {
     os << "  case " << field->field->number() << ":\n";
-    if (field->field->is_repeated()) {
+    if (IsRosFrontend()) {
+      if (field->field->is_repeated()) {
+        os << "    return m->" << field->member_name << ".Size() > 0;\n";
+      } else {
+        os << "    return m->" << field->member_name << ".IsPresent();\n";
+      }
+    } else if (field->field->is_repeated()) {
       os << "    return m->" << field->field->name() << "_size() > 0;\n";
     } else {
       os << "    return m->has_" << field->field->name() << "();\n";
@@ -1699,8 +2259,13 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
     for (size_t i = 0; i < u->members.size(); i++) {
       auto& field = u->members[i];
       os << "  case " << field->field->number() << ":\n";
-      os << "    return m->" << oneof->name()
-         << "_case() == " << field->field->number() << ";\n";
+      if (IsRosFrontend()) {
+        os << "    return m->" << u->member_name << ".Discriminator() == "
+           << field->field->number() << ";\n";
+      } else {
+        os << "    return m->" << oneof->name()
+           << "_case() == " << field->field->number() << ";\n";
+      }
     }
   }
   os << "  }\n";

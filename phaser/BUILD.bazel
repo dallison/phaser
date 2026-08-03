@@ -1,7 +1,20 @@
+load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("//phaser:copts.bzl", "PHASER_COPTS")
 
 package(default_visibility = ["//visibility:public"])
+
+proto_library(
+    name = "options_proto",
+    srcs = ["options.proto"],
+    deps = ["@com_google_protobuf//:descriptor_proto"],
+)
+
+cc_proto_library(
+    name = "options_cc_proto",
+    deps = [":options_proto"],
+)
 
 exports_files(["valgrind.supp"])
 
@@ -47,6 +60,41 @@ cc_test(
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:foo_active_message_phaser",
         "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "ros_compile_test",
+    srcs = ["ros_compile_test.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_compile_cc_proto",
+        "//phaser/testdata:ros_compile_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "ros_intrinsics_test",
+    srcs = ["ros_intrinsics_test.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_intrinsics_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "ros_native_frontend_compatibility_test",
+    srcs = ["ros_native_frontend_compatibility_test.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_intrinsics_phaser",
+        "//phaser/testdata:ros_intrinsics_protobuf_phaser",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

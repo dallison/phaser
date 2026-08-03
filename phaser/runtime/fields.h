@@ -9,8 +9,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <cstring>
+#include <new>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -86,6 +89,12 @@ class Field {
   int GetIndent() const { return indent_; }
 
  protected:
+  void ResetFieldCache() {
+    cached_offset_ = 0xffffffff;
+    cached_field_id_ = -1;
+  }
+
+ protected:
   int id_ = 0;
   int number_ = 0;
   mutable ::toolbelt::BufferOffset cached_offset_ = 0xffffffff;
@@ -102,6 +111,28 @@ class Field {
         : Field(id, number),                                                  \
           source_offset_(boff),                                               \
           relative_binary_offset_(offset) {}                                  \
+    cname##Field(const cname##Field&) = default;                              \
+    cname##Field(cname##Field&&) = default;                                   \
+    cname##Field& operator=(const cname##Field& other) {                      \
+      if (this == &other) {                                                   \
+        return *this;                                                         \
+      }                                                                       \
+      if (other.IsPresent()) {                                                \
+        Set(other.Get());                                                     \
+      } else {                                                                \
+        Clear();                                                              \
+      }                                                                       \
+      ResetFieldCache();                                                      \
+      return *this;                                                           \
+    }                                                                         \
+    cname##Field& operator=(cname##Field&& other) noexcept {                  \
+      return operator=(static_cast<const cname##Field&>(other));              \
+    }                                                                         \
+    operator type() const { return Get(); }                                   \
+    cname##Field& operator=(type v) {                                         \
+      Set(v);                                                                 \
+      return *this;                                                           \
+    }                                                                         \
     type Get() const {                                                        \
       int32_t offset = FindFieldOffset(source_offset_);                       \
       if (offset < 0) {                                                       \
@@ -203,6 +234,33 @@ class EnumField : public Field {
       : Field(id, number),
         source_offset_(boff),
         relative_binary_offset_(offset) {}
+  EnumField(const EnumField&) = default;
+  EnumField(EnumField&&) = default;
+  EnumField& operator=(const EnumField& other) {
+    if (this == &other) {
+      return *this;
+    }
+    if (other.IsPresent()) {
+      Set(other.Get());
+    } else {
+      Clear();
+    }
+    ResetFieldCache();
+    return *this;
+  }
+  EnumField& operator=(EnumField&& other) noexcept {
+    return operator=(static_cast<const EnumField&>(other));
+  }
+  operator Enum() const { return Get(); }
+  operator T() const { return GetUnderlying(); }
+  EnumField& operator=(Enum e) {
+    Set(e);
+    return *this;
+  }
+  EnumField& operator=(T e) {
+    Set(e);
+    return *this;
+  }
 
   Enum Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
@@ -298,6 +356,38 @@ class StringField : public Field {
       : Field(id, number),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
+  StringField(const StringField&) = default;
+  StringField(StringField&&) = default;
+  StringField& operator=(const StringField& other) {
+    if (this == &other) {
+      return *this;
+    }
+    if (other.IsPresent()) {
+      Set(other.Get());
+    } else {
+      Clear();
+    }
+    ResetFieldCache();
+    return *this;
+  }
+  StringField& operator=(StringField&& other) noexcept {
+    return operator=(static_cast<const StringField&>(other));
+  }
+  operator std::string_view() const { return Get(); }
+  StringField& operator=(const std::string& s) {
+    Set(s);
+    return *this;
+  }
+  StringField& operator=(std::string_view s) {
+    Set(s);
+    return *this;
+  }
+  StringField& operator=(const char* s) {
+    ::toolbelt::PayloadBuffer::SetString(
+        GetBufferAddr(), std::string_view(s, std::strlen(s)),
+        GetMessageBinaryStart() + relative_binary_offset_);
+    return *this;
+  }
 
   std::string_view Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
@@ -399,7 +489,7 @@ class StringField : public Field {
   }
 
  private:
-  template <int N>
+  template <size_t N>
   friend class StringArrayField;
 
   const std::shared_ptr<MessageRuntime>& GetRuntime() const {
@@ -430,18 +520,56 @@ class NonEmbeddedStringField {
   explicit NonEmbeddedStringField(const Message* msg,
                                   uint32_t absolute_binary_offset)
       : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
+  NonEmbeddedStringField(const NonEmbeddedStringField&) = default;
+  NonEmbeddedStringField(NonEmbeddedStringField&&) = default;
+  NonEmbeddedStringField& operator=(const NonEmbeddedStringField& other) {
+    if (this == &other) {
+      return *this;
+    }
+    if (other.IsPlaceholder()) {
+      return *this;
+    }
+    Set(other.Get());
+    return *this;
+  }
+  NonEmbeddedStringField& operator=(NonEmbeddedStringField&& other) noexcept =
+      default;
+  operator std::string_view() const { return Get(); }
+  NonEmbeddedStringField& operator=(const std::string& s) {
+    Set(s);
+    return *this;
+  }
+  NonEmbeddedStringField& operator=(std::string_view s) {
+    Set(s);
+    return *this;
+  }
+  NonEmbeddedStringField& operator=(const char* s) {
+    ::toolbelt::PayloadBuffer::SetString(
+        GetBufferAddr(), std::string_view(s, std::strlen(s)),
+        absolute_binary_offset_);
+    return *this;
+  }
 
   std::string_view Get() const {
+    if (IsPlaceholder()) {
+      return {};
+    }
     return GetBuffer()->GetStringView(absolute_binary_offset_);
   }
 
   template <typename Str>
   void Set(Str s) {
+    if (IsPlaceholder()) {
+      return;
+    }
     ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
                                          absolute_binary_offset_);
   }
 
   void Clear() {
+    if (IsPlaceholder()) {
+      return;
+    }
     ::toolbelt::PayloadBuffer::ClearString(GetBufferAddr(),
                                            absolute_binary_offset_);
   }
@@ -454,10 +582,16 @@ class NonEmbeddedStringField {
   }
 
   size_t size() const {
+    if (IsPlaceholder()) {
+      return 0;
+    }
     return GetBuffer()->StringSize(absolute_binary_offset_);
   }
 
   const char* data() const {
+    if (IsPlaceholder()) {
+      return "";
+    }
     return GetBuffer()->StringData(absolute_binary_offset_);
   }
   bool empty() const { return size() == 0; }
@@ -477,9 +611,9 @@ class NonEmbeddedStringField {
     return &msg_->runtime->pb;
   }
 
-  const Message* msg_;
+  const Message* msg_ = nullptr;
   ::toolbelt::BufferOffset
-      absolute_binary_offset_;  // Offset into
+      absolute_binary_offset_ = 0;  // Offset into
                                 // ::toolbelt::PayloadBuffer of
                                 // toolbelt::StringHeader
 };
@@ -508,6 +642,31 @@ class IndirectMessageField : public Field {
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset),
         msg_(InternalDefault{}) {}
+  IndirectMessageField(const IndirectMessageField&) = default;
+  IndirectMessageField(IndirectMessageField&&) = default;
+  IndirectMessageField& operator=(const IndirectMessageField& other) {
+    if (this == &other) {
+      return *this;
+    }
+    if (other.IsPresent()) {
+      if (absl::Status s = Mutable()->CloneFrom(other.Get()); !s.ok()) {
+        return *this;
+      }
+    } else {
+      Clear();
+    }
+    ResetFieldCache();
+    return *this;
+  }
+  IndirectMessageField& operator=(IndirectMessageField&& other) noexcept {
+    return operator=(static_cast<const IndirectMessageField&>(other));
+  }
+  operator const MessageType&() const { return Get(); }
+  const MessageType& operator*() const { return Get(); }
+  const MessageType* operator->() const { return &Get(); }
+  operator MessageType&() { return *Mutable(); }
+  MessageType& operator*() { return *Mutable(); }
+  MessageType* operator->() { return Mutable(); }
 
   const MessageType& Msg() const { return msg_; }
   MessageType& MutableMsg() { return msg_; }
@@ -588,7 +747,7 @@ class IndirectMessageField : public Field {
   }
 
   bool operator==(const IndirectMessageField<MessageType>& other) const {
-    return msg_ != other.msg_;
+    return Get() == other.Get();
   }
   bool operator!=(const IndirectMessageField<MessageType>& other) const {
     return !(*this == other);
@@ -657,6 +816,12 @@ class IndirectMessageField : public Field {
     return msg_.Deserialize(sub_buffer);
   }
 
+  void SyncToPayload() const {
+    if (IsPresent()) {
+      Get().SyncToPayload();
+    }
+  }
+
   void Indent(int indent) const {
     Field::Indent(indent);
     msg_.Indent(indent);
@@ -696,17 +861,40 @@ class MessageObject {
   explicit MessageObject(std::shared_ptr<MessageRuntime> runtime,
                          uint32_t absolute_binary_offset)
       : msg_(runtime, absolute_binary_offset) {}
+  MessageObject(const MessageObject& other)
+      : msg_(other.msg_.runtime, other.msg_.absolute_binary_offset),
+        indent_(other.indent_) {}
+  MessageObject(MessageObject&& other) noexcept
+      : msg_(other.msg_.runtime, other.msg_.absolute_binary_offset),
+        indent_(other.indent_) {}
+  MessageObject& operator=(const MessageObject& other) {
+    if (this == &other) {
+      return *this;
+    }
+    this->~MessageObject();
+    new (this) MessageObject(other);
+    return *this;
+  }
+  MessageObject& operator=(MessageObject&& other) noexcept {
+    if (this == &other) {
+      return *this;
+    }
+    this->~MessageObject();
+    new (this) MessageObject(std::move(other));
+    return *this;
+  }
 
   const MessageType& Get() const { return msg_; }
 
   const MessageType& operator*() const { return msg_; }
   MessageType& operator*() { return msg_; }
+  const MessageType* operator->() const { return &msg_; }
   MessageType* operator->() { return &msg_; }
 
   MessageType* Mutable() { return &msg_; }
 
   bool operator==(const MessageObject<MessageType>& other) const {
-    return msg_ != other.msg_;
+    return msg_ == other.msg_;
   }
   bool operator!=(const MessageObject<MessageType>& other) const {
     return !(*this == other);
