@@ -70,6 +70,7 @@ cc_test(
     name = "ros_wireformat_test",
     srcs = ["ros_wireformat_test.cc"],
     copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
         "@com_google_googletest//:gtest_main",

@@ -67,6 +67,7 @@ cc_test(
     name = "ros_compile_test",
     srcs = ["ros_compile_test.cc"],
     copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
     deps = [
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_compile_cc_proto",
@@ -79,6 +80,7 @@ cc_test(
     name = "ros_intrinsics_test",
     srcs = ["ros_intrinsics_test.cc"],
     copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
     deps = [
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_intrinsics_phaser",
@@ -90,6 +92,7 @@ cc_test(
     name = "ros_native_frontend_compatibility_test",
     srcs = ["ros_native_frontend_compatibility_test.cc"],
     copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
     deps = [
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_intrinsics_phaser",
@@ -102,6 +105,7 @@ cc_test(
     name = "ros_wire_conversion_test",
     srcs = ["ros_wire_conversion_test.cc"],
     copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
     deps = [
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_compile_cc_proto",

@@ -165,6 +165,7 @@ sh_test(
     data = [
         ":ros_intrinsics_phaser_wire_tool",
         ":ros_intrinsics_protobuf_wire_tool",
+        "//phaser:valgrind.supp",
     ],
 )
 
@@ -178,6 +179,7 @@ sh_test(
     ],
     data = [
         "InvalidArraySize.proto",
+        "//phaser:valgrind.supp",
         "//phaser:options_proto",
         "//phaser/compiler:phaser",
         "@com_google_protobuf//:protoc",
@@ -195,6 +197,7 @@ sh_test(
     ],
     data = [
         "InvalidRosIntrinsic.proto",
+        "//phaser:valgrind.supp",
         "//phaser/compiler:phaser",
         "@com_google_protobuf//:protoc",
         "@com_google_protobuf//:well_known_protos",
