@@ -15,8 +15,204 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "toolbelt/payload_buffer.h"
 
 namespace phaser {
+
+enum class MessageWireFormat {
+  kProtobuf,
+  kPhaser,
+  kUnknown,
+  kAmbiguous,
+};
+
+namespace internal {
+
+inline uint32_t LoadWireUint32(absl::Span<const char> data, size_t offset) {
+  uint32_t value = 0;
+  for (size_t i = 0; i < sizeof(value); ++i) {
+    value |= static_cast<uint32_t>(
+                 static_cast<unsigned char>(data[offset + i]))
+             << static_cast<unsigned>(i * 8);
+  }
+  return value;
+}
+
+inline bool ConsumeWireVarint(absl::Span<const char> data, size_t* offset,
+                              size_t max_bytes, uint8_t max_last_byte,
+                              uint64_t* value) {
+  uint64_t result = 0;
+  for (size_t i = 0; i < max_bytes; ++i) {
+    if (*offset >= data.size()) {
+      return false;
+    }
+    const uint8_t byte =
+        static_cast<uint8_t>(static_cast<unsigned char>(data[(*offset)++]));
+    if (i + 1 == max_bytes &&
+        ((byte & 0x80U) != 0 || (byte & 0x7fU) > max_last_byte)) {
+      return false;
+    }
+    result |= static_cast<uint64_t>(byte & 0x7fU)
+              << static_cast<unsigned>(i * 7);
+    if ((byte & 0x80U) == 0) {
+      *value = result;
+      return true;
+    }
+  }
+  return false;
+}
+
+inline bool ConsumeProtobufFields(absl::Span<const char> data, size_t* offset,
+                                  uint32_t expected_end_group = 0,
+                                  size_t depth = 0) {
+  constexpr uint32_t kMaxFieldNumber = (uint32_t{1} << 29) - 1;
+  constexpr size_t kMaxGroupDepth = 100;
+  if (depth > kMaxGroupDepth) {
+    return false;
+  }
+  while (*offset < data.size()) {
+    uint64_t tag = 0;
+    if (!ConsumeWireVarint(data, offset, 5, 0x0f, &tag)) {
+      return false;
+    }
+    const uint32_t field_number = static_cast<uint32_t>(tag >> 3);
+    const uint32_t wire_type = static_cast<uint32_t>(tag & 7);
+    if (field_number == 0 || field_number > kMaxFieldNumber) {
+      return false;
+    }
+    if (wire_type == 4) {
+      return expected_end_group != 0 && field_number == expected_end_group;
+    }
+
+    uint64_t value = 0;
+    switch (wire_type) {
+      case 0:
+        if (!ConsumeWireVarint(data, offset, 10, 1, &value)) {
+          return false;
+        }
+        break;
+      case 1:
+        if (data.size() - *offset < sizeof(uint64_t)) {
+          return false;
+        }
+        *offset += sizeof(uint64_t);
+        break;
+      case 2:
+        if (!ConsumeWireVarint(data, offset, 10, 1, &value) ||
+            value > data.size() - *offset) {
+          return false;
+        }
+        *offset += static_cast<size_t>(value);
+        break;
+      case 3:
+        if (!ConsumeProtobufFields(data, offset, field_number, depth + 1)) {
+          return false;
+        }
+        break;
+      case 5:
+        if (data.size() - *offset < sizeof(uint32_t)) {
+          return false;
+        }
+        *offset += sizeof(uint32_t);
+        break;
+      default:
+        return false;
+    }
+  }
+  return expected_end_group == 0;
+}
+
+inline bool IsStructurallyValidProtobuf(absl::Span<const char> data) {
+  size_t offset = 0;
+  return ConsumeProtobufFields(data, &offset) && offset == data.size();
+}
+
+inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
+  constexpr size_t kMagicOffset =
+      offsetof(::toolbelt::PayloadBuffer, magic);
+  constexpr size_t kMessageOffset =
+      offsetof(::toolbelt::PayloadBuffer, message);
+  constexpr size_t kHwmOffset = offsetof(::toolbelt::PayloadBuffer, hwm);
+  constexpr size_t kFullSizeOffset =
+      offsetof(::toolbelt::PayloadBuffer, full_size);
+  constexpr size_t kFreeListOffset =
+      offsetof(::toolbelt::PayloadBuffer, free_list);
+  constexpr size_t kMetadataOffset =
+      offsetof(::toolbelt::PayloadBuffer, metadata);
+  constexpr size_t kBitmapsOffset =
+      offsetof(::toolbelt::PayloadBuffer, bitmaps);
+
+  if (data.size() < sizeof(::toolbelt::PayloadBuffer)) {
+    return false;
+  }
+  const uint32_t magic = LoadWireUint32(data, kMagicOffset);
+  const uint32_t base_magic = magic & ::toolbelt::kBitMapMask;
+  const bool movable = base_magic == ::toolbelt::kMovableBufferMagic;
+  if (!movable && base_magic != ::toolbelt::kFixedBufferMagic) {
+    return false;
+  }
+
+  const size_t minimum_header =
+      sizeof(::toolbelt::PayloadBuffer) +
+      (movable ? sizeof(::toolbelt::Resizer*) : 0);
+  const uint32_t message = LoadWireUint32(data, kMessageOffset);
+  const uint32_t hwm = LoadWireUint32(data, kHwmOffset);
+  const uint32_t full_size = LoadWireUint32(data, kFullSizeOffset);
+  const uint32_t free_list = LoadWireUint32(data, kFreeListOffset);
+  const uint32_t metadata = LoadWireUint32(data, kMetadataOffset);
+
+  if (full_size < minimum_header || hwm < minimum_header ||
+      hwm > full_size || hwm > data.size() || message < minimum_header ||
+      (message & 7U) != 0 || message > hwm - sizeof(uint32_t)) {
+    return false;
+  }
+  if (free_list != 0 &&
+      (free_list < minimum_header ||
+       free_list > full_size - sizeof(::toolbelt::FreeBlockHeader))) {
+    return false;
+  }
+  if (metadata != 0 &&
+      (metadata < minimum_header || metadata >= hwm)) {
+    return false;
+  }
+  for (size_t i = 0; i < ::toolbelt::kNumBitmapRuns; ++i) {
+    const uint32_t bitmap =
+        LoadWireUint32(data, kBitmapsOffset + i * sizeof(uint32_t));
+    if (bitmap != 0 && (bitmap < minimum_header || bitmap >= hwm)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace internal
+
+// Infers a format from its complete byte representation. Both formats are
+// validated structurally; the magic prefix alone is deliberately insufficient
+// because it can also begin a valid protobuf field tag.
+inline MessageWireFormat InferMessageWireFormat(
+    absl::Span<const char> data) {
+  const bool phaser = internal::IsStructurallyValidPhaser(data);
+  const bool protobuf = internal::IsStructurallyValidProtobuf(data);
+  if (phaser && protobuf) {
+    return MessageWireFormat::kAmbiguous;
+  }
+  if (phaser) {
+    return MessageWireFormat::kPhaser;
+  }
+  if (protobuf) {
+    return MessageWireFormat::kProtobuf;
+  }
+  return MessageWireFormat::kUnknown;
+}
+
+inline MessageWireFormat InferMessageWireFormat(std::string_view data) {
+  return InferMessageWireFormat(absl::Span<const char>(data.data(), data.size()));
+}
+
+inline MessageWireFormat InferMessageWireFormat(const std::string& data) {
+  return InferMessageWireFormat(std::string_view(data));
+}
 
 enum class WireType {
   kVarint = 0,

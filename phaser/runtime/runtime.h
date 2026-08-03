@@ -11,6 +11,7 @@
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/phaser_bank.h"
+#include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/union.h"
 #include "phaser/runtime/vectors.h"
 #include "toolbelt/hexdump.h"

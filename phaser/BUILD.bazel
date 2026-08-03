@@ -99,6 +99,21 @@ cc_test(
 )
 
 cc_test(
+    name = "ros_wire_conversion_test",
+    srcs = ["ros_wire_conversion_test.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_compile_cc_proto",
+        "//phaser/testdata:ros_compile_phaser",
+        "//phaser/testdata:ros_intrinsics_phaser",
+        "//phaser/testdata:ros_intrinsics_protobuf_phaser",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "all_types_test",
     srcs = ["all_types_test.cc"],
     copts = PHASER_COPTS,

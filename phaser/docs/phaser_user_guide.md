@@ -379,6 +379,59 @@ msg.command.reset();
 throws `std::bad_variant_access` for an inactive arm. Switching arms clears and
 releases any string or message storage owned by the previous arm.
 
+### ROS1 wire conversion
+Every generated message supports one-way conversion to ROS1 serialization,
+regardless of whether its C++ frontend is protobuf-style or ROS-style:
+
+```c++
+size_t ROSSerializedSize() const;
+absl::Status SerializeToROS(::phaser::ROSBuffer& output) const;
+absl::Status SerializeToROSArray(void* output, size_t capacity) const;
+absl::Status SerializeToROSString(std::string* output) const;
+
+static absl::Status ProtobufToROS(
+    std::string_view protobuf, ::phaser::ROSBuffer& output);
+static absl::Status PhaserToROS(
+    absl::Span<const char> phaser, ::phaser::ROSBuffer& output);
+static absl::Status ConvertToROS(
+    absl::Span<const char> input, ::phaser::ROSBuffer& output);
+```
+
+`SerializeToROS` reads a live message. `ProtobufToROS` parses protobuf wire
+bytes with the generated Phaser parser and then writes ROS bytes.
+`PhaserToROS` attaches a read-only message to a valid native Phaser payload for
+the duration of the conversion. `ConvertToROS` calls
+`InferMessageWireFormat` and selects either input path. Inference validates the
+complete generic protobuf field structure and the Phaser payload header rather
+than checking only the four-byte magic: those magic bytes can also begin a
+valid protobuf tag. The result enum can report `kProtobuf`, `kPhaser`,
+`kUnknown`, or `kAmbiguous`; automatic conversion rejects the latter two.
+There is intentionally no ROS-to-protobuf or ROS-to-Phaser conversion.
+
+`ROSBuffer` is declared in `phaser/runtime/ros_wireformat.h`. Its default
+constructor owns a dynamically growing allocation; constructing it with a
+pointer and size wraps fixed caller-owned output memory. Writes return an
+`absl::Status`, including insufficient-capacity and malformed-protobuf errors.
+
+The generated layout follows ROS1 serialization rules:
+
+- signed/unsigned integer, floating-point, boolean, and enum values are written
+  little-endian (`bool` is one byte and enums are `int32`);
+- strings and bytes have a `uint32` byte-length prefix;
+- variable repeated fields have a `uint32` element count;
+- fields annotated with `phaser.array_size` are fixed arrays and omit the
+  element count;
+- nested messages are written inline in declaration order;
+- `Timestamp`, `Duration`, and `Header` use the ROS1 time, duration, and header
+  layouts described above.
+
+ROS1 has no standard union encoding. Phaser follows Sato's convention for a
+protobuf `oneof`: only the active arm is written, with no discriminator, and an
+unset `oneof` writes no bytes. The result is not self-describing; the receiver
+must know which arm is active through an external contract. A populated
+`google.protobuf.Any` is rejected because its dynamic type has no static ROS1
+layout.
+
 Both frontends use the same native binary metadata and protobuf wire
 serialization. A protobuf-style target and a ROS-style target generated from
 the same schema can therefore exchange native Phaser buffers and protobuf wire
@@ -796,9 +849,8 @@ The `MutableAny` function creates a mutable message of type `T` in the `value` f
 the `type_url`.  You can then create the message as you would do normally.
 
 ## Serialization and deserialization
-Phaser doesn't do serialization, but protobuf does.  In order to give you a way to convert
-from Phaser wire-format to protobuf, some transcoding serialization functions are provided.
-These are:
+Phaser's native format does not require serialization. To interoperate with
+protobuf, generated messages provide these protobuf transcoding functions:
 
 ```c++
   size_t SerializedSize() const;

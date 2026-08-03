@@ -158,6 +158,29 @@ functions taking values, const references, or mutable references to accept the
 generated fields unchanged. Add the corresponding ROS C++ targets through the
 `cc_deps` attribute.
 
+Every generated message, in either frontend style, can also produce ROS1 wire
+bytes:
+
+```c++
+::phaser::ROSBuffer ros_output;
+absl::Status status = msg.SerializeToROS(ros_output);
+
+// Convert serialized protobuf or a native Phaser payload without first
+// constructing the user-facing message.
+status = Foo::ProtobufToROS(protobuf_bytes, ros_output);
+status = Foo::PhaserToROS(phaser_bytes, ros_output);
+status = Foo::ConvertToROS(input_bytes, ros_output);  // infers input format
+```
+
+`ROSBuffer` can own a growing allocation or wrap caller-provided output memory.
+ROS output uses little-endian ROS1 layout, is one-way only, and writes an active
+`oneof` arm without a discriminator (matching Sato's convention). That `oneof`
+encoding is custom and requires the receiver to know which arm is active.
+`InferMessageWireFormat` validates both the protobuf structure and Phaser
+payload header; magic alone is not enough because the same four-byte prefix can
+begin a valid protobuf tag. Malformed or genuinely ambiguous input is reported
+explicitly.
+
 ### 2. Create and use a message
 
 Creating a message looks just like protobuf — the binary data is backed by a dynamic

@@ -112,6 +112,17 @@ class MessageGenerator {
   void GenerateSerializedSize(std::ostream& os, bool decl);
   void GenerateSerializer(std::ostream& os, bool decl);
   void GenerateDeserializer(std::ostream& os, bool decl);
+  void GenerateROSSerialization(std::ostream& os, bool decl);
+  void GenerateROSFieldSize(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& value_expression, const std::string& indent);
+  void GenerateROSFieldWrite(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& value_expression, const std::string& indent);
+  std::string ROSFieldValueExpression(
+      const std::shared_ptr<FieldInfo>& field,
+      const std::shared_ptr<UnionInfo>& union_field = nullptr,
+      int union_index = -1) const;
 
   void GenerateProtobufSerialization(std::ostream& os);
   void GenerateIndent(std::ostream& os);

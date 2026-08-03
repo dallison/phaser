@@ -15,6 +15,7 @@
 
 using ProtoBuffer = phaser::ProtoBuffer;
 using WireType = phaser::WireType;
+using MessageWireFormat = phaser::MessageWireFormat;
 
 TEST(Wireformat, Sizes) {
   ASSERT_EQ(1, (ProtoBuffer::VarintSize<int32_t, false>(1)));
@@ -31,6 +32,31 @@ TEST(Wireformat, Sizes) {
   ASSERT_EQ(3, ProtoBuffer::LengthDelimitedSize(1, 1));
 
   ASSERT_EQ(7, ProtoBuffer::StringSize(1, "hello"));
+}
+
+TEST(Wireformat, InfersStructurallyValidProtobuf) {
+  EXPECT_EQ(MessageWireFormat::kProtobuf,
+            phaser::InferMessageWireFormat(std::string_view()));
+
+  const std::string ordinary = "\x08\x96\x01";
+  EXPECT_EQ(MessageWireFormat::kProtobuf,
+            phaser::InferMessageWireFormat(ordinary));
+}
+
+TEST(Wireformat, MagicPrefixAloneDoesNotImplyPhaser) {
+  // The first four bytes are kFixedBufferMagic with the bitmap flag. Together
+  // with the fifth byte they form a valid fixed32 protobuf tag, followed by its
+  // four-byte value.
+  const std::string protobuf_with_magic_prefix(
+      "\xc5\xf1\xf6\xe5\x01\x12\x34\x56\x78", 9);
+  EXPECT_EQ(MessageWireFormat::kProtobuf,
+            phaser::InferMessageWireFormat(protobuf_with_magic_prefix));
+}
+
+TEST(Wireformat, RejectsStructurallyInvalidInput) {
+  const std::string invalid(1, '\0');
+  EXPECT_EQ(MessageWireFormat::kUnknown,
+            phaser::InferMessageWireFormat(invalid));
 }
 
 TEST(Wireformat, ZigZagKnownValues) {
