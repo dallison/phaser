@@ -17,10 +17,166 @@
 #include <utility>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 
 namespace phaser {
+
+// A non-owning sequential reader for ROS1 wire data.
+class ROSReader {
+ public:
+  explicit ROSReader(absl::Span<const char> data) : data_(data) {}
+  explicit ROSReader(std::string_view data)
+      : data_(data.data(), data.size()) {}
+  explicit ROSReader(const std::string& data)
+      : ROSReader(std::string_view(data)) {}
+  ROSReader(std::string&&) = delete;
+
+  size_t Position() const { return position_; }
+  size_t Remaining() const { return data_.size() - position_; }
+  bool Eof() const { return position_ == data_.size(); }
+
+  template <typename T>
+  absl::StatusOr<T> Read() {
+    static_assert(std::is_arithmetic_v<T>,
+                  "ROSReader::Read only supports arithmetic types");
+    if (Remaining() < sizeof(T)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
+          sizeof(T), Remaining()));
+    }
+
+    if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
+      const uint8_t value = static_cast<uint8_t>(
+          static_cast<unsigned char>(data_[position_++]));
+      if (value > 1) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Invalid ROS bool value %d at byte %d", value, position_ - 1));
+      }
+      return value != 0;
+    } else if constexpr (std::is_integral_v<T>) {
+      using U = std::make_unsigned_t<T>;
+      U value = 0;
+      for (size_t i = 0; i < sizeof(U); ++i) {
+        const U byte = static_cast<U>(
+            static_cast<unsigned char>(data_[position_++]));
+        value |= static_cast<U>(static_cast<uint64_t>(byte)
+                                << static_cast<unsigned>(i * 8));
+      }
+      T result = 0;
+      memcpy(&result, &value, sizeof(result));
+      return result;
+    } else {
+      using U = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t,
+                                   uint64_t>;
+      static_assert(sizeof(U) == sizeof(T));
+      U bits = 0;
+      for (size_t i = 0; i < sizeof(U); ++i) {
+        const U byte = static_cast<U>(
+            static_cast<unsigned char>(data_[position_++]));
+        bits |= static_cast<U>(static_cast<uint64_t>(byte)
+                               << static_cast<unsigned>(i * 8));
+      }
+      T value = 0;
+      memcpy(&value, &bits, sizeof(value));
+      return value;
+    }
+  }
+
+  template <typename T>
+  absl::Status ReadArray(absl::Span<T> values) {
+    static_assert(std::is_arithmetic_v<T> || std::is_enum_v<T>,
+                  "ROSReader::ReadArray only supports primitive types");
+    constexpr size_t kWireElementSize =
+        std::is_enum_v<T> ? sizeof(int32_t) : sizeof(T);
+    if constexpr (std::is_enum_v<T>) {
+      static_assert(sizeof(T) == sizeof(int32_t),
+                    "ROS enum storage must be 32 bits");
+    }
+    if (values.size() >
+        std::numeric_limits<size_t>::max() / kWireElementSize) {
+      return absl::InvalidArgumentError("ROS array byte size overflow");
+    }
+    const size_t byte_size = values.size() * kWireElementSize;
+    if (Remaining() < byte_size) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Truncated ROS array at byte %d: need %d bytes, have %d", position_,
+          byte_size, Remaining()));
+    }
+    if (values.empty()) {
+      return absl::OkStatus();
+    }
+
+    if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
+      static_assert(sizeof(bool) == sizeof(uint8_t));
+      for (size_t i = 0; i < values.size(); ++i) {
+        const uint8_t value = static_cast<uint8_t>(
+            static_cast<unsigned char>(data_[position_ + i]));
+        if (value > 1) {
+          return absl::InvalidArgumentError(absl::StrFormat(
+              "Invalid ROS bool value %d at byte %d", value, position_ + i));
+        }
+      }
+      for (size_t i = 0; i < values.size(); ++i) {
+        values[i] = data_[position_ + i] != 0;
+      }
+      position_ += byte_size;
+      return absl::OkStatus();
+    }
+
+    const uint16_t endian_marker = 1;
+    const bool little_endian =
+        *reinterpret_cast<const uint8_t*>(&endian_marker) == 1;
+    if (little_endian) {
+      memcpy(values.data(), data_.data() + position_, byte_size);
+      position_ += byte_size;
+      return absl::OkStatus();
+    }
+
+    if constexpr (std::is_enum_v<T>) {
+      for (T& value : values) {
+        absl::StatusOr<int32_t> decoded = Read<int32_t>();
+        if (!decoded.ok()) {
+          return decoded.status();
+        }
+        value = static_cast<T>(*decoded);
+      }
+    } else {
+      for (T& value : values) {
+        absl::StatusOr<T> decoded = Read<T>();
+        if (!decoded.ok()) {
+          return decoded.status();
+        }
+        value = *decoded;
+      }
+    }
+    return absl::OkStatus();
+  }
+
+  absl::StatusOr<std::string_view> ReadString() {
+    absl::StatusOr<uint32_t> length = Read<uint32_t>();
+    if (!length.ok()) {
+      return length.status();
+    }
+    if (*length > Remaining()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Truncated ROS string at byte %d: length %d exceeds remaining %d",
+          position_, *length, Remaining()));
+    }
+    const std::string_view value(data_.data() + position_, *length);
+    position_ += *length;
+    return value;
+  }
+
+  absl::StatusOr<uint32_t> ReadSequenceLength() {
+    return Read<uint32_t>();
+  }
+
+ private:
+  absl::Span<const char> data_;
+  size_t position_ = 0;
+};
 
 // A sequential ROS1 serialization buffer. ROS1 primitives are always encoded
 // little-endian, strings and variable-length sequences use uint32 length
@@ -84,6 +240,70 @@ class ROSBuffer {
     }
     memcpy(data_ + size_, source, length);
     size_ += length;
+    return absl::OkStatus();
+  }
+
+  absl::Status WriteZeros(size_t length) {
+    if (absl::Status status = EnsureSpace(length); !status.ok()) {
+      return status;
+    }
+    if (length != 0) {
+      memset(data_ + size_, 0, length);
+      size_ += length;
+    }
+    return absl::OkStatus();
+  }
+
+  template <typename T>
+  absl::Status WriteArray(absl::Span<const T> values) {
+    static_assert(std::is_arithmetic_v<T> || std::is_enum_v<T>,
+                  "ROSBuffer::WriteArray only supports primitive types");
+    constexpr size_t kWireElementSize =
+        std::is_enum_v<T> ? sizeof(int32_t) : sizeof(T);
+    if constexpr (std::is_enum_v<T>) {
+      static_assert(sizeof(T) == sizeof(int32_t),
+                    "ROS enum storage must be 32 bits");
+    }
+    if (values.size() >
+        std::numeric_limits<size_t>::max() / kWireElementSize) {
+      return absl::ResourceExhaustedError("ROS array byte size overflow");
+    }
+    const size_t byte_size = values.size() * kWireElementSize;
+    if (absl::Status status = EnsureSpace(byte_size); !status.ok()) {
+      return status;
+    }
+    if (values.empty()) {
+      return absl::OkStatus();
+    }
+
+    if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
+      static_assert(sizeof(bool) == sizeof(uint8_t));
+      for (bool value : values) {
+        data_[size_++] = static_cast<char>(value ? 1 : 0);
+      }
+      return absl::OkStatus();
+    }
+
+    const uint16_t endian_marker = 1;
+    const bool little_endian =
+        *reinterpret_cast<const uint8_t*>(&endian_marker) == 1;
+    if (little_endian) {
+      memcpy(data_ + size_, values.data(), byte_size);
+      size_ += byte_size;
+      return absl::OkStatus();
+    }
+
+    for (const T& value : values) {
+      absl::Status status;
+      if constexpr (std::is_enum_v<T>) {
+        status = Write(static_cast<int32_t>(value));
+      } else {
+        status = Write(value);
+      }
+      if (!status.ok()) {
+        return status;
+      }
+    }
     return absl::OkStatus();
   }
 

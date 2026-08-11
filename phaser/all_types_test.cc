@@ -779,6 +779,18 @@ TEST(AllTypesTest, WireFormatRepeatedPackedBidirectional) {
       });
 }
 
+TEST(AllTypesTest, RejectsPartialPackedFixedWidthElement) {
+  // Field 3 is repeated fixed64. A nine-byte packed body contains one complete
+  // value plus a partial value and must not be copied into an eight-byte slot.
+  std::string malformed;
+  malformed.push_back(static_cast<char>(0x1a));  // (3 << 3) | length-delimited
+  malformed.push_back(static_cast<char>(0x09));
+  malformed.append(9, '\0');
+
+  RepeatedPrimitivesPacked message;
+  EXPECT_FALSE(message.ParseFromString(malformed));
+}
+
 // Proto has [packed=false], but phaser currently emits a length-delimited
 // packed payload for scalar repeated fields. Protobuf accepts that wire; verify
 // both directions through protobuf bytes.

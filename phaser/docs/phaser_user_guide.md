@@ -380,14 +380,17 @@ throws `std::bad_variant_access` for an inactive arm. Switching arms clears and
 releases any string or message storage owned by the previous arm.
 
 ### ROS1 wire conversion
-Every generated message supports one-way conversion to ROS1 serialization,
-regardless of whether its C++ frontend is protobuf-style or ROS-style:
+Every generated message supports conversion to ROS1 serialization and decoding
+from ROS1 bytes into its native Phaser payload, regardless of whether its C++
+frontend is protobuf-style or ROS-style:
 
 ```c++
 size_t ROSSerializedSize() const;
 absl::Status SerializeToROS(::phaser::ROSBuffer& output) const;
 absl::Status SerializeToROSArray(void* output, size_t capacity) const;
 absl::Status SerializeToROSString(std::string* output) const;
+absl::Status DeserializeFromROS(::phaser::ROSReader& input);
+absl::Status ParseFromROS(absl::Span<const char> input);
 
 static absl::Status ProtobufToROS(
     std::string_view protobuf, ::phaser::ROSBuffer& output);
@@ -406,12 +409,22 @@ complete generic protobuf field structure and the Phaser payload header rather
 than checking only the four-byte magic: those magic bytes can also begin a
 valid protobuf tag. The result enum can report `kProtobuf`, `kPhaser`,
 `kUnknown`, or `kAmbiguous`; automatic conversion rejects the latter two.
-There is intentionally no ROS-to-protobuf or ROS-to-Phaser conversion.
+
+`ParseFromROS` clears the target message, decodes fields in schema order, and
+requires the complete input span to be consumed. A default-constructed target
+stores the result in its dynamically allocated native `PayloadBuffer`; a target
+created with `CreateMutable` stores it in caller-provided payload memory.
+`DeserializeFromROS` accepts an existing `ROSReader` and is used recursively for
+inline nested messages. Malformed input returns an `absl::Status` and may leave
+the target partially populated, so callers should discard or clear it after an
+error.
 
 `ROSBuffer` is declared in `phaser/runtime/ros_wireformat.h`. Its default
 constructor owns a dynamically growing allocation; constructing it with a
 pointer and size wraps fixed caller-owned output memory. Writes return an
 `absl::Status`, including insufficient-capacity and malformed-protobuf errors.
+`ROSReader` is a non-owning view over received bytes and checks every primitive,
+string length, and sequence-length read against the remaining input.
 
 The generated layout follows ROS1 serialization rules:
 
@@ -425,12 +438,12 @@ The generated layout follows ROS1 serialization rules:
 - `Timestamp`, `Duration`, and `Header` use the ROS1 time, duration, and header
   layouts described above.
 
-ROS1 has no standard union encoding. Phaser follows Sato's convention for a
-protobuf `oneof`: only the active arm is written, with no discriminator, and an
-unset `oneof` writes no bytes. The result is not self-describing; the receiver
-must know which arm is active through an external contract. A populated
-`google.protobuf.Any` is rejected because its dynamic type has no static ROS1
-layout.
+ROS1 has no standard union encoding. Phaser uses a custom protobuf `oneof`
+layout: a little-endian `uint32` containing the active protobuf field number is
+written before the arm value, and zero represents an unset `oneof`. Decoding
+rejects unknown discriminator values. This replaces the earlier
+discriminator-free convention. A populated `google.protobuf.Any` is rejected
+in either direction because its dynamic type has no static ROS1 layout.
 
 Both frontends use the same native binary metadata and protobuf wire
 serialization. A protobuf-style target and a ROS-style target generated from

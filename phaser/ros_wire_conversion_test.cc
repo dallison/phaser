@@ -8,6 +8,7 @@
 #include <cstring>
 #include <string>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "absl/types/span.h"
@@ -149,7 +150,10 @@ std::string ExpectedRosCompileBytes(bool include_oneof = true) {
   AppendIntegral(bytes, static_cast<int32_t>(400));
 
   if (include_oneof) {
+    AppendIntegral(bytes, static_cast<uint32_t>(17));
     AppendString(bytes, "selected");
+  } else {
+    AppendIntegral(bytes, static_cast<uint32_t>(0));
   }
   return bytes;
 }
@@ -176,6 +180,7 @@ std::string ExpectedIntrinsicBytes() {
     AppendIntegral(bytes, static_cast<int32_t>(0));  // child id
     AppendString(bytes, "");                         // child label
   }
+  AppendIntegral(bytes, static_cast<uint32_t>(0));  // choice unset
   return bytes;
 }
 
@@ -254,7 +259,7 @@ TEST(ROSWireConversionTest, FixedOutputAndErrorsAreReported) {
                    .ok());
 }
 
-TEST(ROSWireConversionTest, UnsetOneofWritesNoBytesForTheUnion) {
+TEST(ROSWireConversionTest, OneofWritesFieldNumberDiscriminator) {
   RosCompileMessage message;
   PopulatePhaserMessage(message);
   message.choice.reset();
@@ -298,6 +303,184 @@ TEST(ROSWireConversionTest, ROS1IntrinsicsUseNativeLayoutsAndFlushCaches) {
                   protobuf_frontend_native_output)
                   .ok());
   EXPECT_EQ(protobuf_frontend_native_output.AsString(), expected);
+}
+
+TEST(ROSWireConversionTest, ParsesKnownROSBytesIntoNativePayload) {
+  RosCompileMessage message;
+  const std::string input = ExpectedRosCompileBytes();
+  ASSERT_TRUE(message.ParseFromROS(
+                         absl::Span<const char>(input.data(), input.size()))
+                  .ok());
+
+  EXPECT_EQ(message.x.Get(), -7);
+  EXPECT_EQ(message.name.Get(), "robot");
+  EXPECT_TRUE(message.flag.Get());
+  EXPECT_DOUBLE_EQ(message.value.Get(), 1.5);
+  EXPECT_EQ(message.color.Get(), RosColor::ROS_COLOR_RED);
+  EXPECT_EQ(message.inner->id.Get(), 42);
+  ASSERT_EQ(message.xs.size(), 2u);
+  EXPECT_EQ(message.xs[0], 10);
+  EXPECT_EQ(message.xs[1], -20);
+  ASSERT_EQ(message.names.size(), 2u);
+  EXPECT_EQ(message.names[0].Get(), "a");
+  EXPECT_EQ(message.names[1].Get(), "beta");
+  ASSERT_EQ(message.inners.size(), 2u);
+  EXPECT_EQ(message.inners[0]->id.Get(), 100);
+  EXPECT_EQ(message.inners[1]->id.Get(), 200);
+  EXPECT_EQ(message.fixed_ints[0], 1);
+  EXPECT_EQ(message.fixed_ints[3], 4);
+  EXPECT_EQ(message.fixed_names[0].Get(), "left");
+  EXPECT_EQ(message.fixed_inners[1]->id.Get(), 400);
+
+  using ChoiceName = RosCompileMessage::ChoiceNameAlternative;
+  ASSERT_TRUE(message.choice.holds_alternative<ChoiceName>());
+  EXPECT_EQ(message.choice.get<ChoiceName>(), "selected");
+
+  ::foo::bar::RosCompileMessage protobuf;
+  ASSERT_TRUE(protobuf.ParseFromString(message.SerializeAsString()));
+  EXPECT_EQ(protobuf.x(), -7);
+  EXPECT_EQ(protobuf.name(), "robot");
+  ASSERT_EQ(protobuf.xs_size(), 2);
+  EXPECT_EQ(protobuf.xs(1), -20);
+  EXPECT_EQ(protobuf.fixed_inners(1).id(), 400);
+  EXPECT_EQ(protobuf.choice_name(), "selected");
+}
+
+TEST(ROSWireConversionTest, ParsedROSPayloadUsesEitherFrontend) {
+  RosIntrinsicMessage ros_message;
+  const std::string input = ExpectedIntrinsicBytes();
+  ASSERT_TRUE(ros_message
+                  .ParseFromROS(
+                      absl::Span<const char>(input.data(), input.size()))
+                  .ok());
+
+  EXPECT_EQ(ros_message.stamp->sec, 12u);
+  EXPECT_EQ(ros_message.stamp->nsec, 345u);
+  EXPECT_EQ(ros_message.timeout->sec, -4);
+  EXPECT_EQ(ros_message.timeout->nsec, 500);
+  EXPECT_EQ(ros_message.header->seq, 9u);
+  EXPECT_EQ(ros_message.header->stamp.sec, 21u);
+  EXPECT_EQ(ros_message.header->stamp.nsec, 654u);
+  EXPECT_EQ(ros_message.header->frame_id, "map");
+  EXPECT_EQ(ros_message.choice.index(), std::variant_npos);
+
+  const size_t native_size = ros_message.Size();
+  std::vector<char> native_payload(native_size);
+  std::memcpy(native_payload.data(), ros_message.Data(), native_size);
+  const ProtobufFrontendIntrinsicMessage protobuf_view =
+      ProtobufFrontendIntrinsicMessage::CreateReadonly(native_payload.data(),
+                                                       native_payload.size());
+  EXPECT_EQ(protobuf_view.stamp().seconds(), 12);
+  EXPECT_EQ(protobuf_view.stamp().nanos(), 345);
+  EXPECT_EQ(protobuf_view.timeout().seconds(), -4);
+  EXPECT_EQ(protobuf_view.timeout().nanos(), 500);
+  EXPECT_EQ(protobuf_view.header().seq(), 9u);
+  EXPECT_EQ(protobuf_view.header().frame_id(), "map");
+  EXPECT_FALSE(protobuf_view.has_choice_number());
+  EXPECT_FALSE(protobuf_view.has_choice_text());
+  EXPECT_FALSE(protobuf_view.has_choice_child());
+
+  ProtobufFrontendIntrinsicMessage parsed_protobuf_frontend;
+  ASSERT_TRUE(parsed_protobuf_frontend
+                  .ParseFromROS(
+                      absl::Span<const char>(input.data(), input.size()))
+                  .ok());
+  EXPECT_EQ(parsed_protobuf_frontend.stamp().seconds(), 12);
+  EXPECT_EQ(parsed_protobuf_frontend.timeout().nanos(), 500);
+  EXPECT_EQ(parsed_protobuf_frontend.header().stamp().nanos(), 654);
+  EXPECT_EQ(parsed_protobuf_frontend.header().frame_id(), "map");
+}
+
+TEST(ROSWireConversionTest, ParsesScalarAndMessageOneofArms) {
+  std::string scalar_input = ExpectedRosCompileBytes(false);
+  scalar_input.resize(scalar_input.size() - sizeof(uint32_t));
+  AppendIntegral(scalar_input, static_cast<uint32_t>(15));
+  AppendIntegral(scalar_input, static_cast<int32_t>(123));
+
+  RosCompileMessage scalar_message;
+  ASSERT_TRUE(
+      scalar_message
+          .ParseFromROS(
+              absl::Span<const char>(scalar_input.data(), scalar_input.size()))
+          .ok());
+  using ChoiceCount = RosCompileMessage::ChoiceCountAlternative;
+  ASSERT_TRUE(scalar_message.choice.holds_alternative<ChoiceCount>());
+  EXPECT_EQ(scalar_message.choice.get<ChoiceCount>(), 123);
+
+  std::string message_input = ExpectedRosCompileBytes(false);
+  message_input.resize(message_input.size() - sizeof(uint32_t));
+  AppendIntegral(message_input, static_cast<uint32_t>(18));
+  AppendIntegral(message_input, static_cast<int32_t>(456));
+
+  RosCompileMessage message;
+  ASSERT_TRUE(
+      message
+          .ParseFromROS(
+              absl::Span<const char>(message_input.data(), message_input.size()))
+          .ok());
+  using ChoiceInner = RosCompileMessage::ChoiceInnerAlternative;
+  ASSERT_TRUE(message.choice.holds_alternative<ChoiceInner>());
+  EXPECT_EQ(message.choice.get<ChoiceInner>().id.Get(), 456);
+}
+
+TEST(ROSWireConversionTest, RejectsMalformedROSInput) {
+  const std::string valid = ExpectedRosCompileBytes();
+
+  std::string truncated = valid;
+  truncated.pop_back();
+  RosCompileMessage truncated_message;
+  EXPECT_FALSE(truncated_message
+                   .ParseFromROS(absl::Span<const char>(truncated.data(),
+                                                        truncated.size()))
+                   .ok());
+
+  std::string trailing = valid;
+  trailing.push_back('\0');
+  RosCompileMessage trailing_message;
+  EXPECT_FALSE(
+      trailing_message
+          .ParseFromROS(
+              absl::Span<const char>(trailing.data(), trailing.size()))
+          .ok());
+
+  std::string invalid_length = valid;
+  invalid_length[4] = static_cast<char>(0xff);
+  invalid_length[5] = static_cast<char>(0xff);
+  invalid_length[6] = static_cast<char>(0xff);
+  invalid_length[7] = static_cast<char>(0x7f);
+  RosCompileMessage invalid_length_message;
+  EXPECT_FALSE(
+      invalid_length_message
+          .ParseFromROS(absl::Span<const char>(invalid_length.data(),
+                                               invalid_length.size()))
+          .ok());
+
+  std::string invalid_discriminator = valid;
+  const size_t discriminator_offset =
+      invalid_discriminator.size() - sizeof(uint32_t) - sizeof(uint32_t) - 8;
+  invalid_discriminator[discriminator_offset] = 99;
+  RosCompileMessage invalid_discriminator_message;
+  EXPECT_FALSE(
+      invalid_discriminator_message
+          .ParseFromROS(absl::Span<const char>(invalid_discriminator.data(),
+                                               invalid_discriminator.size()))
+          .ok());
+
+  std::string oversized_sequence;
+  AppendIntegral(oversized_sequence, static_cast<int32_t>(0));
+  AppendString(oversized_sequence, "");
+  AppendIntegral(oversized_sequence, static_cast<uint8_t>(0));
+  AppendDouble(oversized_sequence, 0);
+  AppendIntegral(oversized_sequence, static_cast<int32_t>(0));
+  AppendIntegral(oversized_sequence, static_cast<int32_t>(0));
+  AppendIntegral(oversized_sequence, static_cast<uint32_t>(100));
+  RosCompileMessage oversized_sequence_message;
+  EXPECT_FALSE(
+      oversized_sequence_message
+          .ParseFromROS(absl::Span<const char>(oversized_sequence.data(),
+                                               oversized_sequence.size()))
+          .ok());
+  EXPECT_TRUE(oversized_sequence_message.xs.empty());
 }
 
 }  // namespace

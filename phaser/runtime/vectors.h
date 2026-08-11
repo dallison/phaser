@@ -404,7 +404,14 @@ class PrimitiveVectorField : public Field {
         return data.status();
       }
       if constexpr (FixedSize) {
+        if (data->size() % sizeof(T) != 0) {
+          return absl::InvalidArgumentError(
+              "Packed fixed-width field has a partial element");
+        }
         resize(data->size() / sizeof(T));
+        if (data->empty()) {
+          return absl::OkStatus();
+        }
         T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
         memcpy(base, data->data(), data->size());
         return absl::OkStatus();

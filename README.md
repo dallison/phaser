@@ -170,12 +170,16 @@ absl::Status status = msg.SerializeToROS(ros_output);
 status = Foo::ProtobufToROS(protobuf_bytes, ros_output);
 status = Foo::PhaserToROS(phaser_bytes, ros_output);
 status = Foo::ConvertToROS(input_bytes, ros_output);  // infers input format
+
+// Decode received ROS1 bytes directly into msg's native PayloadBuffer.
+status = msg.ParseFromROS(ros_bytes);
 ```
 
 `ROSBuffer` can own a growing allocation or wrap caller-provided output memory.
-ROS output uses little-endian ROS1 layout, is one-way only, and writes an active
-`oneof` arm without a discriminator (matching Sato's convention). That `oneof`
-encoding is custom and requires the receiver to know which arm is active.
+`ROSReader` provides bounds-checked input decoding. ROS wire data uses
+little-endian ROS1 layout. Phaser's custom `oneof` layout writes a `uint32`
+protobuf field-number discriminator before the selected arm, with zero meaning
+unset, so it can be decoded without an external arm selection.
 `InferMessageWireFormat` validates both the protobuf structure and Phaser
 payload header; magic alone is not enough because the same four-byte prefix can
 begin a valid protobuf tag. Malformed or genuinely ambiguous input is reported

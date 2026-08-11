@@ -368,6 +368,12 @@ class PrimitiveArrayField : public Field {
       if (!payload.ok()) {
         return payload.status();
       }
+      if constexpr (FixedSize) {
+        if (payload->size() % sizeof(T) != 0) {
+          return absl::InvalidArgumentError(
+              "Packed fixed-width array field has a partial element");
+        }
+      }
       size_t count = payload->size() / sizeof(T);
       if (parsed_count_ + count > N) {
         return absl::InvalidArgumentError("array_size overflow");

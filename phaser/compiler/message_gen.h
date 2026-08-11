@@ -119,6 +119,11 @@ class MessageGenerator {
   void GenerateROSFieldWrite(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
       const std::string& value_expression, const std::string& indent);
+  void GenerateROSFieldRead(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& target_expression, const std::string& indent,
+      bool append = false, const std::string& index_expression = "",
+      int union_index = -1);
   std::string ROSFieldValueExpression(
       const std::shared_ptr<FieldInfo>& field,
       const std::shared_ptr<UnionInfo>& union_field = nullptr,
