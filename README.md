@@ -8,8 +8,9 @@ wire-format, instead of in a tree of heap-allocated objects. Once a message is b
 it can be written to disk, placed in shared memory, or sent over an IPC system **without
 a serialization step** — the bytes in the buffer *are* the message.
 
-The generated API is intentionally almost identical to the standard protobuf C++ API, so
-if you know protobuf, you already know Phaser.
+Choose a familiar protobuf-style C++ API or a ROS-style public-field API. Both
+frontends use the same native payload and expose the same protobuf and ROS wire
+conversion backends.
 
 > 📖 For the full reference, see the **[Phaser User Guide](phaser/docs/phaser_user_guide.md)**.
 
@@ -47,20 +48,26 @@ costs nothing until you actually touch a field.
   interoperate via per-message field metadata.
 - **Protobuf wire-format transcoding** is available when you *do* need it (e.g. storing in
   systems like BigQuery that expect protobuf bytes).
-- **Familiar API** — same accessor names as protobuf, with extra zero-copy helpers.
+- **Two C++ frontends** — protobuf-style accessors or ROS-style public field proxies.
+- **Direct wire-to-wire conversion** between protobuf and ROS1 without constructing
+  an intermediate user-facing message.
+- **Allocation-free receive paths** when native payloads and wire conversions use
+  caller-provided buffers.
 
 ## Features
 
 1. proto3 (primary) and proto2 IDL support
-2. Message printing to `std::ostream`
-3. Fixed- and variable-sized buffers
-4. User-supplied per-buffer metadata
-5. Full `google.protobuf.Any` support (zero-copy)
-6. Enum printing and parsing
-7. Message reflection
-8. Field presence masks
-9. Bazel build integration
-10. Modern C++17 with [Abseil](https://abseil.io)
+2. Protobuf and ROS-style generated C++ frontends
+3. Native Phaser, protobuf, and ROS1 wire input/output
+4. Direct protobuf-to-ROS and ROS-to-protobuf backend conversion
+5. Fixed, caller-owned, and dynamically growing buffers
+6. Allocation-free typed receive, traversal, and fixed-buffer transcoding
+7. Full zero-copy `google.protobuf.Any` support
+8. Repeated vectors, ROS fixed-array facades, and variant-like ROS `oneof` fields
+9. ROS1 `Time`, `Duration`, and `Header` intrinsic mappings
+10. Hybrid dense/sparse field metadata and protobuf version compatibility
+11. Reflection, enum conversion, field presence, and user metadata
+12. Bazel integration and modern C++17 with [Abseil](https://abseil.io)
 
 ## How it works
 
@@ -120,6 +127,7 @@ phaser_library(
     name = "foo_phaser",
     add_namespace = "phaser",  # optional: avoids clashing with protobuf classes
     frontend = "protobuf",     # default; use "ros" for public field proxies
+    enable_active_message = False,  # optionally add std::any active_message
     deps = [":foo_proto"],
 )
 ```
@@ -133,23 +141,42 @@ any protobuf header:
 ```
 
 Phaser can generate either the default protobuf-style accessors or a ROS-style
-struct interface. The ROS frontend preserves the same native payload layout and
-protobuf wire transcoding:
+struct interface:
 
 ```python
 phaser_library(
     name = "foo_ros_phaser",
+    add_namespace = "ros_api",
     frontend = "ros",
     deps = [":foo_proto"],
 )
 ```
 
+The frontend changes only the C++ access syntax:
+
 ```c++
-Foo msg;
-msg.count = 3;
-msg.name = "sensor";
-msg.samples.push_back(1.5);
+// frontend = "protobuf"
+foo::bar::phaser::Foo protobuf_api;
+protobuf_api.set_count(3);
+protobuf_api.set_name("sensor");
+protobuf_api.add_samples(1.5);
+
+// frontend = "ros"
+foo::bar::ros_api::Foo ros_api;
+ros_api.count = 3;
+ros_api.name = "sensor";
+ros_api.samples.push_back(1.5);
 ```
+
+Both frontends preserve the same native payload layout. Code generated from the
+same schema can therefore attach to the same received bytes with
+`CreateReadonly`, regardless of which frontend produced them. Both also expose
+protobuf serialization, ROS1 serialization, and the direct wire conversion
+APIs described below.
+
+Set `enable_active_message = True` if each generated source object should also
+carry an application-owned `std::any active_message`. This transient member is
+not part of the native payload and is not serialized.
 
 Fixed-size ROS fields are repeated protobuf fields annotated with
 `[(phaser.array_size) = N]`; import `phaser/options.proto` in the schema. ROS
@@ -164,8 +191,8 @@ Header access returns `phaser::RosHeaderView`, whose `frame_id` is a
 `std::string_view`; call `ToOwned()` when an owning `std_msgs::Header` is
 required. Add the corresponding ROS C++ targets through the `cc_deps` attribute.
 
-Every generated message, in either frontend style, can also produce ROS1 wire
-bytes:
+Every generated message, in either frontend style, can also produce and consume
+ROS1 wire bytes:
 
 ```c++
 ::phaser::ROSBuffer ros_output;
@@ -241,8 +268,6 @@ wire view into payload storage without an owning `std::string` intermediate.
 Dynamic messages, reflection/debug output, unknown `Any` error handling, and
 explicit owning conversions such as `RosHeaderView::ToOwned()` are outside this
 guarantee.
-Owning conversion/copy helpers, mutation, reflection, debug printing, and
-string-returning serialization helpers are outside this guarantee.
 
 ### 3. Zero-copy field access
 
@@ -257,8 +282,8 @@ absl::Span<char> dst = msg.allocate_s(len);
 msg.resize_vi32(n);
 absl::Span<int32_t> data = msg.vi32_as_mutable_span();
 
-// Repeated messages: allocate many at once (one allocation).
-std::vector<InnerMessage*> items = msg.allocate_vm(n);
+// Repeated messages: allocate many at once (one payload allocation).
+std::vector<InnerMessage> items = msg.allocate_vm(n);
 ```
 
 ## Protobuf interoperability
@@ -278,6 +303,59 @@ bool   ParseFromString(const std::string& str);
 `google.protobuf.Any` is supported with zero-copy semantics: the `value` field holds a real
 binary message you can access directly (via `Is<T>()` / `As<T>()` / `MutableAny<T>()`), with
 `PackFrom` / `UnpackTo` provided for protobuf-compatible copying.
+
+## Wire-to-wire backend conversions
+
+Wire conversion APIs are generated for every message in both frontend styles.
+They scan the source wire format and write the destination format directly;
+they do not construct an intermediate protobuf object or Phaser source message.
+
+Convert protobuf bytes directly to ROS1:
+
+```c++
+std::string protobuf_wire = GetProtobufBytes();
+::phaser::ROSBuffer ros_output;  // owns a growing output buffer
+absl::Status status =
+    foo::bar::phaser::Foo::ProtobufToROS(protobuf_wire, ros_output);
+if (status.ok()) {
+  SendROS(ros_output.data(), ros_output.size());
+}
+```
+
+Convert ROS1 bytes directly to protobuf using caller-owned output memory:
+
+```c++
+absl::Span<const char> ros_wire = ReceiveROS();
+std::array<char, 64 * 1024> storage;
+::phaser::ProtoBuffer protobuf_output(storage.data(), storage.size());
+
+absl::Status status =
+    foo::bar::phaser::Foo::ROSToProtobuf(ros_wire, protobuf_output);
+if (status.ok()) {
+  SendProtobuf(storage.data(), protobuf_output.Size());
+}
+```
+
+Convert a native Phaser payload to ROS1, or let Phaser distinguish native and
+protobuf input:
+
+```c++
+const auto* data = static_cast<const char*>(msg.Data());
+absl::Span<const char> native(data, msg.Size());
+
+::phaser::ROSBuffer ros_output;
+absl::Status status =
+    foo::bar::phaser::Foo::PhaserToROS(native, ros_output);
+
+// Accept either protobuf wire bytes or a native Phaser payload.
+status = foo::bar::phaser::Foo::ConvertToROS(input, ros_output);
+```
+
+`ProtobufToROS` and `ROSToProtobuf` preserve schema order, recursively convert
+nested messages, transform protobuf varints when required, and bulk-copy
+wire-compatible packed fixed-width arrays. With fixed `ROSBuffer` and
+`ProtoBuffer` instances, successful conversion performs no system-heap
+allocation. `ParseFromROS` is the corresponding ROS1-to-native operation.
 
 ## The Phaser Bank (type-erased operations & reflection)
 
@@ -325,13 +403,14 @@ and dependencies are available:
 
 ```bash
 protoc --plugin=protoc-gen-phaser=DIR/bin/phaser/compiler/phaser \
-    --phaser_out=add_namespace=NS,package_name=PACKAGE,target_name=TARGET:OUTPUT_DIR \
+    --phaser_out=frontend=ros,add_namespace=NS,package_name=PACKAGE,target_name=TARGET:OUTPUT_DIR \
     -I IPATH \
     FILE...
 ```
 
 Output is written to `OUTPUT_DIR/PACKAGE/TARGET`. See the user guide for the full argument
-reference.
+reference. Use `frontend=protobuf` for the default accessor API and optionally
+add `active_message=true`.
 
 ## Project layout
 
