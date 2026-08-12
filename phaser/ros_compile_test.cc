@@ -137,8 +137,8 @@ TEST(RosCompileTest, StringVectorSyntax) {
   EXPECT_EQ(msg.names[0].Get(), "beta");
 
   size_t count = 0;
-  for (const auto& s : msg.names) {
-    EXPECT_FALSE(s.Get().empty());
+  for (std::string_view s : msg.names) {
+    EXPECT_FALSE(s.empty());
     ++count;
   }
   EXPECT_EQ(count, 2u);
@@ -146,9 +146,9 @@ TEST(RosCompileTest, StringVectorSyntax) {
 
 TEST(RosCompileTest, MessageVectorSyntax) {
   RosCompileMessage msg;
-  RosInner* a = msg.inners.Add();
+  auto a = msg.inners.Add();
   a->id = 1;
-  RosInner* b = msg.inners.Add();
+  auto b = msg.inners.Add();
   b->id = 2;
   EXPECT_EQ(msg.inners.size(), 2u);
   EXPECT_EQ(msg.inners[0]->id.Get(), 1);
@@ -158,7 +158,7 @@ TEST(RosCompileTest, MessageVectorSyntax) {
   EXPECT_EQ(msg.inners.front()->id.Get(), 11);
 
   size_t count = 0;
-  for (auto& elem : msg.inners) {
+  for (auto elem : msg.inners) {
     EXPECT_TRUE(elem->id.IsPresent());
     ++count;
   }
@@ -393,7 +393,7 @@ TEST(RosCompileTest, FixedMessageArrayExtent) {
   EXPECT_EQ(msg.fixed_inners[1]->id.Get(), 8);
 
   size_t count = 0;
-  for (auto& inner : msg.fixed_inners) {
+  for (auto inner : msg.fixed_inners) {
     EXPECT_TRUE(inner->id.IsPresent());
     ++count;
   }
@@ -487,7 +487,7 @@ TEST(RosCompileTest, FixedArrayConstViewAfterWireParse) {
   const RosCompileMessage& view = parsed;
   EXPECT_EQ(view.fixed_ints.size(), 4u);
   EXPECT_EQ(view.fixed_ints[1], 22);
-  EXPECT_EQ(view.fixed_names[0].Get(), "readonly");
+  EXPECT_EQ(view.fixed_names[0], "readonly");
 }
 
 TEST(RosCompileTest, FixedArrayCreateReadonlyConstAccess) {
@@ -508,8 +508,8 @@ TEST(RosCompileTest, FixedArrayCreateReadonlyConstAccess) {
   EXPECT_EQ(view.fixed_ints[0], 10);
   EXPECT_EQ(view.fixed_ints[1], 0);
   EXPECT_EQ(view.fixed_ints[2], 30);
-  EXPECT_EQ(view.fixed_names[0].Get(), "");
-  EXPECT_EQ(view.fixed_names[1].Get(), "ro");
+  EXPECT_EQ(view.fixed_names[0], "");
+  EXPECT_EQ(view.fixed_names[1], "ro");
   EXPECT_EQ(view.fixed_inners[0]->id.Get(), 4);
   EXPECT_FALSE(view.fixed_inners[1]->id.IsPresent());
 
@@ -539,7 +539,7 @@ TEST(RosCompileTest, FixedArrayReadonlyShortBufferDefaults) {
   EXPECT_EQ(view.fixed_ints[0], 7);
   EXPECT_EQ(view.fixed_ints[1], 0);
   EXPECT_EQ(view.fixed_ints[3], 0);
-  EXPECT_TRUE(view.fixed_names[0].Get().empty());
+  EXPECT_TRUE(view.fixed_names[0].empty());
   (void)partial;
 }
 

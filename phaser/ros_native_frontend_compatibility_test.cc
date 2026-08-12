@@ -31,10 +31,10 @@ TEST(RosNativeFrontendCompatibilityTest,
   ros_message.tags.push_back("front");
   ros_message.tags.push_back("rear");
 
-  auto* first_child = ros_message.children.Add();
+  auto first_child = ros_message.children.Add();
   first_child->id = 101;
   first_child->label = "left";
-  auto* second_child = ros_message.children.Add();
+  auto second_child = ros_message.children.Add();
   second_child->id = 202;
   second_child->label = "right";
 

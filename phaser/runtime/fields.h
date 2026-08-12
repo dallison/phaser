@@ -62,19 +62,12 @@ class Field {
   int Number() const { return number_; }
 
   int32_t FindFieldOffset(uint32_t source_offset) const {
-    if (cached_offset_ == 0xffffffff) {
-      cached_offset_ = static_cast<::toolbelt::BufferOffset>(
-          Message::GetMessage(this, source_offset)
-              ->FindFieldOffset(static_cast<uint32_t>(number_)));
-    }
-    return static_cast<int32_t>(cached_offset_);
+    ResolveField(source_offset);
+    return cached_offset_;
   }
 
   int32_t FindFieldId(uint32_t source_offset) const {
-    if (cached_field_id_ == -1) {
-      cached_field_id_ = Message::GetMessage(this, source_offset)
-                             ->FindFieldId(static_cast<uint32_t>(number_));
-    }
+    ResolveField(source_offset);
     return cached_field_id_;
   }
 
@@ -89,16 +82,39 @@ class Field {
   int GetIndent() const { return indent_; }
 
  protected:
+  void RequireMutable(uint32_t source_offset) const {
+    if (!Message::GetRuntime(this, source_offset)->IsMutable()) {
+      throw std::logic_error("cannot mutate a readonly Phaser message");
+    }
+  }
+
+  void ResolveField(uint32_t source_offset) const {
+    if (field_cache_resolved_) {
+      return;
+    }
+    const Message* message = Message::GetMessage(this, source_offset);
+    if (message->runtime == nullptr) {
+      return;
+    }
+    const FieldLocation location =
+        message->FindField(static_cast<uint32_t>(number_));
+    cached_offset_ = location.offset;
+    cached_field_id_ = location.id;
+    field_cache_resolved_ = true;
+  }
+
   void ResetFieldCache() {
-    cached_offset_ = 0xffffffff;
+    cached_offset_ = -1;
     cached_field_id_ = -1;
+    field_cache_resolved_ = false;
   }
 
  protected:
   int id_ = 0;
   int number_ = 0;
-  mutable ::toolbelt::BufferOffset cached_offset_ = 0xffffffff;
+  mutable int32_t cached_offset_ = -1;
   mutable int32_t cached_field_id_ = -1;
+  mutable bool field_cache_resolved_ = false;
   mutable int indent_ = 0;
 };
 
@@ -150,10 +166,14 @@ class Field {
     }                                                                         \
                                                                               \
     void Set(type v) {                                                        \
+      RequireMutable(source_offset_);                                         \
       GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, v); \
       SetPresence(GetBuffer(), GetPresenceMaskStart());                       \
     }                                                                         \
-    void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }      \
+    void Clear() {                                                            \
+      RequireMutable(source_offset_);                                         \
+      ClearPresence(GetBuffer(), GetPresenceMaskStart());                     \
+    }                                                                         \
     bool operator==(const cname##Field& other) const {                        \
       return Get() == other.Get();                                            \
     }                                                                         \
@@ -522,18 +542,50 @@ class NonEmbeddedStringField {
       : msg_(msg), absolute_binary_offset_(absolute_binary_offset) {}
   NonEmbeddedStringField(const NonEmbeddedStringField&) = default;
   NonEmbeddedStringField(NonEmbeddedStringField&&) = default;
-  NonEmbeddedStringField& operator=(const NonEmbeddedStringField& other) {
+  NonEmbeddedStringField& operator=(const NonEmbeddedStringField& other) & {
+    return AssignValue(other);
+  }
+  NonEmbeddedStringField& operator=(const NonEmbeddedStringField& other) && {
+    return AssignValue(other);
+  }
+  NonEmbeddedStringField& operator=(NonEmbeddedStringField&& other) & noexcept {
+    msg_ = other.msg_;
+    absolute_binary_offset_ = other.absolute_binary_offset_;
+    return *this;
+  }
+  NonEmbeddedStringField& operator=(NonEmbeddedStringField&& other) && {
+    return AssignValue(other);
+  }
+
+ private:
+  NonEmbeddedStringField& AssignValue(const NonEmbeddedStringField& other) {
     if (this == &other) {
       return *this;
     }
     if (other.IsPlaceholder()) {
       return *this;
     }
-    Set(other.Get());
+    std::string_view value = other.Get();
+    if (GetBuffer() != other.GetBuffer()) {
+      Set(value);
+      return *this;
+    }
+    if (value.empty()) {
+      Set(value);
+      return *this;
+    }
+    // Preserve an offset rather than an address: allocating the destination
+    // may relocate a dynamic payload, but offsets remain valid.
+    const ::toolbelt::BufferOffset source =
+        GetBuffer()->ToOffset(const_cast<char*>(value.data()));
+    absl::Span<char> destination = ::toolbelt::PayloadBuffer::AllocateString(
+        GetBufferAddr(), value.size(), absolute_binary_offset_, false);
+    memmove(destination.data(), GetBuffer()->ToAddress<char>(source),
+            value.size());
     return *this;
   }
-  NonEmbeddedStringField& operator=(NonEmbeddedStringField&& other) noexcept =
-      default;
+
+ public:
   operator std::string_view() const { return Get(); }
   NonEmbeddedStringField& operator=(const std::string& s) {
     Set(s);
@@ -608,6 +660,9 @@ class NonEmbeddedStringField {
   ::toolbelt::PayloadBuffer* GetBuffer() const { return msg_->runtime->pb; }
 
   ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+    if (!msg_->runtime->IsMutable()) {
+      throw std::logic_error("cannot mutate a readonly Phaser string");
+    }
     return &msg_->runtime->pb;
   }
 

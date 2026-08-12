@@ -19,7 +19,9 @@ void MutateDuration(::ros::Duration& value) {
   value.nsec = 500;
 }
 
-void MutateHeader(::std_msgs::Header& value) {
+template <typename HeaderField>
+void MutateHeader(HeaderField& field) {
+  auto value = field.Mutable();
   value.seq = 9;
   value.stamp = ::ros::Time(21, 654);
   value.frame_id = "map";
@@ -28,8 +30,9 @@ void MutateHeader(::std_msgs::Header& value) {
 uint32_t ReadSeconds(const ::ros::Time& value) { return value.sec; }
 uint32_t ReadSecondsByValue(::ros::Time value) { return value.sec; }
 
-std::string ReadFrame(const ::std_msgs::Header& value) {
-  return value.frame_id;
+template <typename HeaderField>
+std::string ReadFrame(const HeaderField& value) {
+  return std::string(value.Get().frame_id);
 }
 std::string ReadFrameByValue(::std_msgs::Header value) {
   return value.frame_id;
@@ -47,7 +50,7 @@ TEST(RosIntrinsicsTest, ExistingMutableReferenceFunctionsWorkUnchanged) {
   EXPECT_EQ(message.stamp->nsec, 345u);
   EXPECT_EQ(message.timeout->sec, -4);
   EXPECT_EQ(ReadFrame(message.header), "map");
-  EXPECT_EQ(ReadFrameByValue(message.header), "map");
+  EXPECT_EQ(ReadFrameByValue(message.header.ToOwned()), "map");
   EXPECT_EQ(message.header->stamp.sec, 21u);
 }
 
@@ -71,7 +74,7 @@ TEST(RosIntrinsicsTest, NativePayloadAccessFlushesMutableBorrows) {
   EXPECT_EQ(view.timeout->nsec, 500);
   EXPECT_EQ(view.header->seq, 9u);
   EXPECT_EQ(view.header->stamp.sec, 21u);
-  EXPECT_EQ(ReadFrame(view.header), "map");
+  EXPECT_EQ(view.header.Get().frame_id, "map");
 }
 
 TEST(RosIntrinsicsTest, ProtobufWireRoundtripFlushesMutableBorrows) {

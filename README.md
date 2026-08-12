@@ -85,9 +85,14 @@ The key idea is the split between two representations:
 
 - When you call `set_x(...)`, the value is written **directly into the binary buffer**.
 - When you call `x()`, the value is read back **from the binary buffer**, located via a
-  small per-message **field-metadata** array. That indirection is what enables protobuf's
-  version compatibility: a reader built with a different schema version can still find the
-  fields present in the data.
+  compact per-message **field-metadata** index. Dense field-number ranges use direct lookup;
+  outliers use binary search. That indirection is what enables protobuf's version
+  compatibility: a reader built with a different schema version can still find the fields
+  present in the data.
+
+The hybrid metadata layout is a new native Phaser payload format. New runtimes can
+read legacy payload metadata, but older runtimes cannot read newly generated native
+payloads. Protobuf and ROS wire formats are unchanged.
 
 The `PayloadBuffer` (from the [cpp_toolbelt](https://github.com/dallison/cpp_toolbelt)
 library) is a relocatable heap — a malloc/free/realloc allocator that uses only offsets
@@ -153,10 +158,11 @@ See the user guide for the complete array and oneof APIs.
 
 The ROS frontend also maps singular `google.protobuf.Timestamp`,
 `google.protobuf.Duration`, and `std_msgs.Header` message fields to
-`ros::Time`, `ros::Duration`, and `std_msgs::Header`. This allows existing ROS1
-functions taking values, const references, or mutable references to accept the
-generated fields unchanged. Add the corresponding ROS C++ targets through the
-`cc_deps` attribute.
+`ros::Time`, `ros::Duration`, and `std_msgs::Header`. Mutable Header access
+remains compatible with existing ROS1 reference-taking functions. Read-only
+Header access returns `phaser::RosHeaderView`, whose `frame_id` is a
+`std::string_view`; call `ToOwned()` when an owning `std_msgs::Header` is
+required. Add the corresponding ROS C++ targets through the `cc_deps` attribute.
 
 Every generated message, in either frontend style, can also produce ROS1 wire
 bytes:
@@ -168,6 +174,8 @@ absl::Status status = msg.SerializeToROS(ros_output);
 // Convert serialized protobuf or a native Phaser payload without first
 // constructing the user-facing message.
 status = Foo::ProtobufToROS(protobuf_bytes, ros_output);
+::phaser::ProtoBuffer protobuf_output(output_data, output_capacity);
+status = Foo::ROSToProtobuf(ros_bytes, protobuf_output);
 status = Foo::PhaserToROS(phaser_bytes, ros_output);
 status = Foo::ConvertToROS(input_bytes, ros_output);  // infers input format
 
@@ -212,6 +220,29 @@ the buffer you provide):
 auto msg = foo::bar::phaser::TestMessage::CreateReadonly(buffer, size);
 int x = msg.x();
 ```
+
+Caller-buffer `CreateMutable`, typed mutation, `CreateReadonly`, typed field
+traversal, typed `Any`, caller-buffer protobuf serialization, and fixed-buffer
+ROS serialization do not use the system heap. Runtime bookkeeping and generated
+type metadata live inside the `PayloadBuffer`; fixed-buffer creation therefore
+needs enough room for both message data and this small control data. Repeated
+strings iterate as `std::string_view`; repeated-message
+indexing and iteration return lightweight message handles by value. These views
+remain valid while the caller-owned receive buffer remains alive and unchanged.
+Protobuf/ROS deserialization into a fixed mutable message and
+`ProtobufToROS` with a sufficiently large fixed `ROSBuffer` are also
+system-heap-allocation-free, including registered `Any` payloads.
+`ProtobufToROS` scans protobuf wire fields directly and emits ROS bytes without
+constructing an intermediate protobuf or Phaser message.
+`ROSToProtobuf` performs the reverse direct conversion through `ROSReader` and
+`ProtoWriter`; nested and packed protobuf lengths are computed with allocation-
+free counting passes. ROS Header decoding writes `frame_id` directly from its
+wire view into payload storage without an owning `std::string` intermediate.
+Dynamic messages, reflection/debug output, unknown `Any` error handling, and
+explicit owning conversions such as `RosHeaderView::ToOwned()` are outside this
+guarantee.
+Owning conversion/copy helpers, mutation, reflection, debug printing, and
+string-returning serialization helpers are outside this guarantee.
 
 ### 3. Zero-copy field access
 

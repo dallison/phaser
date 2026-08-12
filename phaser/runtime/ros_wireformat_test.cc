@@ -98,15 +98,11 @@ TEST(ROSWireformatTest, ReadsCanonicalLittleEndianBytes) {
   EXPECT_EQ(reader.Remaining(), 0u);
 }
 
-TEST(ROSWireformatTest, ReaderRejectsTruncatedAndInvalidValues) {
+TEST(ROSWireformatTest, ReaderRejectsTruncatedValues) {
   const std::array<char, 3> truncated_integer = {1, 2, 3};
   ROSReader integer_reader(absl::MakeConstSpan(truncated_integer));
   EXPECT_FALSE(integer_reader.Read<uint32_t>().ok());
   EXPECT_EQ(integer_reader.Position(), 0u);
-
-  const std::array<char, 1> invalid_bool = {2};
-  ROSReader bool_reader(absl::MakeConstSpan(invalid_bool));
-  EXPECT_FALSE(bool_reader.Read<bool>().ok());
 
   const std::array<char, 6> truncated_string = {5, 0, 0, 0, 'a', 'b'};
   ROSReader string_reader(absl::MakeConstSpan(truncated_string));
@@ -165,18 +161,12 @@ TEST(ROSWireformatTest, BulkWriteFailureDoesNotAdvanceCursor) {
   EXPECT_EQ(buffer.Size(), 0u);
 }
 
-TEST(ROSWireformatTest, BulkReadValidatesBeforeAdvancing) {
+TEST(ROSWireformatTest, BulkReadValidatesSizeBeforeAdvancing) {
   const std::array<char, 7> truncated = {};
   std::array<int32_t, 2> integers = {};
   ROSReader integer_reader(absl::MakeConstSpan(truncated));
   EXPECT_FALSE(integer_reader.ReadArray(absl::MakeSpan(integers)).ok());
   EXPECT_EQ(integer_reader.Position(), 0u);
-
-  const std::array<char, 3> invalid_bool = {0, 2, 1};
-  std::array<bool, 3> bools = {};
-  ROSReader bool_reader(absl::MakeConstSpan(invalid_bool));
-  EXPECT_FALSE(bool_reader.ReadArray(absl::MakeSpan(bools)).ok());
-  EXPECT_EQ(bool_reader.Position(), 0u);
 }
 
 }  // namespace

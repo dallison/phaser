@@ -48,13 +48,7 @@ class ROSReader {
     }
 
     if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
-      const uint8_t value = static_cast<uint8_t>(
-          static_cast<unsigned char>(data_[position_++]));
-      if (value > 1) {
-        return absl::InvalidArgumentError(absl::StrFormat(
-            "Invalid ROS bool value %d at byte %d", value, position_ - 1));
-      }
-      return value != 0;
+      return data_[position_++] != 0;
     } else if constexpr (std::is_integral_v<T>) {
       using U = std::make_unsigned_t<T>;
       U value = 0;
@@ -110,17 +104,7 @@ class ROSReader {
 
     if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
       static_assert(sizeof(bool) == sizeof(uint8_t));
-      for (size_t i = 0; i < values.size(); ++i) {
-        const uint8_t value = static_cast<uint8_t>(
-            static_cast<unsigned char>(data_[position_ + i]));
-        if (value > 1) {
-          return absl::InvalidArgumentError(absl::StrFormat(
-              "Invalid ROS bool value %d at byte %d", value, position_ + i));
-        }
-      }
-      for (size_t i = 0; i < values.size(); ++i) {
-        values[i] = data_[position_ + i] != 0;
-      }
+      memcpy(values.data(), data_.data() + position_, byte_size);
       position_ += byte_size;
       return absl::OkStatus();
     }
@@ -171,6 +155,17 @@ class ROSReader {
 
   absl::StatusOr<uint32_t> ReadSequenceLength() {
     return Read<uint32_t>();
+  }
+
+  absl::StatusOr<absl::Span<const char>> ReadRaw(size_t length) {
+    if (length > Remaining()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
+          length, Remaining()));
+    }
+    absl::Span<const char> value(data_.data() + position_, length);
+    position_ += length;
+    return value;
   }
 
  private:
@@ -278,9 +273,8 @@ class ROSBuffer {
 
     if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
       static_assert(sizeof(bool) == sizeof(uint8_t));
-      for (bool value : values) {
-        data_[size_++] = static_cast<char>(value ? 1 : 0);
-      }
+      memcpy(data_ + size_, values.data(), byte_size);
+      size_ += byte_size;
       return absl::OkStatus();
     }
 

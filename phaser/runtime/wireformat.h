@@ -646,4 +646,103 @@ class ProtoBuffer {
   char* end_ = nullptr;
 };
 
+// A protobuf sink that either writes to a ProtoBuffer or only counts bytes.
+// The counting mode is used to size nested and packed fields without staging
+// their encoded bytes in a temporary allocation.
+class ProtoWriter {
+ public:
+  ProtoWriter() = default;
+  explicit ProtoWriter(ProtoBuffer& buffer) : buffer_(&buffer) {}
+
+  size_t Size() const { return size_; }
+
+  template <typename T, bool Signed>
+  absl::Status SerializeVarint(int field_number, T value) {
+    const size_t bytes =
+        ProtoBuffer::TagSize(field_number, WireType::kVarint) +
+        ProtoBuffer::VarintSize<T, Signed>(value);
+    if (buffer_ != nullptr) {
+      if (absl::Status status =
+              buffer_->SerializeVarint<T, Signed>(field_number, value);
+          !status.ok()) {
+        return status;
+      }
+    }
+    size_ += bytes;
+    return absl::OkStatus();
+  }
+
+  template <typename T, bool Signed>
+  absl::Status SerializeRawVarint(T value) {
+    const size_t bytes = ProtoBuffer::VarintSize<T, Signed>(value);
+    if (buffer_ != nullptr) {
+      if (absl::Status status = buffer_->SerializeRawVarint<T, Signed>(value);
+          !status.ok()) {
+        return status;
+      }
+    }
+    size_ += bytes;
+    return absl::OkStatus();
+  }
+
+  template <typename T>
+  absl::Status SerializeFixed(int field_number, T value) {
+    const size_t bytes =
+        ProtoBuffer::TagSize(field_number, ProtoBuffer::FixedWireType<T>()) +
+        sizeof(T);
+    if (buffer_ != nullptr) {
+      if (absl::Status status = buffer_->SerializeFixed(field_number, value);
+          !status.ok()) {
+        return status;
+      }
+    }
+    size_ += bytes;
+    return absl::OkStatus();
+  }
+
+  absl::Status SerializeLengthDelimited(int field_number, const void* data,
+                                        size_t length) {
+    const size_t bytes = ProtoBuffer::LengthDelimitedSize(field_number, length);
+    if (buffer_ != nullptr) {
+      if (absl::Status status =
+              buffer_->SerializeLengthDelimited(field_number, data, length);
+          !status.ok()) {
+        return status;
+      }
+    }
+    size_ += bytes;
+    return absl::OkStatus();
+  }
+
+  absl::Status SerializeLengthDelimitedHeader(int field_number,
+                                              size_t length) {
+    const size_t bytes = ProtoBuffer::LengthDelimitedSize(field_number, length) -
+                         length;
+    if (buffer_ != nullptr) {
+      if (absl::Status status =
+              buffer_->SerializeLengthDelimitedHeader(field_number, length);
+          !status.ok()) {
+        return status;
+      }
+    }
+    size_ += bytes;
+    return absl::OkStatus();
+  }
+
+  absl::Status SerializeRaw(const void* data, size_t length) {
+    if (buffer_ != nullptr) {
+      if (absl::Status status = buffer_->SerializeRaw(data, length);
+          !status.ok()) {
+        return status;
+      }
+    }
+    size_ += length;
+    return absl::OkStatus();
+  }
+
+ private:
+  ProtoBuffer* buffer_ = nullptr;
+  size_t size_ = 0;
+};
+
 }  // namespace phaser

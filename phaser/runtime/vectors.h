@@ -813,134 +813,126 @@ class MessageVectorField : public Field {
   MessageVectorField(const MessageVectorField&) = default;
   MessageVectorField(MessageVectorField&&) = default;
 
-  const MessageObject<T>& operator[](int index) const {
+  T operator[](int index) const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset == -1) {
-      return empty_;
+      return T(InternalDefault{});
     }
     auto hdr = Header(static_cast<uint32_t>(offset));
     if (static_cast<uint32_t>(index) >= hdr->num_elements) {
-      return empty_;
+      return T(InternalDefault{});
     }
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     if (data[index] == 0) {
-      return empty_;
+      return T(InternalDefault{});
     }
-    if (static_cast<size_t>(index) >= msgs_.size()) {
-      msgs_.resize(static_cast<size_t>(index) + 1);
-    }
-    if (msgs_[static_cast<size_t>(index)].empty()) {
-      msgs_[static_cast<size_t>(index)] =
-          MessageObject<T>(GetRuntime(), data[index]);
-    }
-    return msgs_[static_cast<size_t>(index)];
+    return T(GetRuntime(), data[index]);
   }
 
-  MessageObject<T>& operator[](int index) {
-    return const_cast<MessageObject<T>&>(
-        static_cast<const MessageVectorField*>(this)->operator[](index));
+  T operator[](int index) {
+    return static_cast<const MessageVectorField*>(this)->operator[](index);
   }
 
-  MessageObject<T>& front() {
-    Populate();
-    return msgs_.front();
-  }
-  const MessageObject<T>& front() const {
-    Populate();
-    return msgs_.front();
-  }
-  MessageObject<T>& back() {
-    Populate();
-    return msgs_.back();
-  }
-  const MessageObject<T>& back() const {
-    Populate();
-    return msgs_.back();
-  }
+  T front() { return (*this)[0]; }
+  T front() const { return (*this)[0]; }
+  T back() { return (*this)[static_cast<int>(size() - 1)]; }
+  T back() const { return (*this)[static_cast<int>(size() - 1)]; }
 
-  using value_type = MessageObject<T>;
-  using reference = value_type&;
-  using const_reference = value_type&;
-  using pointer = value_type*;
-  using const_pointer = const value_type*;
+  using value_type = T;
+  using reference = T;
+  using const_reference = T;
+  using pointer = void;
+  using const_pointer = void;
   using size_type = size_t;
   using difference_type = ptrdiff_t;
-  using iterator = typename std::vector<MessageObject<T>>::iterator;
-  using const_iterator = typename std::vector<MessageObject<T>>::const_iterator;
-  using reverse_iterator =
-      typename std::vector<MessageObject<T>>::reverse_iterator;
-  using const_reverse_iterator =
-      typename std::vector<MessageObject<T>>::const_reverse_iterator;
+  class const_iterator {
+   public:
+    using iterator_category = std::bidirectional_iterator_tag;
+    using value_type = T;
+    using difference_type = ptrdiff_t;
+    using pointer = void;
+    using reference = T;
 
-  iterator begin() {
-    Populate();
-    return msgs_.begin();
-  }
-  iterator end() {
-    Populate();
-    return msgs_.end();
-  }
-  reverse_iterator rbegin() {
-    Populate();
-    return msgs_.rbegin();
-  }
-  reverse_iterator rend() {
-    Populate();
-    return msgs_.rend();
-  }
+    const_iterator() = default;
+    const_iterator(const MessageVectorField* field, size_t index)
+        : field_(field), index_(index) {}
+    T operator*() const { return field_->Get(index_); }
+    const_iterator& operator++() {
+      ++index_;
+      return *this;
+    }
+    const_iterator operator++(int) {
+      const_iterator result = *this;
+      ++*this;
+      return result;
+    }
+    const_iterator& operator--() {
+      --index_;
+      return *this;
+    }
+    const_iterator operator--(int) {
+      const_iterator result = *this;
+      --*this;
+      return result;
+    }
+    bool operator==(const const_iterator& other) const {
+      return field_ == other.field_ && index_ == other.index_;
+    }
+    bool operator!=(const const_iterator& other) const {
+      return !(*this == other);
+    }
+
+   private:
+    const MessageVectorField* field_ = nullptr;
+    size_t index_ = 0;
+  };
+  using iterator = const_iterator;
+  using reverse_iterator = std::reverse_iterator<iterator>;
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+  iterator begin() { return iterator(this, 0); }
+  iterator end() { return iterator(this, size()); }
+  reverse_iterator rbegin() { return reverse_iterator(end()); }
+  reverse_iterator rend() { return reverse_iterator(begin()); }
   const_iterator begin() const {
-    Populate();
-    return msgs_.begin();
+    return const_iterator(this, 0);
   }
   const_iterator end() const {
-    Populate();
-    return msgs_.end();
+    return const_iterator(this, size());
   }
   const_iterator cbegin() const {
-    Populate();
-    return msgs_.cbegin();
+    return begin();
   }
   const_iterator cend() const {
-    Populate();
-    return msgs_.cend();
+    return end();
   }
   const_reverse_iterator rbegin() const {
-    Populate();
-    return msgs_.rbegin();
+    return const_reverse_iterator(end());
   }
   const_reverse_iterator rend() const {
-    Populate();
-    return msgs_.rend();
+    return const_reverse_iterator(begin());
   }
   const_reverse_iterator crbegin() const {
-    Populate();
-    return msgs_.crbegin();
+    return rbegin();
   }
   const_reverse_iterator crend() const {
-    Populate();
-    return msgs_.crend();
+    return rend();
   }
 
   void push_back(const T& v) {
     ::toolbelt::BufferOffset offset = v.absolute_binary_offset;
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), offset);
-    MessageObject<T> obj(GetRuntime(), offset);
-    obj.msg_ = v;
-    msgs_.push_back(std::move(obj));
   }
 
   void push_back(T&& v) {
     ::toolbelt::BufferOffset offset = v.absolute_binary_offset;
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), offset);
-    MessageObject<T> obj(GetRuntime(), offset);
-    obj.msg_ = v;
-    msgs_.push_back(std::move(obj));
   }
 
-  T* Add() {
+  T Add() {
     // Allocate a new message.
     void* binary =
         ::toolbelt::PayloadBuffer::Allocate(GetBufferAddr(), T::BinarySize());
@@ -948,61 +940,59 @@ class MessageVectorField : public Field {
         GetRuntime()->ToOffset(binary);
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), absolute_binary_offset);
-    auto obj = MessageObject<T>(GetRuntime(), absolute_binary_offset);
-    obj.InstallMetadata();
-    msgs_.push_back(std::move(obj));
-    return msgs_.back().Mutable();
+    T result(GetRuntime(), absolute_binary_offset);
+    result.template InstallMetadata<T>();
+    return result;
   }
 
-  const T& Get(size_t index) const {
-    return (*this)[static_cast<int>(index)].Get();
-  }
+  T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
 
-  T* Mutable(size_t index) {
-    if (static_cast<size_t>(index) >= msgs_.size()) {
+  T Mutable(size_t index) {
+    if (index >= size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);
-      msgs_.resize(static_cast<size_t>(index) + 1);
+          GetBufferAddr(), Header(), index + 1);
     }
 
-    if (msgs_[static_cast<size_t>(index)].IsPlaceholder()) {
+    auto hdr = Header();
+    ::toolbelt::BufferOffset* data =
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (data[index] == 0) {
       void* binary =
           ::toolbelt::PayloadBuffer::Allocate(GetBufferAddr(), T::BinarySize());
       ::toolbelt::BufferOffset absolute_binary_offset =
           GetRuntime()->ToOffset(binary);
 
-      auto hdr = Header();
-      ::toolbelt::BufferOffset* data =
+      hdr = Header();
+      data =
           GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
       data[index] = absolute_binary_offset;
-
-      auto obj = MessageObject<T>(GetRuntime(), absolute_binary_offset);
-      obj.InstallMetadata();
-      msgs_[static_cast<size_t>(index)] = std::move(obj);
+      T result(GetRuntime(), absolute_binary_offset);
+      result.template InstallMetadata<T>();
+      return result;
     }
-    return msgs_[static_cast<size_t>(index)].Mutable();
+    return T(GetRuntime(), data[index]);
   }
 
   void SetOffset(int index, toolbelt::BufferOffset offset) {
-    if (static_cast<size_t>(index) >= msgs_.size()) {
-      msgs_.resize(static_cast<size_t>(index) + 1);
+    if (static_cast<size_t>(index) >= size()) {
+      ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+          GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);
     }
     auto hdr = Header();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    if (!msgs_[static_cast<size_t>(index)].IsPlaceholder() &&
-        data[index] != 0) {
+    if (data[index] != 0) {
       // Already set, free the current value.
-      msgs_[static_cast<size_t>(index)].Clear();
+      T(GetRuntime(), data[index]).Clear();
+      GetBuffer()->Free(GetRuntime()->ToAddress(data[index]));
     }
     data[index] = offset;
-    msgs_[static_cast<size_t>(index)] = MessageObject<T>(GetRuntime(), offset);
   }
 
   // Allocate a bunch of empty messages.
-  std::vector<T*> Allocate(size_t n) {
-    std::vector<T*> result;
-    result.resize(n);
+  std::vector<T> Allocate(size_t n) {
+    std::vector<T> result;
+    result.reserve(n);
     this->resize(n);
     // Allocate memory for n messages in the payload buffer.
     std::vector<void*> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
@@ -1012,15 +1002,11 @@ class MessageVectorField : public Field {
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
 
-    // Fill in the msgs_ vector with MessageObject objects referring to the
-    // allocated memory.
     for (size_t i = 0; i < n; i++) {
-      auto& msg = msgs_[i].MutableMsg();
-      msg.runtime = GetRuntime();
       toolbelt::BufferOffset offset = GetRuntime()->ToOffset(addrs[i]);
-      msg.absolute_binary_offset = offset;
-      msgs_[i].InstallMetadata();
-      result[i] = &msg;
+      T msg(GetRuntime(), offset);
+      msg.template InstallMetadata<T>();
+      result.push_back(std::move(msg));
       data[i] = offset;
     }
     return result;
@@ -1041,14 +1027,12 @@ class MessageVectorField : public Field {
   void reserve(size_t n) {
     ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), n);
-    msgs_.reserve(n);
   }
 
   void resize(size_t n) {
     // Resize the vector data in the binary.  This contains BufferOffets.
     ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), n);
-    msgs_.resize(n);
   }
 
   void Clear() {
@@ -1056,18 +1040,14 @@ class MessageVectorField : public Field {
     auto data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     for (uint32_t i = 0; i < hdr->num_elements; i++) {
-      if (msgs_[i].empty()) {
-        continue;
-      }
-      msgs_[i].Clear();
       if (data[i] == 0) {
         continue;
       }
+      T(GetRuntime(), data[i]).Clear();
       GetBuffer()->Free(GetRuntime()->ToAddress(data[i]));
     }
     ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header());
-    msgs_.clear();
   }
 
   size_t size() const { return NumElements(); }
@@ -1079,11 +1059,10 @@ class MessageVectorField : public Field {
       return *this;
     }
     Clear();
-    other.Populate();
     reserve(other.size());
     for (size_t i = 0; i < other.size(); i++) {
-      T* m = Add();
-      if (absl::Status s = m->CloneFrom(other[i].Get()); !s.ok()) {
+      T m = Add();
+      if (absl::Status s = m.CloneFrom(other.Get(i)); !s.ok()) {
         return *this;
       }
     }
@@ -1102,57 +1081,49 @@ class MessageVectorField : public Field {
   }
 
   bool operator==(const MessageVectorField<T>& other) const {
-    return msgs_ != other.msgs_;
+    if (size() != other.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < size(); ++i) {
+      if (Get(i) != other.Get(i)) {
+        return false;
+      }
+    }
+    return true;
   }
   bool operator!=(const MessageVectorField<T>& other) const {
-    return !(*this == other);
+    return !operator==(other);
   }
 
-  std::vector<MessageObject<T>>& Get() { return msgs_; }
-
-  const std::vector<MessageObject<T>>& Get() const { return msgs_; }
-
-  void Populate() const {
-    if (!msgs_.empty()) {
-      return;
+  std::vector<T> Get() const {
+    std::vector<T> result;
+    result.reserve(size());
+    for (size_t i = 0; i < size(); ++i) {
+      result.push_back(Get(i));
     }
-    // Populate the msgs vector with MessageObject objects referring to the
-    // binary messages.
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset == -1) {
-      return;
-    }
-    auto hdr = Header(static_cast<uint32_t>(offset));
-    msgs_.resize(hdr->num_elements);
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    for (uint32_t i = 0; i < hdr->num_elements; i++) {
-      if (data[i] == 0) {
-        continue;
-      }
-      MessageObject<T> obj(GetRuntime(), data[i]);
-      msgs_[i] = std::move(obj);
-    }
+    return result;
   }
+
+  void Populate() const {}
 
   size_t SerializedSize() const {
-    Populate();
     size_t length = 0;
     for (size_t i = 0; i < size(); i++) {
+      const T message = Get(i);
       length += phaser::ProtoBuffer::LengthDelimitedSize(
-          Number(), msgs_[i].SerializedSize());
+          Number(), message.SerializedSize());
     }
     return length;
   }
 
   absl::Status Serialize(ProtoBuffer& buffer) const {
-    Populate();
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
     }
 
-    for (const auto& msg : msgs_) {
+    for (size_t i = 0; i < sz; ++i) {
+      const T msg = Get(i);
       if (absl::Status status = buffer.SerializeLengthDelimitedHeader(
               Number(), msg.SerializedSize());
           !status.ok()) {
@@ -1171,19 +1142,16 @@ class MessageVectorField : public Field {
       return v.status();
     }
     ProtoBuffer msg_buffer(*v);
-    T* msg = Add();
-    if (absl::Status status = msg->Deserialize(msg_buffer); !status.ok()) {
+    T msg = Add();
+    if (absl::Status status = msg.Deserialize(msg_buffer); !status.ok()) {
       return status;
     }
     return absl::OkStatus();
   }
 
   void SyncToPayload() const {
-    Populate();
-    for (const auto& message : msgs_) {
-      if (!message.empty()) {
-        message.Get().SyncToPayload();
-      }
+    for (size_t i = 0; i < size(); ++i) {
+      Get(i).SyncToPayload();
     }
   }
 
@@ -1233,8 +1201,6 @@ class MessageVectorField : public Field {
 
   uint32_t source_offset_;
   ::toolbelt::BufferOffset relative_binary_offset_;
-  mutable std::vector<MessageObject<T>> msgs_;
-  MessageObject<T> empty_;
 };
 
 // This is a little more complex.  The binary vector contains a set of
@@ -1267,137 +1233,138 @@ class StringVectorField : public Field {
         source_offset_(other.source_offset_),
         relative_binary_offset_(other.relative_binary_offset_) {}
 
-  const NonEmbeddedStringField& operator[](int index) const {
+  std::string_view operator[](int index) const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset == -1) {
-      return empty_;
+      return {};
     }
     auto hdr = Header(static_cast<uint32_t>(offset));
     if (static_cast<uint32_t>(index) >= hdr->num_elements) {
-      return empty_;
+      return {};
     }
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     if (data[index] == 0) {
-      return empty_;
+      return {};
     }
-    if (static_cast<size_t>(index) >= strings_.size()) {
-      strings_.resize(static_cast<size_t>(index) + 1);
-    }
-    if (strings_[static_cast<size_t>(index)].IsPlaceholder()) {
-      strings_[static_cast<size_t>(index)] = NonEmbeddedStringField(
-          Message::GetMessage(this, source_offset_), data[index]);
-    }
-    return strings_[static_cast<size_t>(index)];
+    return GetBuffer()->GetStringView(data[index]);
   }
 
-  NonEmbeddedStringField& operator[](int index) {
-    return const_cast<NonEmbeddedStringField&>(
-        static_cast<const StringVectorField*>(this)->operator[](index));
+  NonEmbeddedStringField operator[](int index) {
+    int32_t offset = FindFieldOffset(source_offset_);
+    if (offset == -1) {
+      return {};
+    }
+    auto hdr = Header(static_cast<uint32_t>(offset));
+    if (static_cast<uint32_t>(index) >= hdr->num_elements) {
+      return {};
+    }
+    ::toolbelt::BufferOffset* data =
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    return NonEmbeddedStringField(Message::GetMessage(this, source_offset_),
+                                  data[index]);
   }
 
-  using value_type = NonEmbeddedStringField;
-  using reference = value_type&;
-  using const_reference = value_type&;
-  using pointer = value_type*;
-  using const_pointer = const value_type*;
+  using value_type = std::string_view;
+  using reference = std::string_view;
+  using const_reference = std::string_view;
+  using pointer = void;
+  using const_pointer = void;
   using size_type = size_t;
   using difference_type = ptrdiff_t;
-  using iterator = typename std::vector<NonEmbeddedStringField>::iterator;
-  using const_iterator =
-      typename std::vector<NonEmbeddedStringField>::const_iterator;
-  using reverse_iterator =
-      typename std::vector<NonEmbeddedStringField>::reverse_iterator;
-  using const_reverse_iterator =
-      typename std::vector<NonEmbeddedStringField>::const_reverse_iterator;
+  class const_iterator {
+   public:
+    using iterator_category = std::bidirectional_iterator_tag;
+    using value_type = std::string_view;
+    using difference_type = ptrdiff_t;
+    using pointer = void;
+    using reference = std::string_view;
 
-  iterator begin() {
-    Populate();
-    return strings_.begin();
-  }
-  iterator end() {
-    Populate();
-    return strings_.end();
-  }
-  reverse_iterator rbegin() {
-    Populate();
-    return strings_.rbegin();
-  }
-  reverse_iterator rend() {
-    Populate();
-    return strings_.rend();
-  }
+    const_iterator() = default;
+    const_iterator(const StringVectorField* field, size_t index)
+        : field_(field), index_(index) {}
+    std::string_view operator*() const { return field_->Get(index_); }
+    const_iterator& operator++() {
+      ++index_;
+      return *this;
+    }
+    const_iterator operator++(int) {
+      const_iterator result = *this;
+      ++*this;
+      return result;
+    }
+    const_iterator& operator--() {
+      --index_;
+      return *this;
+    }
+    const_iterator operator--(int) {
+      const_iterator result = *this;
+      --*this;
+      return result;
+    }
+    bool operator==(const const_iterator& other) const {
+      return field_ == other.field_ && index_ == other.index_;
+    }
+    bool operator!=(const const_iterator& other) const {
+      return !(*this == other);
+    }
+
+   private:
+    const StringVectorField* field_ = nullptr;
+    size_t index_ = 0;
+  };
+  using iterator = const_iterator;
+  using reverse_iterator = std::reverse_iterator<iterator>;
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+  iterator begin() { return iterator(this, 0); }
+  iterator end() { return iterator(this, size()); }
+  reverse_iterator rbegin() { return reverse_iterator(end()); }
+  reverse_iterator rend() { return reverse_iterator(begin()); }
   const_iterator begin() const {
-    Populate();
-    return strings_.begin();
+    return const_iterator(this, 0);
   }
   const_iterator end() const {
-    Populate();
-    return strings_.end();
+    return const_iterator(this, size());
   }
   const_iterator cbegin() const {
-    Populate();
-    return strings_.cbegin();
+    return begin();
   }
   const_iterator cend() const {
-    Populate();
-    return strings_.cend();
+    return end();
   }
   const_reverse_iterator rbegin() const {
-    Populate();
-    return strings_.rbegin();
+    return const_reverse_iterator(end());
   }
   const_reverse_iterator rend() const {
-    Populate();
-    return strings_.rend();
+    return const_reverse_iterator(begin());
   }
   const_reverse_iterator crbegin() const {
-    Populate();
-    return strings_.crbegin();
+    return rbegin();
   }
   const_reverse_iterator crend() const {
-    Populate();
-    return strings_.crend();
+    return rend();
   }
 
   size_t size() const { return NumElements(); }
-  NonEmbeddedStringField* data() {
-    Populate();
-    return strings_.data();
-  }
-  const NonEmbeddedStringField* data() const {
-    Populate();
-    return strings_.data();
-  }
+  NonEmbeddedStringField* data() = delete;
+  const NonEmbeddedStringField* data() const = delete;
   bool empty() const { return size() == 0; }
   size_t Size() const { return NumElements(); }
 
-  NonEmbeddedStringField& front() {
-    Populate();
-    return strings_.front();
-  }
-  const NonEmbeddedStringField& front() const {
-    Populate();
-    return strings_.front();
-  }
-  NonEmbeddedStringField& back() {
-    Populate();
-    return strings_.back();
-  }
-  const NonEmbeddedStringField& back() const {
-    Populate();
-    return strings_.back();
-  }
+  NonEmbeddedStringField front() { return (*this)[0]; }
+  std::string_view front() const { return Get(0); }
+  NonEmbeddedStringField back() { return (*this)[static_cast<int>(size() - 1)]; }
+  std::string_view back() const { return Get(size() - 1); }
 
   StringVectorField& operator=(const StringVectorField& other) {
     if (this == &other) {
       return *this;
     }
     Clear();
-    other.Populate();
     reserve(other.size());
     for (size_t i = 0; i < other.size(); i++) {
-      push_back(other[i].Get());
+      push_back(other.Get(i));
     }
     ResetFieldCache();
     return *this;
@@ -1419,47 +1386,44 @@ class StringVectorField : public Field {
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), hdr_offset);
 
-    // Add a source string field.
-    NonEmbeddedStringField field(Message::GetMessage(this, source_offset_),
-                                 hdr_offset);
-    strings_.push_back(std::move(field));
   }
 
-  void Add(const char* s, size_t len) { push_back(std::string(s, len)); }
+  void Add(const char* s, size_t len) {
+    push_back(std::string_view(s, len));
+  }
   template <typename Str>
   void Add(Str s) {
     push_back(s);
   }
 
   std::string_view Get(size_t index) const {
-    return (*this)[static_cast<int>(index)].Get();
+    return (*this)[static_cast<int>(index)];
   }
 
   template <typename Str>
   void Set(size_t index, Str s) {
-    if (static_cast<size_t>(index) >= strings_.size()) {
+    if (index >= size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);
-      strings_.resize(static_cast<size_t>(index) + 1);
+          GetBufferAddr(), Header(), index + 1);
     }
 
-    if (strings_[static_cast<size_t>(index)].IsPlaceholder()) {
+    auto hdr = Header();
+    ::toolbelt::BufferOffset* data =
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (data[index] == 0) {
       // Allocate string header in buffer.
       void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
           GetBufferAddr(), sizeof(toolbelt::StringHeader));
       ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
 
-      auto hdr = Header();
-      ::toolbelt::BufferOffset* data =
+      hdr = Header();
+      data =
           GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
       data[index] = hdr_offset;
-
-      // Add a source string field.
-      NonEmbeddedStringField field(Message::GetMessage(this, source_offset_),
-                                   hdr_offset);
-      strings_[static_cast<size_t>(index)] = std::move(field);
     }
-    strings_[static_cast<size_t>(index)].Set(s);
+    NonEmbeddedStringField(Message::GetMessage(this, source_offset_),
+                           data[index])
+        .Set(s);
   }
 
   size_t capacity() const {
@@ -1477,23 +1441,20 @@ class StringVectorField : public Field {
   void reserve(size_t n) {
     ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), n);
-    strings_.reserve(n);
   }
 
   void resize(size_t n) {
     // Resize the vector data in the binary.  This contains BufferOffets.
     ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), n);
-    strings_.resize(n);
   }
 
   void Clear() {
-    for (auto& s : strings_) {
-      if (!s.IsPlaceholder()) {
-        s.Clear();
-      }
+    const size_t count = size();
+    for (size_t i = 0; i < count; ++i) {
+      NonEmbeddedStringField field = (*this)[static_cast<int>(i)];
+      field.Clear();
     }
-    strings_.clear();
     ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header());
   }
@@ -1508,61 +1469,48 @@ class StringVectorField : public Field {
   }
 
   bool operator==(const StringVectorField& other) const {
-    return strings_ == other.strings_;
+    if (size() != other.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < size(); ++i) {
+      if (Get(i) != other.Get(i)) {
+        return false;
+      }
+    }
+    return true;
   }
   bool operator!=(const StringVectorField& other) const {
     return !(*this == other);
   }
 
-  // Populate the vector with the strings from the binary message.  This must be
-  // called before you access the vector via iterators.
-  void Populate() const {
-    if (!strings_.empty()) {
-      return;
-    }
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset == -1) {
-      return;
-    }
-    auto hdr = Header(static_cast<uint32_t>(offset));
-    strings_.resize(hdr->num_elements);
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    for (uint32_t i = 0; i < hdr->num_elements; i++) {
-      if (data[i] == 0) {
-        continue;
-      }
-      strings_[i] = NonEmbeddedStringField(
-          Message::GetMessage(this, source_offset_), data[i]);
-    }
-  }
+  void Populate() const {}
 
   std::vector<std::string_view> Get() const {
     std::vector<std::string_view> r;
-    for (const auto& s : strings_) {
-      r.push_back(s.Get());
+    r.reserve(size());
+    for (size_t i = 0; i < size(); ++i) {
+      r.push_back(Get(i));
     }
     return r;
   }
 
   size_t SerializedSize() const {
-    Populate();
     size_t length = 0;
     for (size_t i = 0; i < size(); i++) {
-      length += phaser::ProtoBuffer::LengthDelimitedSize(
-          Number(), strings_[i].SerializedSize());
+      length +=
+          phaser::ProtoBuffer::LengthDelimitedSize(Number(), Get(i).size());
     }
     return length;
   }
 
   absl::Status Serialize(ProtoBuffer& buffer) const {
-    Populate();
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
     }
 
-    for (const auto& s : strings_) {
+    for (size_t i = 0; i < sz; ++i) {
+      const std::string_view s = Get(i);
       if (absl::Status status =
               buffer.SerializeLengthDelimited(Number(), s.data(), s.size());
           !status.ok()) {
@@ -1623,8 +1571,6 @@ class StringVectorField : public Field {
   }
   uint32_t source_offset_;
   ::toolbelt::BufferOffset relative_binary_offset_;
-  mutable std::vector<NonEmbeddedStringField> strings_;
-  NonEmbeddedStringField empty_;
 };
 
 #undef DECLARE_ZERO_COPY_VECTOR_BITS

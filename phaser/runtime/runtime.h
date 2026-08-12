@@ -135,7 +135,7 @@ inline std::ostream& operator<<(std::ostream& os, const AnyMessage& msg) {
     os << "{\n";
     msg.value_.Indent(2);
     msg.value_.PrintIndent(os);
-    std::string type = msg.MessageTypeName();
+    std::string type(msg.MessageTypeName());
     os << "[" << msg.type_url() << "] {\n";
     msg.value_.Indent(2);
     absl::StatusOr<const Message*> s =

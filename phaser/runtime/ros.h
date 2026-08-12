@@ -14,11 +14,29 @@
 #include <cstdint>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "phaser/runtime/fields.h"
 
 namespace phaser {
+
+struct RosHeaderView {
+  uint32_t seq = 0;
+  ::ros::Time stamp;
+  std::string_view frame_id;
+
+  ::std_msgs::Header ToOwned() const {
+    ::std_msgs::Header result;
+    result.seq = seq;
+    result.stamp = stamp;
+    if (!frame_id.empty()) {
+      result.frame_id.assign(frame_id.data(), frame_id.size());
+    }
+    return result;
+  }
+};
+
 namespace internal {
 
 struct RosTimeTraits {
@@ -80,6 +98,21 @@ struct RosHeaderTraits {
   }
 
   static void Print(std::ostream& os, const RosType& value) {
+    os << "seq: " << value.seq << " stamp {";
+    RosTimeTraits::Print(os, value.stamp);
+    os << "} frame_id: \"" << value.frame_id << "\"";
+  }
+
+  template <typename Backend>
+  static RosHeaderView LoadView(const Backend& backend) {
+    return {
+        .seq = static_cast<uint32_t>(backend.seq.Get()),
+        .stamp = backend.stamp.Get(),
+        .frame_id = backend.frame_id.Get(),
+    };
+  }
+
+  static void Print(std::ostream& os, RosHeaderView value) {
     os << "seq: " << value.seq << " stamp {";
     RosTimeTraits::Print(os, value.stamp);
     os << "} frame_id: \"" << value.frame_id << "\"";
@@ -214,7 +247,181 @@ template <typename Backend>
 using RosDurationField =
     RosMessageField<Backend, internal::RosDurationTraits>;
 
+template <typename Owner>
+class RosHeaderMutableView {
+ public:
+  class FrameIdProxy {
+   public:
+    explicit FrameIdProxy(Owner* owner) : owner_(owner) {}
+    operator std::string_view() const { return owner_->Get().frame_id; }
+    std::string_view Get() const { return owner_->Get().frame_id; }
+    friend bool operator==(const FrameIdProxy& lhs, std::string_view rhs) {
+      return lhs.Get() == rhs;
+    }
+    friend bool operator==(std::string_view lhs, const FrameIdProxy& rhs) {
+      return lhs == rhs.Get();
+    }
+    friend bool operator!=(const FrameIdProxy& lhs, std::string_view rhs) {
+      return !(lhs == rhs);
+    }
+    friend bool operator!=(std::string_view lhs, const FrameIdProxy& rhs) {
+      return !(lhs == rhs);
+    }
+    template <typename String>
+    FrameIdProxy& operator=(String value) {
+      owner_->SetFrameId(value);
+      return *this;
+    }
+
+   private:
+    Owner* owner_;
+  };
+
+  explicit RosHeaderMutableView(Owner* owner)
+      : owner_(owner),
+        seq(owner->Get().seq),
+        stamp(owner->Get().stamp),
+        frame_id(owner) {}
+  RosHeaderMutableView(const RosHeaderMutableView&) = delete;
+  RosHeaderMutableView& operator=(const RosHeaderMutableView&) = delete;
+  RosHeaderMutableView(RosHeaderMutableView&& other) noexcept
+      : owner_(other.owner_),
+        seq(other.seq),
+        stamp(other.stamp),
+        frame_id(owner_) {
+    other.active_ = false;
+  }
+  ~RosHeaderMutableView() {
+    if (active_) {
+      owner_->CommitMutable(seq, stamp);
+    }
+  }
+
+  RosHeaderView Get() const {
+    return {.seq = seq, .stamp = stamp, .frame_id = frame_id.Get()};
+  }
+  ::std_msgs::Header ToOwned() const { return Get().ToOwned(); }
+
+ private:
+  Owner* owner_;
+  bool active_ = true;
+
+ public:
+  uint32_t seq;
+  ::ros::Time stamp;
+  FrameIdProxy frame_id;
+};
+
 template <typename Backend>
-using RosHeaderField = RosMessageField<Backend, internal::RosHeaderTraits>;
+class RosHeaderField : public IndirectMessageField<Backend> {
+ public:
+  using Base = IndirectMessageField<Backend>;
+  using MutableView = RosHeaderMutableView<RosHeaderField<Backend>>;
+  using Base::Base;
+
+  struct ConstArrow {
+    RosHeaderView view;
+    const RosHeaderView* operator->() const { return &view; }
+  };
+  struct MutableArrow {
+    MutableView view;
+    MutableView* operator->() { return &view; }
+  };
+
+  RosHeaderField() = default;
+  RosHeaderField(const RosHeaderField&) = default;
+  RosHeaderField(RosHeaderField&&) = default;
+
+  RosHeaderField& operator=(const RosHeaderField& other) {
+    if (this != &other) {
+      Set(other.Get());
+    }
+    return *this;
+  }
+  RosHeaderField& operator=(RosHeaderField&& other) {
+    if (this != &other) {
+      Set(other.Get());
+    }
+    return *this;
+  }
+  RosHeaderField& operator=(const ::std_msgs::Header& value) {
+    Set(value);
+    return *this;
+  }
+
+  operator RosHeaderView() const { return Get(); }
+  RosHeaderView operator*() const { return Get(); }
+  MutableView operator*() { return Mutable(); }
+  ConstArrow operator->() const { return ConstArrow{Get()}; }
+  MutableArrow operator->() { return MutableArrow{Mutable()}; }
+
+  RosHeaderView Get() const {
+    if (!Base::IsPresent()) {
+      return {};
+    }
+    return internal::RosHeaderTraits::LoadView(Base::Get());
+  }
+
+  ::std_msgs::Header ToOwned() const { return Get().ToOwned(); }
+
+  MutableView Mutable() {
+    Base::Mutable();
+    return MutableView(this);
+  }
+
+  template <typename String>
+  void SetFrameId(String value) {
+    Backend* backend = Base::Mutable();
+    backend->frame_id = value;
+  }
+
+  void CommitMutable(uint32_t seq, const ::ros::Time& stamp) {
+    Backend* backend = Base::Mutable();
+    backend->seq = seq;
+    backend->stamp = stamp;
+    backend->SyncToPayload();
+  }
+
+  void Set(const ::std_msgs::Header& value) {
+    auto backend = Mutable();
+    backend.seq = value.seq;
+    backend.stamp = value.stamp;
+    backend.frame_id = value.frame_id;
+  }
+  void Set(RosHeaderView value) {
+    auto backend = Mutable();
+    backend.seq = value.seq;
+    backend.stamp = value.stamp;
+    backend.frame_id = value.frame_id;
+  }
+
+  bool IsPresent() const { return Base::IsPresent(); }
+
+  void Clear() { Base::Clear(); }
+
+  void SyncToPayload() const {
+    if (Base::IsPresent()) {
+      Base::Get().SyncToPayload();
+    }
+  }
+
+  size_t SerializedSize() const {
+    SyncToPayload();
+    return Base::SerializedSize();
+  }
+  absl::Status Serialize(ProtoBuffer& buffer) const {
+    SyncToPayload();
+    return Base::Serialize(buffer);
+  }
+  absl::Status Deserialize(ProtoBuffer& buffer) {
+    return Base::Deserialize(buffer);
+  }
+
+  friend std::ostream& operator<<(std::ostream& os,
+                                  const RosHeaderField& field) {
+    internal::RosHeaderTraits::Print(os, field.Get());
+    return os;
+  }
+};
 
 }  // namespace phaser

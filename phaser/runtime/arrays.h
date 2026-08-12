@@ -30,8 +30,7 @@ namespace phaser {
 
 inline bool HasMutablePayload(
     const std::shared_ptr<MessageRuntime>& runtime) {
-  return runtime != nullptr &&
-         dynamic_cast<const MutableMessageRuntime*>(runtime.get()) != nullptr;
+  return runtime != nullptr && runtime->IsMutable();
 }
 
 template <typename Field, typename Value>
@@ -900,16 +899,16 @@ class MessageArrayField : public MessageVectorField<T> {
   MessageArrayField(const MessageArrayField&) = default;
   MessageArrayField(MessageArrayField&&) = default;
 
-  const MessageObject<T>& operator[](size_t index) const {
-    return ConstObject(index);
+  T operator[](size_t index) const {
+    return MessageVectorField<T>::operator[](static_cast<int>(index));
   }
 
-  MessageObject<T>& operator[](size_t index) { return MutableObject(index); }
+  T operator[](size_t index) { return MutableObject(index); }
 
-  MessageObject<T>& front() { return (*this)[0]; }
-  const MessageObject<T>& front() const { return (*this)[0]; }
-  MessageObject<T>& back() { return (*this)[N - 1]; }
-  const MessageObject<T>& back() const { return (*this)[N - 1]; }
+  T front() { return (*this)[0]; }
+  T front() const { return (*this)[0]; }
+  T back() { return (*this)[N - 1]; }
+  T back() const { return (*this)[N - 1]; }
 
   using typename MessageVectorField<T>::iterator;
   using typename MessageVectorField<T>::const_iterator;
@@ -958,7 +957,7 @@ class MessageArrayField : public MessageVectorField<T> {
     if (parsed_count_ > N) {
       return absl::InvalidArgumentError("array_size overflow");
     }
-    while (MessageVectorField<T>::Get().size() < N) {
+    while (MessageVectorField<T>::size() < N) {
       MessageVectorField<T>::Add();
     }
     parsed_count_ = 0;
@@ -984,7 +983,7 @@ class MessageArrayField : public MessageVectorField<T> {
     }
     Clear();
     for (size_t i = 0; i < N; i++) {
-      if (absl::Status s = MutableObject(i).Mutable()->CloneFrom(other[i].Get());
+      if (absl::Status s = MutableObject(i).CloneFrom(other.Get(i));
           !s.ok()) {
         return *this;
       }
@@ -1001,15 +1000,9 @@ class MessageArrayField : public MessageVectorField<T> {
   size_t max_size() const { return N; }
   bool empty() const { return N == 0; }
 
-  const T& Get(size_t index) const {
-    const MessageObject<T>& obj = ConstObject(index);
-    if (obj.empty()) {
-      return EmptyObject().Get();
-    }
-    return obj.Get();
-  }
+  T Get(size_t index) const { return (*this)[index]; }
 
-  T* Mutable(size_t index) { return MutableObject(index).Mutable(); }
+  T Mutable(size_t index) { return MutableObject(index); }
 
   ::toolbelt::BufferOffset BinaryEndOffset() const {
     return MessageVectorField<T>::BinaryEndOffset();
@@ -1020,7 +1013,7 @@ class MessageArrayField : public MessageVectorField<T> {
 
   bool operator==(const MessageArrayField& other) const {
     for (size_t i = 0; i < N; i++) {
-      if ((*this)[i].Get() != other[i].Get()) {
+      if (Get(i) != other.Get(i)) {
         return false;
       }
     }
@@ -1062,14 +1055,11 @@ class MessageArrayField : public MessageVectorField<T> {
     if (!v.ok()) {
       return v.status();
     }
-    T* msg = nullptr;
-    if (parsed_count_ < MessageVectorField<T>::Get().size()) {
-      msg = MessageVectorField<T>::Mutable(parsed_count_);
-    } else {
-      msg = MessageVectorField<T>::Add();
-    }
+    T msg = parsed_count_ < MessageVectorField<T>::size()
+                ? MessageVectorField<T>::Mutable(parsed_count_)
+                : MessageVectorField<T>::Add();
     ProtoBuffer msg_buffer(*v);
-    if (absl::Status status = msg->Deserialize(msg_buffer); !status.ok()) {
+    if (absl::Status status = msg.Deserialize(msg_buffer); !status.ok()) {
       return status;
     }
     parsed_count_++;
@@ -1077,36 +1067,24 @@ class MessageArrayField : public MessageVectorField<T> {
   }
 
  private:
-  static const MessageObject<T>& EmptyObject() {
-    static const MessageObject<T> empty;
-    return empty;
-  }
-
-  const MessageObject<T>& ConstObject(size_t index) const {
-    if (index >= N) {
-      return EmptyObject();
-    }
-    return MessageVectorField<T>::operator[](static_cast<int>(index));
-  }
-
-  MessageObject<T>& MutableObject(size_t index) {
+  T MutableObject(size_t index) {
     if (!HasMutablePayload(MessageVectorField<T>::GetRuntime())) {
-      return const_cast<MessageObject<T>&>(ConstObject(index));
+      return MessageVectorField<T>::operator[](static_cast<int>(index));
     }
-    while (MessageVectorField<T>::Get().size() <= index) {
+    while (MessageVectorField<T>::size() <= index) {
       MessageVectorField<T>::Add();
     }
-    while (MessageVectorField<T>::Get().size() < N) {
+    while (MessageVectorField<T>::size() < N) {
       MessageVectorField<T>::Add();
     }
-    return MessageVectorField<T>::operator[](static_cast<int>(index));
+    return MessageVectorField<T>::Mutable(index);
   }
 
   void EnsureExtent() {
     if (!HasMutablePayload(MessageVectorField<T>::GetRuntime())) {
       return;
     }
-    while (MessageVectorField<T>::Get().size() < N) {
+    while (MessageVectorField<T>::size() < N) {
       MessageVectorField<T>::Add();
     }
   }
@@ -1144,27 +1122,30 @@ class StringArrayField : public Field {
         relative_binary_offset_(other.relative_binary_offset_),
         parsed_count_(other.parsed_count_) {}
 
-  const NonEmbeddedStringField& operator[](size_t index) const {
+  std::string_view operator[](size_t index) const { return Get(index); }
+
+  NonEmbeddedStringField operator[](size_t index) {
+    EnsureMutableExtent();
     return ConstSlot(index);
   }
 
-  NonEmbeddedStringField& operator[](size_t index) {
-    EnsureMutableExtent();
-    return strings_[index];
-  }
-
-  const NonEmbeddedStringField& front() const { return ConstSlot(0); }
-  NonEmbeddedStringField& front() { return (*this)[0]; }
-  const NonEmbeddedStringField& back() const { return ConstSlot(N - 1); }
-  NonEmbeddedStringField& back() { return (*this)[N - 1]; }
+  std::string_view front() const { return Get(0); }
+  NonEmbeddedStringField front() { return (*this)[0]; }
+  std::string_view back() const { return Get(N - 1); }
+  NonEmbeddedStringField back() { return (*this)[N - 1]; }
 
   using value_type = NonEmbeddedStringField;
-  using reference = value_type&;
-  using const_reference = value_type&;
+  using reference = NonEmbeddedStringField;
+  using const_reference = std::string_view;
   using size_type = size_t;
   using difference_type = ptrdiff_t;
-  using iterator = typename std::array<NonEmbeddedStringField, N>::iterator;
   struct ConstIterator {
+    using iterator_category = std::bidirectional_iterator_tag;
+    using value_type = std::string_view;
+    using difference_type = ptrdiff_t;
+    using pointer = void;
+    using reference = std::string_view;
+
     const StringArrayField* field = nullptr;
     size_t index = 0;
 
@@ -1179,9 +1160,7 @@ class StringArrayField : public Field {
       --index;
       return *this;
     }
-    const NonEmbeddedStringField& operator*() const {
-      return field->ConstSlot(index);
-    }
+    std::string_view operator*() const { return field->Get(index); }
     bool operator==(const ConstIterator& it) const {
       return field == it.field && index == it.index;
     }
@@ -1206,9 +1185,7 @@ class StringArrayField : public Field {
       ++index;
       return *this;
     }
-    const NonEmbeddedStringField& operator*() const {
-      return field->ConstSlot(index);
-    }
+    std::string_view operator*() const { return field->Get(index); }
     bool operator==(const ConstReverseIterator& it) const {
       return field == it.field && index == it.index;
     }
@@ -1216,30 +1193,22 @@ class StringArrayField : public Field {
       return !operator==(it);
     }
   };
+  using iterator = ConstIterator;
   using const_iterator = ConstIterator;
-  using reverse_iterator =
-      typename std::array<NonEmbeddedStringField, N>::reverse_iterator;
+  using reverse_iterator = ConstReverseIterator;
   using const_reverse_iterator = ConstReverseIterator;
 
-  iterator begin() {
-    EnsureMutableExtent();
-    return strings_.begin();
-  }
-  iterator end() {
-    EnsureMutableExtent();
-    return strings_.end();
-  }
+  iterator begin() { return iterator(this, 0); }
+  iterator end() { return iterator(this, N); }
   const_iterator begin() const { return const_iterator(this, 0); }
   const_iterator end() const { return const_iterator(this, N); }
   const_iterator cbegin() const { return begin(); }
   const_iterator cend() const { return end(); }
   reverse_iterator rbegin() {
-    EnsureMutableExtent();
-    return strings_.rbegin();
+    return reverse_iterator(this, N == 0 ? static_cast<size_t>(-1) : N - 1);
   }
   reverse_iterator rend() {
-    EnsureMutableExtent();
-    return strings_.rend();
+    return reverse_iterator(this, static_cast<size_t>(-1));
   }
   const_reverse_iterator rbegin() const {
     return const_reverse_iterator(
@@ -1304,11 +1273,8 @@ class StringArrayField : public Field {
   size_t max_size() const { return N; }
   bool empty() const { return N == 0; }
 
-  NonEmbeddedStringField* data() {
-    EnsureMutableExtent();
-    return strings_.data();
-  }
-  const NonEmbeddedStringField* data() const { return strings_.data(); }
+  NonEmbeddedStringField* data() = delete;
+  const NonEmbeddedStringField* data() const = delete;
 
   std::string_view Get(size_t index) const {
     const NonEmbeddedStringField& slot = ConstSlot(index);

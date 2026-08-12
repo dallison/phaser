@@ -49,11 +49,12 @@ So, when you set a field using the `set_` function, the data is placed in the `b
 buffer using information held in the `source` class.  This makes the source classes very
 lightweight, containing just metadata about the binary message.
 
-When you read a field from a source class, the data is read from the binary message.  However,
+When you read a field from a source class, the data is read from the binary message. However,
 this is not done directly since the binary message may be a different version from that
-doing the reading (fields may be been added or changed).  Therefore, reading a field results
-in the use of `field metadata` that is held in a small array inside the binary message.  This
-allows the software to use newer or older version of messages, one of the mainstays of
+doing the reading (fields may have been added or changed). Reading therefore uses `field
+metadata` stored inside the binary message. Dense field-number ranges use a direct-indexed
+table, while fields outside that range use a sorted sparse table and binary search. This
+allows the software to use newer or older versions of messages, one of the mainstays of
 protobuf's popularity.
 
 ## What's wrong with serialization?
@@ -259,13 +260,19 @@ for (int value : msg.values) { /* ... */ }
 ```
 
 Assigning one field proxy to another copies the field value; it does not rebind
-the destination proxy to the source message. Copying a generated ROS message
-deep-copies its payload. Iterators, references, pointers, and string views into
-a dynamic message can be invalidated by an operation that grows or compacts its
-payload buffer, so reacquire them after mutation.
+the destination proxy to the source message. Copying an owning generated ROS
+message deep-copies its payload, while copying a read-only message handle keeps
+a borrowed view of the caller-owned receive buffer. Iterators and string views
+into a dynamic message can be invalidated by an operation that grows or compacts
+its payload buffer, so reacquire them after mutation.
 
 `CreateReadonly` messages support const field access and serialization. A
 non-const proxy operation requires a mutable message.
+
+Repeated strings index and iterate as `std::string_view`. Repeated and
+fixed-array messages index and iterate as generated message handles returned by
+value; `add_*` and `mutable_*` message accessors also return handles by value.
+The collection `Get()` helpers materialize owning vectors and may allocate.
 
 ### ROS1 intrinsic types
 The ROS frontend recognizes three singular protobuf message declarations and
@@ -273,31 +280,36 @@ presents their fields as the corresponding ROS1 C++ types:
 
 - `google.protobuf.Timestamp` as `ros::Time`
 - `google.protobuf.Duration` as `ros::Duration`
-- `std_msgs.Header` as `std_msgs::Header`
+- mutable `std_msgs.Header` access as `std_msgs::Header`
+- read-only `std_msgs.Header` access as `phaser::RosHeaderView`
 
 `std_msgs.Header` is expected to contain `uint32 seq`, a
 `google.protobuf.Timestamp stamp`, and `string frame_id`. Generate it with a
 non-empty `add_namespace` so the Phaser backend type does not collide with the
 real ROS class.
 
-The proxies support values and both const and mutable references, so existing
+Mutable proxies support values and mutable references, so existing mutation
 functions can be called without adapters:
 
 ```c++
 void Advance(ros::Time& stamp);
 void UpdateHeader(std_msgs::Header& header);
-void Observe(const std_msgs::Header& header);
 
 Advance(msg.stamp);
 UpdateHeader(msg.header);
-Observe(msg.header);
+
+const auto& received = msg;
+phaser::RosHeaderView header = received.header.Get();
+std::string_view frame = header.frame_id;
+std_msgs::Header owned = header.ToOwned();  // May allocate.
 ```
 
-`ros::Time`, `ros::Duration`, and especially `std_msgs::Header` are cached
+`ros::Time`, `ros::Duration`, and mutable `std_msgs::Header` values are cached
 source objects rather than in-buffer overlays. Mutable-reference changes are
 automatically copied into the payload before native `Data()`/size access,
 protobuf serialization, copying, and recursive parent synchronization. Avoid
 accessing `runtime->pb` directly while such a mutable borrow may be dirty.
+`RosHeaderView` instead reads the payload directly and does not allocate.
 
 Pass the ROS libraries needed by generated headers through `cc_deps`:
 
@@ -394,14 +406,21 @@ absl::Status ParseFromROS(absl::Span<const char> input);
 
 static absl::Status ProtobufToROS(
     std::string_view protobuf, ::phaser::ROSBuffer& output);
+static absl::Status ROSToProtobuf(
+    absl::Span<const char> ros, ::phaser::ProtoBuffer& output);
+static bool ROSToProtobufArray(
+    absl::Span<const char> ros, void* output, size_t output_size);
 static absl::Status PhaserToROS(
     absl::Span<const char> phaser, ::phaser::ROSBuffer& output);
 static absl::Status ConvertToROS(
     absl::Span<const char> input, ::phaser::ROSBuffer& output);
 ```
 
-`SerializeToROS` reads a live message. `ProtobufToROS` parses protobuf wire
-bytes with the generated Phaser parser and then writes ROS bytes.
+`SerializeToROS` reads a live message. `ProtobufToROS` scans protobuf wire
+fields directly and emits ROS bytes in schema order. `ROSToProtobuf` scans ROS
+wire fields in schema order and writes protobuf tags directly; it uses counting
+passes to determine nested-message and packed-field lengths without staging
+encoded bytes or constructing a native message.
 `PhaserToROS` attaches a read-only message to a valid native Phaser payload for
 the duration of the conversion. `ConvertToROS` calls
 `InferMessageWireFormat` and selects either input path. Inference validates the
@@ -672,6 +691,28 @@ void Receive(const char* buffer, size_t buffer_size) {
 The runtime access to fields in the message validates that nothing can go outside
 of the buffer you pass to `CreateReadonly`.
 
+Caller-buffer `CreateMutable`, typed scalar/string/nested/repeated/oneof
+mutation, typed `Any::MutableAny<T>()`, native `CreateReadonly`, typed traversal,
+protobuf `SerializeToArray`, and fixed-buffer ROS serialization do not use the
+system heap. Runtime control data and exact generated type names are stored in
+the `PayloadBuffer`; generated roots reserve capacity for all statically
+reachable message types, and typed `Any` growth uses that same allocator.
+Successful protobuf and ROS deserialization into a fixed mutable message also
+use only the payload allocator. This includes protobuf `Any` values whose type
+is registered in the Phaser bank. `ProtobufToROS` is allocation-free when passed
+a sufficiently large fixed `ROSBuffer`; generated field scanners read protobuf
+wire values directly and emit fields in ROS schema order without constructing an
+intermediate protobuf or Phaser message. `ROSToProtobuf` provides the symmetric
+guarantee with a caller-provided `ProtoBuffer`. ROS Header deserialization also
+writes `frame_id` directly into payload storage from the wire view, avoiding an
+owning `std_msgs::Header` string allocation.
+Returned handles and `std::string_view` values borrow the receive buffer; the
+caller must keep that buffer alive and unchanged. Dynamic message ownership,
+reflection, debug output, unknown-type error construction, and APIs returning
+`std::string` or other owning containers are not covered by this contract.
+Mutable ROS Headers use the payload-backed `header.Mutable()` view; convert with
+`ToOwned()` only when an owning `std_msgs::Header` is required.
+
 
 ## Setting and getting fields
 Creating a message usually involves setting the values in its fields, and using one
@@ -860,6 +901,11 @@ directly.  It does not check that the message is of the given type, so make sure
 
 The `MutableAny` function creates a mutable message of type `T` in the `value` field and sets
 the `type_url`.  You can then create the message as you would do normally.
+
+For a native read-only message, `Is<T>()`, `As<T>()`, serialized-size
+calculation, and caller-buffer protobuf serialization construct the concrete
+embedded handle on the stack and do not allocate. `UnpackTo`, mutation,
+reflection, and debug helpers remain copying or owning operations.
 
 ## Serialization and deserialization
 Phaser's native format does not require serialization. To interoperate with
@@ -1290,15 +1336,24 @@ The binary version of a message can be seen in the following diagram:
 <img src="Phaser binary message.png"/>
 </div>
 
-The first 4 bytes of a message contains the offset to the message's `metadata`.  This is
-a fixed size array of field information specifying, for each field, where that field
-is located (offset from the start of the PayloadBuffer) and its id.  The field id
-is used as the a bit number for the `presence mask` which is located immediately
-after the metadata in the message.  The presence mask has a bit position for every
-primitive field and may not be present if there are no primitive fields.  The purpose
-of the metadata is to allow a message reader to locate the field in received
-data.  The message might have been created by a different version of the software
-and field locations might have changed or fields added or removed.
+The first 4 bytes of a message contain the offset to the message's field metadata.
+The generator selects the field-number interval for which a direct table saves
+space over individual entries. That interval stores an occupancy bitmap and one
+packed offset/id value per field-number slot. Fields outside the interval are
+stored as sorted `(number, offset, id)` entries and found by binary search. A
+message with dense fields `1..20` and an outlier at `50000`, for example, uses
+direct lookup for the first group and one sparse entry for the outlier.
+
+The field id is used as a bit number for the `presence mask`, which is located
+immediately after the metadata offset in the message. The presence mask has a
+bit position for every primitive field and may not be present if there are no
+primitive fields. Field proxies cache both the resolved offset and id after
+their first access, including a missing-field result.
+
+Hybrid metadata changes the native Phaser payload format. This runtime can
+still read legacy metadata using its previous all-fields binary-search layout,
+but older runtimes cannot read payloads generated with hybrid metadata. This
+does not affect protobuf or ROS wire-format compatibility.
 
 The rest of the message consists of the fixed size portion of the message.  This
 has space for every field in the message.  Primitive fields (like int32, double, etc.)

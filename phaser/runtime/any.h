@@ -15,6 +15,7 @@
 //
 #include <stddef.h>
 
+#include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
@@ -58,10 +59,14 @@ class AnyMessage : public Message {
           {.number = 1, .offset = 4, .id = 0},
           {.number = 2, .offset = 8, .id = 0},
       }};
-  static std::string Name() { return "Any"; }
-  static std::string FullName() { return "google.protobuf.Any"; }
-  std::string GetName() const override { return Name(); }
-  std::string GetFullName() const override { return FullName(); }
+  static constexpr std::string_view Name() { return "Any"; }
+  static constexpr std::string_view FullName() {
+    return "google.protobuf.Any";
+  }
+  std::string GetName() const override { return std::string(Name()); }
+  std::string GetFullName() const override {
+    return std::string(FullName());
+  }
 
   friend std::ostream& operator<<(std::ostream& os, const AnyMessage& msg);
 
@@ -109,13 +114,9 @@ class AnyMessage : public Message {
       size += type_url_.SerializedSize();
     }
     if (value_.IsPresent()) {
-      absl::StatusOr<const Message*> embedded = EmbeddedMessageForWire();
-      if (!embedded.ok()) {
-        return 0;
-      }
-      std::unique_ptr<const Message> embedded_owner(*embedded);
-      absl::StatusOr<size_t> inner_size =
-          PhaserBankSerializedSize(MessageTypeName(), **embedded);
+      absl::StatusOr<size_t> inner_size = PhaserBankSerializedSizeAtOffset(
+          MessageTypeName(), runtime,
+          runtime->ToOffset(const_cast<char*>(value().data())));
       if (!inner_size.ok()) {
         return 0;
       }
@@ -131,14 +132,11 @@ class AnyMessage : public Message {
       }
     }
     if (value_.IsPresent()) {
-      absl::StatusOr<const Message*> embedded = EmbeddedMessageForWire();
-      if (!embedded.ok()) {
-        return embedded.status();
-      }
-      std::unique_ptr<const Message> embedded_owner(*embedded);
-      const std::string type = MessageTypeName();
+      const std::string_view type = MessageTypeName();
+      const toolbelt::BufferOffset offset =
+          runtime->ToOffset(const_cast<char*>(value().data()));
       absl::StatusOr<size_t> inner_size =
-          PhaserBankSerializedSize(type, **embedded);
+          PhaserBankSerializedSizeAtOffset(type, runtime, offset);
       if (!inner_size.ok()) {
         return inner_size.status();
       }
@@ -148,7 +146,7 @@ class AnyMessage : public Message {
         return status;
       }
       if (absl::Status status =
-              PhaserBankSerializeToBuffer(type, **embedded, buffer);
+              PhaserBankSerializeAtOffset(type, runtime, offset, buffer);
           !status.ok()) {
         return status;
       }
@@ -160,8 +158,8 @@ class AnyMessage : public Message {
     clear_type_url();
     clear_value();
 
-    std::optional<std::string> pending_type_url;
-    std::optional<std::string> pending_wire_value;
+    std::optional<std::string_view> pending_type_url;
+    std::optional<absl::Span<char>> pending_wire_value;
 
     while (!buffer.Eof()) {
       absl::StatusOr<uint32_t> tag =
@@ -176,7 +174,7 @@ class AnyMessage : public Message {
           if (!url.ok()) {
             return url.status();
           }
-          pending_type_url = std::string(*url);
+          pending_type_url = *url;
           break;
         }
         case 2: {
@@ -185,8 +183,7 @@ class AnyMessage : public Message {
           if (!wire.ok()) {
             return wire.status();
           }
-          pending_wire_value =
-              std::string(wire->data(), wire->data() + wire->size());
+          pending_wire_value = *wire;
           break;
         }
         default:
@@ -200,16 +197,18 @@ class AnyMessage : public Message {
       type_url_.Set(*pending_type_url);
     }
     if (pending_wire_value) {
-      return MaterializeValueFromProtobufWire(*pending_wire_value);
+      return MaterializeValueFromProtobufWire(
+          std::string_view(pending_wire_value->data(),
+                           pending_wire_value->size()));
     }
     return absl::OkStatus();
   }
 
-  std::string MessageTypeName() const {
-    std::string type = std::string(type_url());
+  std::string_view MessageTypeName() const {
+    std::string_view type = type_url();
     size_t pos = type.find('/');
     if (pos != std::string::npos) {
-      return type.substr(pos + 1);
+      type.remove_prefix(pos + 1);
     }
     return type;
   }
@@ -223,7 +222,7 @@ class AnyMessage : public Message {
         return absl::FailedPreconditionError(
             "Any value without type_url cannot be cloned");
       }
-      const std::string type = msg.MessageTypeName();
+      const std::string type(msg.MessageTypeName());
       absl::StatusOr<Message*> dest = AllocateEmbeddedMessage(type);
       if (!dest.ok()) {
         return dest.status();
@@ -250,7 +249,12 @@ class AnyMessage : public Message {
   // the value.
   template <typename T>
   T MutableAny() {
-    set_type_url("type.googleapis.com/" + T::FullName());
+    constexpr std::string_view prefix = "type.googleapis.com/";
+    constexpr std::string_view full_name = T::FullName();
+    absl::Span<char> url =
+        type_url_.Allocate(prefix.size() + full_name.size(), false);
+    memcpy(url.data(), prefix.data(), prefix.size());
+    memcpy(url.data() + prefix.size(), full_name.data(), full_name.size());
     size_t size = T::BinarySize();
     absl::Span<char> memory = value_.Allocate(size, true);
     auto msg = T(runtime, runtime->ToOffset(memory.data()));
@@ -275,24 +279,22 @@ class AnyMessage : public Message {
   template <typename T>
   bool UnpackTo(T* msg) const {
     const char* addr = value().data();
-    std::unique_ptr<T> embedded_msg = std::make_unique<T>(
-        runtime, runtime->ToOffset(const_cast<char*>(addr)));
-    return msg->CloneFrom(*embedded_msg).ok();
+    const T embedded_msg(runtime,
+                         runtime->ToOffset(const_cast<char*>(addr)));
+    return msg->CloneFrom(embedded_msg).ok();
   }
 
   template <typename T>
   absl::Status UnpackToOrStatus(T* msg) const {
     const char* addr = value().data();
-    std::unique_ptr<T> embedded_msg = std::make_unique<T>(
-        runtime, runtime->ToOffset(const_cast<char*>(addr)));
-    return msg->CloneFrom(*embedded_msg);
+    const T embedded_msg(runtime,
+                         runtime->ToOffset(const_cast<char*>(addr)));
+    return msg->CloneFrom(embedded_msg);
   }
 
   template <typename T>
   bool Is() const {
-    const std::string& msg_type = T::FullName();
-    std::string t = MessageTypeName();
-    return t == msg_type;
+    return MessageTypeName() == T::FullName();
   }
 
   // Gets the value of the any field as a message of type T.  This does not
@@ -343,15 +345,6 @@ class AnyMessage : public Message {
  private:
   static constexpr int kValueFieldNumber = 2;
 
-  absl::StatusOr<const Message*> EmbeddedMessageForWire() const {
-    if (!has_type_url() || !has_value()) {
-      return absl::FailedPreconditionError(
-          "Any is missing type_url or embedded value");
-    }
-    const std::string type = MessageTypeName();
-    return PhaserBankMakeExisting(type, runtime, value().data());
-  }
-
   absl::StatusOr<Message*> AllocateEmbeddedMessage(const std::string& type) {
     absl::StatusOr<size_t> binary_size = PhaserBankBinarySize(type);
     if (!binary_size.ok()) {
@@ -362,18 +355,19 @@ class AnyMessage : public Message {
                                       runtime->ToOffset(memory.data()));
   }
 
-  absl::Status MaterializeValueFromProtobufWire(const std::string& wire) {
+  absl::Status MaterializeValueFromProtobufWire(std::string_view wire) {
     if (!has_type_url()) {
       return absl::InvalidArgumentError("Any value on wire requires type_url");
     }
-    const std::string type = MessageTypeName();
-    absl::StatusOr<Message*> embedded = AllocateEmbeddedMessage(type);
-    if (!embedded.ok()) {
-      return embedded.status();
+    const std::string_view type = MessageTypeName();
+    absl::StatusOr<size_t> binary_size = PhaserBankBinarySize(type);
+    if (!binary_size.ok()) {
+      return binary_size.status();
     }
-    std::unique_ptr<Message> embedded_owner(*embedded);
+    absl::Span<char> memory = value_.Allocate(*binary_size, true);
     ProtoBuffer sub(wire);
-    return PhaserBankDeserializeFromBuffer(type, **embedded, sub);
+    return PhaserBankDeserializeAtOffset(
+        type, runtime, runtime->ToOffset(memory.data()), sub);
   }
 
   phaser::StringField type_url_;

@@ -38,3 +38,13 @@ message RosCompileMessage {
     RosInner choice_inner = 18;
   }
 }
+
+message RosPackedFixedMessage {
+  repeated fixed32 fixed32_values = 1;
+  repeated sfixed32 sfixed32_values = 2;
+  repeated float float_values = 3;
+  repeated fixed64 fixed64_values = 4;
+  repeated sfixed64 sfixed64_values = 5;
+  repeated double double_values = 6;
+  repeated fixed64 fixed_array = 7 [(phaser.array_size) = 3];
+}

@@ -526,6 +526,10 @@ static struct InnerMessageBankRegister {
 } inner_message_bank_register;
 
 struct TestMessage : public Message {
+  inline static constexpr uint32_t kU1FieldNumbers[] = {107, 108};
+  inline static constexpr uint32_t kU2FieldNumbers[] = {109, 110};
+  inline static constexpr uint32_t kU3FieldNumbers[] = {111, 112};
+
   // Default constructor makes a dynamic payload buffer.
   TestMessage(size_t initial_size = 1024)
       : x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
@@ -535,9 +539,12 @@ struct TestMessage : public Message {
         vi32_(offsetof(TestMessage, vi32_), HeaderSize() + 24, 0, 104),
         vstr_(offsetof(TestMessage, vstr_), HeaderSize() + 32, 0, 105),
         vm_(offsetof(TestMessage, vm_), HeaderSize() + 40, 0, 106),
-        u1_(offsetof(TestMessage, u1_), HeaderSize() + 48, 0, 0, {107, 108}),
-        u2_(offsetof(TestMessage, u2_), HeaderSize() + 56, 0, 0, {109, 110}),
-        u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0, {111, 112}) {
+        u1_(offsetof(TestMessage, u1_), HeaderSize() + 48, 0, 0,
+            absl::MakeConstSpan(kU1FieldNumbers)),
+        u2_(offsetof(TestMessage, u2_), HeaderSize() + 56, 0, 0,
+            absl::MakeConstSpan(kU2FieldNumbers)),
+        u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0,
+            absl::MakeConstSpan(kU3FieldNumbers)) {
     InitDynamicMutable(initial_size);
   }
 
@@ -551,9 +558,12 @@ struct TestMessage : public Message {
         vi32_(offsetof(TestMessage, vi32_), HeaderSize() + 24, 0, 104),
         vstr_(offsetof(TestMessage, vstr_), HeaderSize() + 32, 0, 105),
         vm_(offsetof(TestMessage, vm_), HeaderSize() + 40, 0, 106),
-        u1_(offsetof(TestMessage, u1_), HeaderSize() + 48, 0, 0, {107, 108}),
-        u2_(offsetof(TestMessage, u2_), HeaderSize() + 56, 0, 0, {109, 110}),
-        u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0, {111, 112}) {}
+        u1_(offsetof(TestMessage, u1_), HeaderSize() + 48, 0, 0,
+            absl::MakeConstSpan(kU1FieldNumbers)),
+        u2_(offsetof(TestMessage, u2_), HeaderSize() + 56, 0, 0,
+            absl::MakeConstSpan(kU2FieldNumbers)),
+        u3_(offsetof(TestMessage, u3_), HeaderSize() + 64, 0, 0,
+            absl::MakeConstSpan(kU3FieldNumbers)) {}
 
   static TestMessage CreateMutable(void* addr, size_t size) {
     ::toolbelt::PayloadBuffer* pb =
@@ -926,8 +936,8 @@ struct TestMessage : public Message {
       add_vstr(src.vstr(i));
     }
     for (size_t i = 0; i < src.vm_size(); ++i) {
-      auto* m = add_vm();
-      if (absl::Status s = m->CloneFrom(src.vm(i)); !s.ok()) {
+      auto m = add_vm();
+      if (absl::Status s = m.CloneFrom(src.vm(i)); !s.ok()) {
         return s;
       }
     }
@@ -1022,9 +1032,9 @@ struct TestMessage : public Message {
   }
 
   size_t vm_size() const { return vm_.size(); }
-  const InnerMessage& vm(size_t i) const { return vm_.Get(i); }
-  InnerMessage* mutable_vm(size_t i) { return vm_.Mutable(i); }
-  InnerMessage* add_vm() { return vm_.Add(); }
+  InnerMessage vm(size_t i) const { return vm_.Get(i); }
+  InnerMessage mutable_vm(size_t i) { return vm_.Mutable(i); }
+  InnerMessage add_vm() { return vm_.Add(); }
   void clear_vm() { vm_.Clear(); }
   phaser::MessageVectorField<InnerMessage>& vm() {
     vm_.Populate();
@@ -1135,12 +1145,12 @@ inline std::ostream& operator<<(std::ostream& os, const TestMessage& msg) {
     os << "vi32: " << v << std::endl;
   }
 
-  for (auto& v : msg.vstr_) {
+  for (auto v : msg.vstr_) {
     msg.vstr_.PrintIndent(os);
     os << "vstr: " << v << std::endl;
   }
 
-  for (auto& v : msg.vm_) {
+  for (auto v : msg.vm_) {
     msg.vm_.PrintIndent(os);
     os << "vm: " << v << std::endl;
   }
@@ -1336,6 +1346,21 @@ TEST(MessageTest, Basic) {
   free(buffer);
 }
 
+TEST(MessageTest, LegacyFieldMetadataFallback) {
+  char* buffer = static_cast<char*>(calloc(4096, 1));
+  TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
+
+  const phaser::FieldLocation x = msg.FindField(100);
+  EXPECT_EQ(x.offset, 8);
+  EXPECT_EQ(x.id, 0);
+  const phaser::FieldLocation union_a = msg.FindField(111);
+  const phaser::FieldLocation union_b = msg.FindField(112);
+  EXPECT_EQ(union_a.offset, union_b.offset);
+  EXPECT_EQ(msg.FindField(999).offset, -1);
+
+  free(buffer);
+}
+
 TEST(MessageTest, RepeatedPrimitive) {
   char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
@@ -1386,8 +1411,8 @@ TEST(MessageTest, RepeatedString) {
 
   const char* strings[] = {"one", "two", "three", "four"};
   int i = 0;
-  for (auto& v : msg.vstr_) {
-    ASSERT_EQ(strings[i], v.Get());
+  for (auto v : msg.vstr_) {
+    ASSERT_EQ(strings[i], v);
     i++;
   }
 
@@ -1405,8 +1430,8 @@ TEST(MessageTest, RepeatedString) {
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
     int ro_i = 0;
-    for (auto& v : ro_msg.vstr_) {
-      ASSERT_EQ(strings[ro_i], v.Get());
+    for (auto v : ro_msg.vstr_) {
+      ASSERT_EQ(strings[ro_i], v);
       ro_i++;
     }
     ASSERT_EQ("one", ro_msg.vstr_.Get(0));
@@ -1422,22 +1447,22 @@ TEST(MessageTest, RepeatedMessage) {
   char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
 
-  InnerMessage* inner1 = msg.vm_.Add();
-  inner1->str_.Set("one");
-  inner1->f_.Set(0xdeadbeef);
+  auto inner1 = msg.vm_.Add();
+  inner1.str_.Set("one");
+  inner1.f_.Set(0xdeadbeef);
 
-  InnerMessage* inner2 = msg.vm_.Mutable(2);
-  inner2->str_.Set("two");
-  inner2->f_.Set(0x1234);
+  auto inner2 = msg.vm_.Mutable(2);
+  inner2.str_.Set("two");
+  inner2.f_.Set(0x1234);
 
   msg.DebugDump();
 
   {
-    auto& ro_inner1 = msg.vm_.Get(0);
+    auto ro_inner1 = msg.vm_.Get(0);
     ASSERT_EQ("one", ro_inner1.str_.Get());
     ASSERT_EQ(0xdeadbeef, ro_inner1.f_.Get());
 
-    auto& ro_inner2 = msg.vm_.Get(2);
+    auto ro_inner2 = msg.vm_.Get(2);
     ASSERT_EQ("two", ro_inner2.str_.Get());
     ASSERT_EQ(0x1234, ro_inner2.f_.Get());
   }
@@ -1448,11 +1473,11 @@ TEST(MessageTest, RepeatedMessage) {
     memcpy(buffer2, buffer, 4096);
     TestMessage ro_msg = TestMessage::CreateReadonly(buffer2);
 
-    auto& ro_inner1 = ro_msg.vm_.Get(0);
+    auto ro_inner1 = ro_msg.vm_.Get(0);
     ASSERT_EQ("one", ro_inner1.str_.Get());
     ASSERT_EQ(0xdeadbeef, ro_inner1.f_.Get());
 
-    auto& ro_inner2 = ro_msg.vm_.Get(2);
+    auto ro_inner2 = ro_msg.vm_.Get(2);
     ASSERT_EQ("two", ro_inner2.str_.Get());
     ASSERT_EQ(0x1234, ro_inner2.f_.Get());
     free(buffer2);
@@ -1578,13 +1603,13 @@ TEST(MessageTest, ClearRepeated) {
   msg.vstr_.Add("one");
   msg.vstr_.Add("two");
 
-  auto* inner1 = msg.vm_.Add();
-  inner1->str_.Set("one");
-  inner1->f_.Set(0xdeadbeef);
+  auto inner1 = msg.vm_.Add();
+  inner1.str_.Set("one");
+  inner1.f_.Set(0xdeadbeef);
 
-  auto* inner2 = msg.vm_.Add();
-  inner2->str_.Set("two");
-  inner2->f_.Set(0x1234);
+  auto inner2 = msg.vm_.Add();
+  inner2.str_.Set("two");
+  inner2.f_.Set(0x1234);
 
   msg.DebugDump();
 
@@ -1818,13 +1843,13 @@ TEST(MessageTest, ProtobufSerializationRepeated) {
   msg.add_vstr("two");
   msg.add_vstr("three");
 
-  auto* inner1 = msg.vm_.Add();
-  inner1->set_str("one");
-  inner1->set_f(0xdeadbeef);
+  auto inner1 = msg.vm_.Add();
+  inner1.set_str("one");
+  inner1.set_f(0xdeadbeef);
 
-  auto* inner2 = msg.vm_.Add();
-  inner2->set_str("two");
-  inner2->set_f(0x1234);
+  auto inner2 = msg.vm_.Add();
+  inner2.set_str("two");
+  inner2.set_f(0x1234);
 
   ASSERT_TRUE(msg.Serialize(pb).ok());
   foo::bar::TestMessage pb_msg;
@@ -2013,13 +2038,13 @@ TEST(MessageTest, Print) {
   msg.vstr_.Add("one");
   msg.vstr_.Add("two");
 
-  auto* inner1 = msg.vm_.Add();
-  inner1->str_.Set("one");
-  inner1->f_.Set(0xdeadbeef);
+  auto inner1 = msg.vm_.Add();
+  inner1.str_.Set("one");
+  inner1.f_.Set(0xdeadbeef);
 
-  auto* inner2 = msg.vm_.Add();
-  inner2->str_.Set("two");
-  inner2->f_.Set(0x1234);
+  auto inner2 = msg.vm_.Add();
+  inner2.str_.Set("two");
+  inner2.f_.Set(0x1234);
 
   // Unions.
   msg.u1_.Set<0>(1234u);

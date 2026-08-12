@@ -93,6 +93,7 @@ class MessageGenerator {
   void GenerateConstructors(std::ostream& os, bool decl);
   void GenerateFieldInitializers(std::ostream& os, const char* sep = ": ");
   void GenerateSizeFunctions(std::ostream& os);
+  size_t ReachableMessageTypeCount() const;
   void GenerateFieldMetadata(std::ostream& os);
   void GenerateCreators(std::ostream& os, bool decl);
   void GenerateClear(std::ostream& os, bool decl);
@@ -113,6 +114,34 @@ class MessageGenerator {
   void GenerateSerializer(std::ostream& os, bool decl);
   void GenerateDeserializer(std::ostream& os, bool decl);
   void GenerateROSSerialization(std::ostream& os, bool decl);
+  void GenerateDirectProtobufToROS(std::ostream& os);
+  void GenerateDirectProtobufField(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& indent);
+  void GenerateDirectProtobufSingularField(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& indent);
+  void GenerateDirectProtobufReadValue(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& buffer, const std::string& value,
+      const std::string& indent);
+  void GenerateDirectROSWriteValue(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& value, const std::string& indent);
+  void GenerateDirectROSToProtobuf(std::ostream& os);
+  void GenerateDirectROSFieldToProtobuf(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& indent);
+  void GenerateDirectROSReadValue(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& reader, const std::string& value,
+      const std::string& indent);
+  void GenerateDirectProtoWriteValue(
+      std::ostream& os, const google::protobuf::FieldDescriptor* field,
+      const std::string& value, const std::string& field_number,
+      const std::string& indent, bool raw = false);
+  std::string DirectProtobufValueType(
+      const google::protobuf::FieldDescriptor* field) const;
   void GenerateROSFieldSize(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
       const std::string& value_expression, const std::string& indent);

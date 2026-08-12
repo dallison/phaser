@@ -14,11 +14,11 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "toolbelt/payload_buffer.h"
@@ -500,7 +500,7 @@ class UnionField : public Field {
  public:
   UnionField() = default;
   UnionField(uint32_t source_offset, uint32_t relative_binary_offset, int id,
-             int number, std::vector<uint32_t> field_numbers)
+             int number, absl::Span<const uint32_t> field_numbers)
       : Field(id, number),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset),
@@ -868,7 +868,8 @@ class UnionField : public Field {
 
   uint32_t source_offset_;
   ::toolbelt::BufferOffset relative_binary_offset_;
-  std::vector<uint32_t> field_numbers_;  // field number for each tuple type
+  absl::Span<const uint32_t>
+      field_numbers_;  // Static field number for each tuple type.
   mutable std::tuple<T...> value_;
 };
 }  // namespace phaser

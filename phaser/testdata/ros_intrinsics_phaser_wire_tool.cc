@@ -26,10 +26,10 @@ bool Write(const char* path) {
   message.tags.push_back("front");
   message.tags.push_back("rear");
 
-  auto* first_child = message.children.Add();
+  auto first_child = message.children.Add();
   first_child->id = 101;
   first_child->label = "left";
-  auto* second_child = message.children.Add();
+  auto second_child = message.children.Add();
   second_child->id = 202;
   second_child->label = "right";
 
