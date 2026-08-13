@@ -311,11 +311,10 @@ class UnionMessageField : public UnionMemberField {
                          uint32_t abs_offset) const {
     ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr == 0) {
-      return msg_;
+      return DefaultMessage();
     }
     // Populate msg_ with the information from the message.
-    msg_.runtime = runtime;
-    msg_.absolute_binary_offset = *addr;
+    Bind(runtime, *addr);
     return msg_;
   }
 
@@ -336,7 +335,7 @@ class UnionMessageField : public UnionMemberField {
   bool IsPresent(const std::shared_ptr<MessageRuntime>& runtime,
                  uint32_t abs_offset) const {
     ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
-    return addr == nullptr || *addr != 0;
+    return addr != nullptr && *addr != 0;
   }
 
   MessageType* Mutable(const std::shared_ptr<MessageRuntime>& runtime,
@@ -344,6 +343,9 @@ class UnionMessageField : public UnionMemberField {
     ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr != 0) {
       // Already allocated.
+      if (addr != nullptr) {
+        Bind(runtime, *addr);
+      }
       return &msg_;
     }
     // Allocate a new message.
@@ -391,8 +393,10 @@ class UnionMessageField : public UnionMemberField {
       return;
     }
     if (*addr != 0) {
+      const ::toolbelt::BufferOffset old_offset = *addr;
+      Bind(runtime, old_offset);
       msg_.Clear();
-      GetBuffer(runtime)->Free(runtime->ToAddress(*addr));
+      GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
     }
     // Allocate a new message.
     void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
@@ -422,9 +426,15 @@ class UnionMessageField : public UnionMemberField {
       return;
     }
     if (*addr != 0) {
+      const ::toolbelt::BufferOffset old_offset = *addr;
+      Bind(runtime, old_offset);
       msg_.Clear();
-      GetBuffer(runtime)->Free(runtime->ToAddress(*addr));
-      *addr = 0;
+      GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
+      // Clearing the nested message may move the payload buffer.
+      addr = GetIndirectAddress(runtime, abs_offset);
+      if (addr != nullptr) {
+        *addr = 0;
+      }
     }
   }
 
@@ -475,6 +485,17 @@ class UnionMessageField : public UnionMemberField {
   }
 
  private:
+  static const MessageType& DefaultMessage() {
+    static const MessageType message(InternalDefault{});
+    return message;
+  }
+
+  void Bind(const std::shared_ptr<MessageRuntime>& runtime,
+            ::toolbelt::BufferOffset offset) const {
+    msg_.runtime = runtime;
+    msg_.absolute_binary_offset = offset;
+  }
+
   ::toolbelt::BufferOffset* GetIndirectAddress(
       const std::shared_ptr<MessageRuntime>& runtime,
       uint32_t abs_offset) const {

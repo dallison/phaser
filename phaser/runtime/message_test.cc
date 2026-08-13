@@ -50,12 +50,15 @@ struct EnumTestParser {
 };
 
 struct InnerMessage : public Message {
+  inline static constexpr uint32_t kUvFieldNumbers[] = {50, 60};
+
   InnerMessage(phaser::InternalDefault /*d*/)
       : str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
         e_(offsetof(InnerMessage, e_), HeaderSize() + 16, 2, 30),
         ev_(offsetof(InnerMessage, ev_), HeaderSize() + 20, 0, 40),
-        uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0, {50, 60}) {}
+        uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0,
+            absl::MakeConstSpan(kUvFieldNumbers)) {}
 
   InnerMessage(std::shared_ptr<phaser::MessageRuntime> rt,
                ::toolbelt::BufferOffset offset)
@@ -64,7 +67,8 @@ struct InnerMessage : public Message {
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
         e_(offsetof(InnerMessage, e_), HeaderSize() + 16, 2, 30),
         ev_(offsetof(InnerMessage, ev_), HeaderSize() + 20, 0, 40),
-        uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0, {50, 60}) {}
+        uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0,
+            absl::MakeConstSpan(kUvFieldNumbers)) {}
 
   // uv_ is a union of:
   // uint32_t

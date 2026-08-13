@@ -723,21 +723,22 @@ class IndirectMessageField : public Field {
   MessageType& operator*() { return *Mutable(); }
   MessageType* operator->() { return Mutable(); }
 
-  const MessageType& Msg() const { return msg_; }
-  MessageType& MutableMsg() { return msg_; }
+  const MessageType& Msg() const { return Get(); }
+  MessageType& MutableMsg() { return *Mutable(); }
 
   const MessageType& Get() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
-      return msg_;
+      return DefaultMessage();
     }
     ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
-    if (*addr != 0) {
-      // Load up the message if it's already been allocated.
-      msg_.runtime = GetRuntime();
-      msg_.absolute_binary_offset = *addr;
+    if (*addr == 0) {
+      return DefaultMessage();
     }
+    // Load up the message if it's already been allocated.
+    msg_.runtime = GetRuntime();
+    msg_.absolute_binary_offset = *addr;
     return msg_;
   }
 
@@ -756,6 +757,8 @@ class IndirectMessageField : public Field {
         GetIndirectAddress(relative_binary_offset_);
     if (*addr != 0) {
       // Already allocated.
+      msg_.runtime = GetRuntime();
+      msg_.absolute_binary_offset = *addr;
       return &msg_;
     }
     // Allocate a new message.
@@ -793,11 +796,15 @@ class IndirectMessageField : public Field {
     if (*addr == 0) {
       return;
     }
+    const ::toolbelt::BufferOffset old_offset = *addr;
     // Clear the message.
+    msg_.runtime = GetRuntime();
+    msg_.absolute_binary_offset = old_offset;
     msg_.Clear();
     // Delete the memory in the payload buffer.
-    GetBuffer()->Free(GetRuntime()->ToAddress(*addr));
+    GetBuffer()->Free(GetRuntime()->ToAddress(old_offset));
     // Zero out the offset to the message.
+    addr = GetIndirectAddress(relative_binary_offset_);
     *addr = 0;
   }
 
@@ -883,6 +890,11 @@ class IndirectMessageField : public Field {
   }
 
  protected:
+  static const MessageType& DefaultMessage() {
+    static const MessageType message(InternalDefault{});
+    return message;
+  }
+
   ::toolbelt::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
