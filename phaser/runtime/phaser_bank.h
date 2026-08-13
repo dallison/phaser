@@ -3,6 +3,8 @@
 // See LICENSE file for licensing information.
 
 #pragma once
+#include <string_view>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "phaser/runtime/message.h"
@@ -15,6 +17,15 @@ struct BankInfo {
   absl::Status (*serialize_to_buffer)(const Message& msg, ProtoBuffer& buffer);
   absl::Status (*deserialize_from_buffer)(Message& msg, ProtoBuffer& buffer);
   size_t (*serialized_size)(const Message& msg);
+  absl::Status (*serialize_at_offset)(
+      std::shared_ptr<::phaser::MessageRuntime> runtime,
+      toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+  absl::Status (*deserialize_at_offset)(
+      std::shared_ptr<::phaser::MessageRuntime> runtime,
+      toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+  size_t (*serialized_size_at_offset)(
+      std::shared_ptr<::phaser::MessageRuntime> runtime,
+      toolbelt::BufferOffset offset);
   Message* (*allocate_at_offset)(
       std::shared_ptr<::phaser::MessageRuntime> runtime,
       toolbelt::BufferOffset offset);
@@ -34,9 +45,9 @@ struct BankInfo {
 extern std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>>
     phaser_banks_;
 
-absl::StatusOr<BankInfo*> GetPhaserBankInfo(std::string message_type);
+absl::StatusOr<BankInfo*> GetPhaserBankInfo(std::string_view message_type);
 
-void PhaserBankRegisterMessage(const std::string& name, const BankInfo& info);
+void PhaserBankRegisterMessage(std::string_view name, const BankInfo& info);
 
 absl::Status PhaserStreamTo(const std::string& message_type, const Message& msg,
                             std::ostream& os, int indent);
@@ -50,6 +61,18 @@ absl::Status PhaserBankDeserializeFromBuffer(const std::string& message_type,
                                              Message& msg, ProtoBuffer& buffer);
 absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string& message_type,
                                                 const Message& msg);
+absl::Status PhaserBankSerializeAtOffset(
+    std::string_view message_type,
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+absl::Status PhaserBankDeserializeAtOffset(
+    std::string_view message_type,
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
+    std::string_view message_type,
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset);
 
 // This allocates a message from the heap (using new) with its storage in the
 // payload buffer.  The ownership of the heap memory is passed back to the
@@ -92,7 +115,7 @@ absl::StatusOr<const Message*> PhaserBankMakeExisting(
     const std::string& message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data);
 
-absl::StatusOr<size_t> PhaserBankBinarySize(const std::string& message_type);
+absl::StatusOr<size_t> PhaserBankBinarySize(std::string_view message_type);
 
 absl::StatusOr<const MessageInfo*> PhaserBankMessageInfo(
     const std::string& message_type);

@@ -12,14 +12,17 @@ cc_library(
     copts = PHASER_COPTS,
     hdrs = [
         "any.h",
+        "arrays.h",
         "fields.h",
         "iterators.h",
         "message.h",
         "runtime.h",
+        "ros_wireformat.h",
         "union.h",
         "vectors.h",
         "wireformat.h",
         "phaser_bank.h",
+        "ros.h",
     ],
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
@@ -60,5 +63,16 @@ cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
         "@cpp_toolbelt//toolbelt",
+    ],
+)
+
+cc_test(
+    name = "ros_wireformat_test",
+    srcs = ["ros_wireformat_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
+    deps = [
+        ":phaser_runtime",
+        "@com_google_googletest//:gtest_main",
     ],
 )

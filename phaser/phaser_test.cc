@@ -186,6 +186,64 @@ TEST(PhaserTest, DeletedFieldsBasic) {
   ASSERT_EQ(msg2.s(), msg.s());
 }
 
+TEST(PhaserTest, HybridFieldMetadataLayout) {
+  using Hybrid = foo::bar::phaser::HybridLookupMessage;
+  EXPECT_EQ(Hybrid::field_data.header.magic, ::phaser::kHybridFieldDataMagic);
+  EXPECT_EQ(Hybrid::field_data.header.dense_base, 10u);
+  EXPECT_EQ(Hybrid::field_data.header.dense_span, 6u);
+  EXPECT_EQ(Hybrid::field_data.header.sparse_count, 1u);
+  EXPECT_EQ(Hybrid::field_data.dense_fields[2].offset, 0u);
+  EXPECT_EQ(Hybrid::field_data.sparse_fields[0].number, 1000u);
+
+  Hybrid message;
+  message.set_dense_10(10);
+  message.set_dense_11(11);
+  message.set_dense_13(13);
+  message.set_dense_14(14);
+  message.set_dense_15(15);
+  message.set_sparse_1000(1000);
+  EXPECT_EQ(message.dense_10(), 10);
+  EXPECT_EQ(message.dense_15(), 15);
+  EXPECT_EQ(message.sparse_1000(), 1000);
+  EXPECT_EQ(message.FindField(12).offset, -1);
+  EXPECT_EQ(message.FindField(1000).offset,
+            static_cast<int32_t>(Hybrid::field_data.sparse_fields[0].offset));
+}
+
+TEST(PhaserTest, SparseFieldMetadataLayout) {
+  using Sparse = foo::bar::phaser::SparseLookupMessage;
+  EXPECT_EQ(Sparse::field_data.header.magic, ::phaser::kHybridFieldDataMagic);
+  EXPECT_EQ(Sparse::field_data.header.dense_base, 1u);
+  EXPECT_EQ(Sparse::field_data.header.dense_span, 1u);
+  EXPECT_EQ(Sparse::field_data.header.sparse_count, 2u);
+  EXPECT_NE(Sparse::field_data.dense_fields[0].offset, 0u);
+  EXPECT_EQ(Sparse::field_data.sparse_fields[0].number, 100u);
+  EXPECT_EQ(Sparse::field_data.sparse_fields[1].number, 10000u);
+
+  Sparse message;
+  message.set_field_1(1);
+  message.set_field_100(100);
+  message.set_field_10000(10000);
+  EXPECT_EQ(message.field_1(), 1);
+  EXPECT_EQ(message.field_100(), 100);
+  EXPECT_EQ(message.field_10000(), 10000);
+  EXPECT_EQ(message.FindField(99).offset, -1);
+}
+
+TEST(PhaserTest, DenseMetadataHandlesOneofAndOutlierFields) {
+  using Message = foo::bar::phaser::TestMessage;
+  ASSERT_LE(Message::field_data.header.dense_base, 107u);
+  ASSERT_GT(Message::field_data.header.dense_base +
+                Message::field_data.header.dense_span,
+            108u);
+  const size_t first_index = 107u - Message::field_data.header.dense_base;
+  const size_t second_index = 108u - Message::field_data.header.dense_base;
+  EXPECT_EQ(Message::field_data.dense_fields[first_index].offset,
+            Message::field_data.dense_fields[second_index].offset);
+  ASSERT_EQ(Message::field_data.header.sparse_count, 1u);
+  EXPECT_EQ(Message::field_data.sparse_fields[0].number, 200u);
+}
+
 TEST(PhaserTest, CopySimple) {
   foo::bar::phaser::TestMessage msg;
   msg.set_x(1234);

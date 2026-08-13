@@ -12,7 +12,10 @@ namespace phaser {
 
 std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>> phaser_banks_;
 
-absl::StatusOr<BankInfo*> GetPhaserBankInfo(std::string message_type) {
+absl::StatusOr<BankInfo*> GetPhaserBankInfo(std::string_view message_type) {
+  if (!phaser_banks_) {
+    return absl::InternalError("Phaser message bank is not initialized");
+  }
   auto it = phaser_banks_->find(message_type);
   if (it == phaser_banks_->end()) {
     return absl::InternalError(
@@ -21,13 +24,13 @@ absl::StatusOr<BankInfo*> GetPhaserBankInfo(std::string message_type) {
   return &it->second;
 }
 
-void PhaserBankRegisterMessage(const std::string& name, const BankInfo& info) {
+void PhaserBankRegisterMessage(std::string_view name, const BankInfo& info) {
   if (!phaser_banks_) {
     // Lazy init because we can't guarantee the order of static initialization.
     phaser_banks_ =
         std::make_unique<absl::flat_hash_map<std::string, BankInfo>>();
   }
-  (*phaser_banks_)[name] = info;
+  (*phaser_banks_)[std::string(name)] = info;
 }
 
 absl::Status PhaserStreamTo(const std::string& message_type, const Message& msg,
@@ -80,6 +83,39 @@ absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string& message_type,
   return (*bank_info)->serialized_size(msg);
 }
 
+absl::Status PhaserBankSerializeAtOffset(
+    std::string_view message_type,
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset, ProtoBuffer& buffer) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  return (*bank_info)->serialize_at_offset(std::move(runtime), offset, buffer);
+}
+
+absl::Status PhaserBankDeserializeAtOffset(
+    std::string_view message_type,
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset, ProtoBuffer& buffer) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  return (*bank_info)->deserialize_at_offset(std::move(runtime), offset, buffer);
+}
+
+absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
+    std::string_view message_type,
+    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    toolbelt::BufferOffset offset) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  return (*bank_info)->serialized_size_at_offset(std::move(runtime), offset);
+}
+
 absl::StatusOr<Message*> PhaserBankAllocateAtOffset(
     const std::string& message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
@@ -119,7 +155,7 @@ absl::StatusOr<const Message*> PhaserBankMakeExisting(
   return (*bank_info)->make_existing(runtime, data);
 }
 
-absl::StatusOr<size_t> PhaserBankBinarySize(const std::string& message_type) {
+absl::StatusOr<size_t> PhaserBankBinarySize(std::string_view message_type) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
     return bank_info.status();

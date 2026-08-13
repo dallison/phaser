@@ -36,15 +36,17 @@ class CodeGenerator : public google::protobuf::compiler::CodeGenerator {
   // field. Enabled via the `active_message=true` plugin command-line option
   // (set by phaser_library(enable_active_message = True)).
   mutable bool generate_active_message_ = false;
+  mutable FrontendStyle frontend_style_ = FrontendStyle::kProtobuf;
 };
 
 class Generator {
  public:
   Generator(const google::protobuf::FileDescriptor* file, const std::string& ns,
             const std::string& pn, const std::string& tn,
-            bool generate_active_message = false);
+            bool generate_active_message = false,
+            FrontendStyle frontend_style = FrontendStyle::kProtobuf);
 
-  void GenerateHeaders(std::ostream& os);
+  void GenerateHeaders(std::ostream& os, std::string* error);
   void GenerateSources(std::ostream& os);
 
  private:
@@ -58,6 +60,7 @@ class Generator {
   const std::string& package_name_;
   const std::string& target_name_;
   bool generate_active_message_;
+  FrontendStyle frontend_style_;
 };
 
 }  // namespace phaser

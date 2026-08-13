@@ -6,10 +6,12 @@
 #include <iostream>
 
 #include "phaser/runtime/any.h"
+#include "phaser/runtime/arrays.h"
 #include "phaser/runtime/fields.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/phaser_bank.h"
+#include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/union.h"
 #include "phaser/runtime/vectors.h"
 #include "toolbelt/hexdump.h"
@@ -133,7 +135,7 @@ inline std::ostream& operator<<(std::ostream& os, const AnyMessage& msg) {
     os << "{\n";
     msg.value_.Indent(2);
     msg.value_.PrintIndent(os);
-    std::string type = msg.MessageTypeName();
+    std::string type(msg.MessageTypeName());
     os << "[" << msg.type_url() << "] {\n";
     msg.value_.Indent(2);
     absl::StatusOr<const Message*> s =

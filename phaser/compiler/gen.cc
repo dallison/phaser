@@ -12,6 +12,46 @@
 
 namespace phaser {
 
+static FrontendStyle EffectiveFrontendStyle(
+    const google::protobuf::FileDescriptor* file, FrontendStyle requested) {
+  if (requested == FrontendStyle::kRos &&
+      file->package().rfind("google.protobuf", 0) == 0) {
+    // Well-known protobuf imports keep the protobuf-style layout so dependency
+    // graphs (notably descriptor.proto) remain compilable in ROS targets.
+    return FrontendStyle::kProtobuf;
+  }
+  return requested;
+}
+
+static bool UsesRos1Intrinsic(const google::protobuf::Descriptor* message) {
+  for (int i = 0; i < message->field_count(); ++i) {
+    const auto* field = message->field(i);
+    if (field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+      continue;
+    }
+    const auto name = field->message_type()->full_name();
+    if (name == "google.protobuf.Timestamp" ||
+        name == "google.protobuf.Duration" || name == "std_msgs.Header") {
+      return true;
+    }
+  }
+  for (int i = 0; i < message->nested_type_count(); ++i) {
+    if (UsesRos1Intrinsic(message->nested_type(i))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool UsesRos1Intrinsic(const google::protobuf::FileDescriptor* file) {
+  for (int i = 0; i < file->message_type_count(); ++i) {
+    if (UsesRos1Intrinsic(file->message_type(i))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static void WriteToZeroCopyStream(
     const std::string& data,
     google::protobuf::io::ZeroCopyOutputStream* stream) {
@@ -67,11 +107,35 @@ bool CodeGenerator::Generate(
       generate_active_message_ = option.second.empty() ||
                                  option.second == "true" ||
                                  option.second == "1";
+    } else if (option.first == "frontend") {
+      if (option.second == "protobuf" || option.second.empty()) {
+        frontend_style_ = FrontendStyle::kProtobuf;
+      } else if (option.second == "ros") {
+        frontend_style_ = FrontendStyle::kRos;
+      } else {
+        *error = absl::StrFormat(
+            "Unknown frontend value: %s (expected protobuf or ros)",
+            option.second);
+        return false;
+      }
     }
   }
 
+  const FrontendStyle effective_frontend =
+      EffectiveFrontendStyle(file, frontend_style_);
+
+  // Custom option schemas and other message-free protos need no C++ output.
+  // descriptor.proto is imported for extensions but must not be emitted as a
+  // Phaser message graph (it is huge and not a runtime payload type here).
+  if (file->message_type_count() == 0 && file->enum_type_count() == 0) {
+    return true;
+  }
+  if (file->name() == std::string("google/protobuf/descriptor.proto")) {
+    return true;
+  }
+
   Generator gen(file, added_namespace_, package_name_, target_name_,
-                generate_active_message_);
+                generate_active_message_, effective_frontend);
 
   std::string filename =
       GeneratedFilename(package_name_, target_name_, std::string(file->name()));
@@ -95,7 +159,12 @@ bool CodeGenerator::Generate(
     return false;
   }
   std::stringstream header_stream;
-  gen.GenerateHeaders(header_stream);
+  std::string validation_error;
+  gen.GenerateHeaders(header_stream, &validation_error);
+  if (!validation_error.empty()) {
+    *error = validation_error;
+    return false;
+  }
 
   std::filesystem::path cp(filename);
   cp.replace_extension(".phaser.cc");
@@ -137,16 +206,18 @@ void Generator::CloseNamespace(std::ostream& os) {
 
 Generator::Generator(const google::protobuf::FileDescriptor* file,
                      const std::string& ns, const std::string& pn,
-                     const std::string& tn, bool generate_active_message)
+                     const std::string& tn, bool generate_active_message,
+                     FrontendStyle frontend_style)
     : file_(file),
       added_namespace_(ns),
       package_name_(pn),
       target_name_(tn),
-      generate_active_message_(generate_active_message) {
+      generate_active_message_(generate_active_message),
+      frontend_style_(frontend_style) {
   for (int i = 0; i < file->message_type_count(); i++) {
     message_gens_.push_back(std::make_unique<MessageGenerator>(
         file->message_type(i), added_namespace_, std::string(file->package()),
-        generate_active_message_));
+        generate_active_message_, frontend_style_));
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {
@@ -154,15 +225,25 @@ Generator::Generator(const google::protobuf::FileDescriptor* file,
   }
 }
 
-void Generator::GenerateHeaders(std::ostream& os) {
+void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
   os << "#pragma once\n";
   os << "#include \"phaser/runtime/runtime.h\"\n";
+  if (frontend_style_ == FrontendStyle::kRos && UsesRos1Intrinsic(file_)) {
+    os << "#include \"phaser/runtime/ros.h\"\n";
+  }
   if (generate_active_message_) {
     os << "#include <any>\n";
   }
   for (int i = 0; i < file_->dependency_count(); i++) {
+    const google::protobuf::FileDescriptor* dep = file_->dependency(i);
+    if (dep->message_type_count() == 0 && dep->enum_type_count() == 0) {
+      continue;
+    }
+    if (dep->name() == std::string("google/protobuf/descriptor.proto")) {
+      continue;
+    }
     std::string base = GeneratedFilename(
-        package_name_, target_name_, std::string(file_->dependency(i)->name()));
+        package_name_, target_name_, std::string(dep->name()));
     std::filesystem::path p(base);
     p.replace_extension(".phaser.h");
     os << "#include \"" << p.string() << "\"\n";
@@ -180,7 +261,12 @@ void Generator::GenerateHeaders(std::ostream& os) {
   }
 
   for (auto& msg_gen : message_gens_) {
-    msg_gen->GenerateHeader(os);
+    if (absl::Status status = msg_gen->GenerateHeader(os); !status.ok()) {
+      if (error != nullptr) {
+        *error = std::string(status.message());
+      }
+      return;
+    }
   }
 
   CloseNamespace(os);

@@ -21,7 +21,9 @@ def _phaser_action(
         package_name,
         outputs,
         add_namespace,
-        target_name):
+        target_name,
+        frontend,
+        enable_active_message):
     # The protobuf compiler allow plugins to get arguments specified in the --plugin_out
     # argument.  The args are passed as a comma separated list of key=value pairs followed
     # by a colon and the output directory.
@@ -30,7 +32,8 @@ def _phaser_action(
         options.append("add_namespace={}".format(add_namespace))
     options.append("package_name={}".format(package_name))
     options.append("target_name={}".format(target_name))
-    if ctx.attr.enable_active_message:
+    options.append("frontend={}".format(frontend))
+    if enable_active_message:
         options.append("active_message=true")
     options_and_out_dir = "--phaser_out={}:{}".format(",".join(options), out_dir)
 
@@ -89,6 +92,14 @@ def _proto_output_base(source_file):
         file_path = v[1].split("/", 1)[1]
     return file_path
 
+def _skip_phaser_generation(source_file):
+    base = _proto_output_base(source_file)
+    if base == "google/protobuf/descriptor.proto":
+        return True
+    if base == "phaser/options.proto":
+        return True
+    return False
+
 def _phaser_aspect_impl(target, _ctx):
     direct_sources = []
     transitive_sources = depset()
@@ -106,6 +117,8 @@ def _phaser_aspect_impl(target, _ctx):
         transitive_sources = target[ProtoInfo].transitive_sources
         direct_paths = {s.path: True for s in _to_list(target[ProtoInfo].direct_sources)}
         for s in _to_list(transitive_sources):
+            if _skip_phaser_generation(s):
+                continue
             direct_sources.append(s)
             add_output(_proto_output_base(s), s.path in direct_paths)
 
@@ -125,6 +138,10 @@ phaser_aspect = aspect(
 # The phaser rule runs the Phaser plugin from the protoc compiler.
 # The deps for the rule are proto_libraries that contain the protobuf files.
 def _phaser_impl(ctx):
+    frontend = ctx.attr.frontend
+    if frontend not in ("protobuf", "ros"):
+        fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
+
     outputs = []
   
     direct_sources = []
@@ -172,6 +189,8 @@ def _phaser_impl(ctx):
         cpp_outputs,
         ctx.attr.add_namespace,
         ctx.attr.target_name,
+        frontend,
+        ctx.attr.enable_active_message,
     )
 
     return [DefaultInfo(files = depset(outputs))]
@@ -194,6 +213,7 @@ _phaser_gen = rule(
         "add_namespace": attr.string(),
         "package_name": attr.string(),
         "target_name": attr.string(),
+        "frontend": attr.string(default = "protobuf"),
         "enable_active_message": attr.bool(default = False),
     },
     implementation = _phaser_impl,
@@ -215,7 +235,7 @@ _split_files = rule(
     implementation = _split_files_impl,
 )
 
-def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_runtime", add_namespace = "", enable_active_message = False):
+def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_runtime", add_namespace = "", enable_active_message = False, frontend = "protobuf", cc_deps = []):
     """
     Generate a cc_libary for protobuf files specified in deps.
 
@@ -228,7 +248,13 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
         enable_active_message: if True, generated message types get a public
             `std::any active_message` field (also enableable via the
             `active_message=true` plugin command-line option).
+        frontend: generated C++ API style, either "protobuf" (default) or "ros".
+        cc_deps: additional C++ dependencies required by generated headers,
+            such as ROS1 message/runtime libraries for intrinsic ROS fields.
     """
+    if frontend not in ("protobuf", "ros"):
+        fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
+
     phaser = name + "_phaser"
 
     _phaser_gen(
@@ -238,6 +264,7 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
         package_name = native.package_name(),
         target_name = name,
         enable_active_message = enable_active_message,
+        frontend = frontend,
     )
 
     srcs = name + "_srcs"
@@ -261,6 +288,7 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
 
     if runtime != "":
         libdeps = libdeps + [runtime]
+    libdeps = libdeps + cc_deps
 
     cc_library(
         name = name,
