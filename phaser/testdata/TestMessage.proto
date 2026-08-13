@@ -1,18 +1,19 @@
 syntax = "proto3";
 
-// There are tests in message_test.cc that use both the messages hand-coded in there
-// and InnnerMessage and TestMessage defined here.  The messages defined here should
-// be serialization-compatible with the hand-coded messages in message_test.cc.
-// So this means that the field numbers and types should match up.  Also, don't
-// delete fields from these messages, as the tests in message_test.cc rely on them.
-// You can add fields to these messages without also adding them to the hand-coded
-// messages because this is compatible for serialization.
+// There are tests in message_test.cc that use both the messages hand-coded in
+// there and InnnerMessage and TestMessage defined here.  The messages defined
+// here should be serialization-compatible with the hand-coded messages in
+// message_test.cc. So this means that the field numbers and types should match
+// up.  Also, don't delete fields from these messages, as the tests in
+// message_test.cc rely on them. You can add fields to these messages without
+// also adding them to the hand-coded messages because this is compatible for
+// serialization.
 package foo.bar;
 import "google/protobuf/any.proto";
 
 enum EnumTest {
-  UNSET = 0; 
-  FOO = 0xda; 
+  UNSET = 0;
+  FOO = 0xda;
   BAR = 0xad;
 }
 
@@ -113,4 +114,155 @@ message TestMessageDeletedFields {
     int64 u3a = 111;
     InnerMessage u3b = 112;
   }
+}
+
+message HybridLookupMessage {
+  int32 dense_10 = 10;
+  int32 dense_11 = 11;
+  int32 dense_13 = 13;
+  int32 dense_14 = 14;
+  int32 dense_15 = 15;
+  int32 sparse_1000 = 1000;
+}
+
+message SparseLookupMessage {
+  int32 field_1 = 1;
+  int32 field_100 = 100;
+  int32 field_10000 = 10000;
+}
+
+// Same shape and field types, but deliberately different field-number
+// distributions for end-to-end Phaser field-access benchmarks.
+message DenseLookupBenchmarkMessage {
+  int32 value_01 = 1;
+  int32 value_02 = 2;
+  int32 value_03 = 3;
+  int32 value_04 = 4;
+  int32 value_05 = 5;
+  int32 value_06 = 6;
+  int32 value_07 = 7;
+  int32 value_08 = 8;
+  int32 value_09 = 9;
+  int32 value_10 = 10;
+  int32 value_11 = 11;
+  int32 value_12 = 12;
+  int32 value_13 = 13;
+  int32 value_14 = 14;
+  int32 value_15 = 15;
+  int32 value_16 = 16;
+  int32 value_17 = 17;
+  int32 value_18 = 18;
+  int32 value_19 = 19;
+  int32 value_20 = 20;
+  int32 value_21 = 21;
+  int32 value_22 = 22;
+  int32 value_23 = 23;
+  int32 value_24 = 24;
+  int32 value_25 = 25;
+  int32 value_26 = 26;
+  int32 value_27 = 27;
+  int32 value_28 = 28;
+  int32 value_29 = 29;
+  int32 value_30 = 30;
+  int32 value_31 = 31;
+  int32 value_32 = 32;
+  int32 value_33 = 33;
+  int32 value_34 = 34;
+  int32 value_35 = 35;
+  int32 value_36 = 36;
+  int32 value_37 = 37;
+  int32 value_38 = 38;
+  int32 value_39 = 39;
+  int32 value_40 = 40;
+  int32 value_41 = 41;
+  int32 value_42 = 42;
+  int32 value_43 = 43;
+  int32 value_44 = 44;
+  int32 value_45 = 45;
+  int32 value_46 = 46;
+  int32 value_47 = 47;
+  int32 value_48 = 48;
+  int32 value_49 = 49;
+  int32 value_50 = 50;
+  int32 value_51 = 51;
+  int32 value_52 = 52;
+  int32 value_53 = 53;
+  int32 value_54 = 54;
+  int32 value_55 = 55;
+  int32 value_56 = 56;
+  int32 value_57 = 57;
+  int32 value_58 = 58;
+  int32 value_59 = 59;
+  int32 value_60 = 60;
+  int32 value_61 = 61;
+  int32 value_62 = 62;
+  int32 value_63 = 63;
+  int32 value_64 = 64;
+}
+
+message SparseLookupBenchmarkMessage {
+  int32 value_01 = 1;
+  int32 value_02 = 101;
+  int32 value_03 = 201;
+  int32 value_04 = 301;
+  int32 value_05 = 401;
+  int32 value_06 = 501;
+  int32 value_07 = 601;
+  int32 value_08 = 701;
+  int32 value_09 = 801;
+  int32 value_10 = 901;
+  int32 value_11 = 1001;
+  int32 value_12 = 1101;
+  int32 value_13 = 1201;
+  int32 value_14 = 1301;
+  int32 value_15 = 1401;
+  int32 value_16 = 1501;
+  int32 value_17 = 1601;
+  int32 value_18 = 1701;
+  int32 value_19 = 1801;
+  int32 value_20 = 1901;
+  int32 value_21 = 2001;
+  int32 value_22 = 2101;
+  int32 value_23 = 2201;
+  int32 value_24 = 2301;
+  int32 value_25 = 2401;
+  int32 value_26 = 2501;
+  int32 value_27 = 2601;
+  int32 value_28 = 2701;
+  int32 value_29 = 2801;
+  int32 value_30 = 2901;
+  int32 value_31 = 3001;
+  int32 value_32 = 3101;
+  int32 value_33 = 3201;
+  int32 value_34 = 3301;
+  int32 value_35 = 3401;
+  int32 value_36 = 3501;
+  int32 value_37 = 3601;
+  int32 value_38 = 3701;
+  int32 value_39 = 3801;
+  int32 value_40 = 3901;
+  int32 value_41 = 4001;
+  int32 value_42 = 4101;
+  int32 value_43 = 4201;
+  int32 value_44 = 4301;
+  int32 value_45 = 4401;
+  int32 value_46 = 4501;
+  int32 value_47 = 4601;
+  int32 value_48 = 4701;
+  int32 value_49 = 4801;
+  int32 value_50 = 4901;
+  int32 value_51 = 5001;
+  int32 value_52 = 5101;
+  int32 value_53 = 5201;
+  int32 value_54 = 5301;
+  int32 value_55 = 5401;
+  int32 value_56 = 5501;
+  int32 value_57 = 5601;
+  int32 value_58 = 5701;
+  int32 value_59 = 5801;
+  int32 value_60 = 5901;
+  int32 value_61 = 6001;
+  int32 value_62 = 6101;
+  int32 value_63 = 6201;
+  int32 value_64 = 6301;
 }

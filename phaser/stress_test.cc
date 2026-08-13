@@ -115,7 +115,7 @@ TEST(StressTest, MapManyEntries) {
   TestMessage msg(4096);
   ASSERT_FALSE(msg.allocate_buffer(128 * 1024).empty());
   for (int i = 0; i < 500; i++) {
-    auto* e = msg.add_values();
+    auto e = msg.add_values();
     e->set_key(::phaser::test::MakePatternString(
         8, static_cast<char>('k' + (i % 10))));
     e->set_value(i);

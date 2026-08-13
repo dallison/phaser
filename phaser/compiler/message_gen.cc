@@ -7,11 +7,15 @@
 #include <ctype.h>
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdlib>
+#include <limits>
+#include <set>
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
+#include "phaser/options.pb.h"
 
 namespace phaser {
 
@@ -118,6 +122,150 @@ static bool IsCppReservedWord(const std::string& s) {
   return reserved_words.contains(s);
 }
 
+static bool IsFixedWireType(
+    const google::protobuf::FieldDescriptor* field) {
+  using Field = google::protobuf::FieldDescriptor;
+  switch (field->type()) {
+    case Field::TYPE_FIXED32:
+    case Field::TYPE_SFIXED32:
+    case Field::TYPE_FLOAT:
+    case Field::TYPE_FIXED64:
+    case Field::TYPE_SFIXED64:
+    case Field::TYPE_DOUBLE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+std::string MessageGenerator::SanitizedIdentifier(
+    const std::string& name) const {
+  if (IsCppReservedWord(name)) {
+    return name + "_";
+  }
+  return name;
+}
+
+std::string MessageGenerator::MemberVariableName(
+    const std::string& proto_name) const {
+  if (IsRosFrontend()) {
+    return SanitizedIdentifier(proto_name);
+  }
+  return proto_name + "_";
+}
+
+std::string MessageGenerator::OneofVariantTypeName(
+    const google::protobuf::OneofDescriptor* oneof) const {
+  std::string name;
+  bool capitalize = true;
+  for (char c : oneof->name()) {
+    if (c == '_') {
+      capitalize = true;
+      continue;
+    }
+    name.push_back(capitalize ? static_cast<char>(std::toupper(c)) : c);
+    capitalize = false;
+  }
+  return SanitizedIdentifier(name + "Variant");
+}
+
+std::string MessageGenerator::OneofAlternativeTypeName(
+    const google::protobuf::FieldDescriptor* field) const {
+  std::string name(field->camelcase_name());
+  if (!name.empty()) {
+    name[0] = static_cast<char>(std::toupper(name[0]));
+  }
+  return SanitizedIdentifier(name + "Alternative");
+}
+
+int MessageGenerator::GetArraySize(
+    const google::protobuf::FieldDescriptor* field) const {
+  if (!field->options().HasExtension(phaser::array_size)) {
+    return 0;
+  }
+  return static_cast<int>(field->options().GetExtension(phaser::array_size));
+}
+
+bool MessageGenerator::UsesArrayFacade(
+    const google::protobuf::FieldDescriptor* field) const {
+  return IsRosFrontend() && GetArraySize(field) > 0;
+}
+
+absl::Status MessageGenerator::ValidateArraySizeOption(
+    const google::protobuf::FieldDescriptor* field) const {
+  if (!field->options().HasExtension(phaser::array_size)) {
+    return absl::OkStatus();
+  }
+  const int array_size = GetArraySize(field);
+  const std::string context =
+      absl::StrFormat("%s.%s", message_->full_name(), field->name());
+  if (array_size <= 0) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "phaser.array_size must be positive on field %s", context));
+  }
+  if (!field->is_repeated()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "phaser.array_size is only valid on repeated fields: %s", context));
+  }
+  if (field->is_map()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "phaser.array_size is not valid on map fields: %s", context));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MessageGenerator::ValidateFieldOptions() const {
+  if (IsRosFrontend() && IsRosHeader(message_) && added_namespace_.empty()) {
+    return absl::InvalidArgumentError(
+        "ROS frontend generation for std_msgs.Header requires add_namespace "
+        "to avoid colliding with the ROS std_msgs::Header type");
+  }
+  if (IsRosFrontend()) {
+    if (absl::Status status = ValidateRosHeaderDescriptor(); !status.ok()) {
+      return status;
+    }
+  }
+  for (int i = 0; i < message_->field_count(); i++) {
+    const auto* field = message_->field(i);
+    if (absl::Status status = ValidateArraySizeOption(field); !status.ok()) {
+      return status;
+    }
+    if (IsRosFrontend() && IsRosIntrinsic(field) &&
+        (field->is_repeated() || field->containing_oneof() != nullptr)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "ROS intrinsic field %s.%s must be singular and cannot be in a "
+          "oneof",
+          message_->full_name(), field->name()));
+    }
+  }
+  for (const auto& nested : nested_message_gens_) {
+    if (absl::Status status = nested->ValidateFieldOptions(); !status.ok()) {
+      return status;
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MessageGenerator::ValidateRosHeaderDescriptor() const {
+  if (!IsRosHeader(message_)) {
+    return absl::OkStatus();
+  }
+  const auto* seq = message_->FindFieldByName("seq");
+  const auto* stamp = message_->FindFieldByName("stamp");
+  const auto* frame_id = message_->FindFieldByName("frame_id");
+  if (seq == nullptr ||
+      seq->type() != google::protobuf::FieldDescriptor::TYPE_UINT32 ||
+      stamp == nullptr ||
+      stamp->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+      !IsRosTime(stamp->message_type()) || frame_id == nullptr ||
+      frame_id->type() != google::protobuf::FieldDescriptor::TYPE_STRING) {
+    return absl::InvalidArgumentError(
+        "std_msgs.Header must declare uint32 seq, "
+        "google.protobuf.Timestamp stamp, and string frame_id");
+  }
+  return absl::OkStatus();
+}
+
 std::string MessageGenerator::EnumName(
     const google::protobuf::EnumDescriptor* desc) {
   std::string name(desc->name());
@@ -191,6 +339,9 @@ std::string MessageGenerator::FieldCFieldType(
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
       if (IsAny(field)) {
         return "AnyField";
+      }
+      if (IsRosFrontend() && IsRosIntrinsic(field)) {
+        return RosIntrinsicFieldType(field);
       }
       return "IndirectMessageField<" +
              MessageName(field->message_type(), true) + ">";
@@ -278,6 +429,9 @@ std::string MessageGenerator::FieldCType(
     case google::protobuf::FieldDescriptor::TYPE_BYTES:
       return "std::string_view";
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsRosFrontend() && IsRosIntrinsic(field)) {
+        return RosIntrinsicCType(field);
+      }
       return MessageName(field->message_type(), true);
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
       std::cerr << "Groups are not supported\n";
@@ -288,6 +442,15 @@ std::string MessageGenerator::FieldCType(
 }
 
 std::string MessageGenerator::FieldRepeatedCType(
+    const google::protobuf::FieldDescriptor* field) {
+  const int array_size = GetArraySize(field);
+  if (IsRosFrontend() && array_size > 0) {
+    return FieldRepeatedArrayCType(field, array_size);
+  }
+  return FieldRepeatedVectorCType(field);
+}
+
+std::string MessageGenerator::FieldRepeatedVectorCType(
     const google::protobuf::FieldDescriptor* field) {
   std::string packed = field->is_packed() ? ", true>" : ", false>";
   switch (field->type()) {
@@ -332,6 +495,64 @@ std::string MessageGenerator::FieldRepeatedCType(
       exit(1);
   }
   // Unreachable: every protobuf field type is handled above and GROUP exits.
+  abort();
+}
+
+std::string MessageGenerator::FieldRepeatedArrayCType(
+    const google::protobuf::FieldDescriptor* field, int array_size) {
+  const std::string extent = std::to_string(array_size);
+  const std::string packed = field->is_packed() ? ", true>" : ", false>";
+  switch (field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+      return "PrimitiveArrayField<int32_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+      return "PrimitiveArrayField<int32_t, " + extent + ", false, true" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+      return "PrimitiveArrayField<int32_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+      return "PrimitiveArrayField<int64_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+      return "PrimitiveArrayField<int64_t, " + extent + ", false, true" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+      return "PrimitiveArrayField<int64_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+      return "PrimitiveArrayField<uint32_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+      return "PrimitiveArrayField<uint32_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+      return "PrimitiveArrayField<uint64_t, " + extent + ", false, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+      return "PrimitiveArrayField<uint64_t, " + extent + ", true, false" +
+             packed;
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      return "PrimitiveArrayField<double, " + extent + ", true, false" + packed;
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+      return "PrimitiveArrayField<float, " + extent + ", true, false" + packed;
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+      return "PrimitiveArrayField<bool, " + extent + ", false, false" + packed;
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+      return "EnumArrayField<" + EnumName(field->enum_type()) + ", " + extent +
+             ", " + EnumName(field->enum_type()) + "Stringizer, " +
+             EnumName(field->enum_type()) + "Parser" + packed;
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
+      return "StringArrayField<" + extent + ">";
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      return "MessageArrayField<" + MessageName(field->message_type(), true) +
+             ", " + extent + ">";
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      std::cerr << "Groups are not supported\n";
+      exit(1);
+  }
   abort();
 }
 
@@ -424,6 +645,56 @@ bool MessageGenerator::IsAny(const google::protobuf::Descriptor* desc) {
   return desc->full_name() == "google.protobuf.Any";
 }
 
+bool MessageGenerator::IsRosTime(
+    const google::protobuf::Descriptor* desc) const {
+  return desc != nullptr && desc->full_name() == "google.protobuf.Timestamp";
+}
+
+bool MessageGenerator::IsRosDuration(
+    const google::protobuf::Descriptor* desc) const {
+  return desc != nullptr && desc->full_name() == "google.protobuf.Duration";
+}
+
+bool MessageGenerator::IsRosHeader(
+    const google::protobuf::Descriptor* desc) const {
+  return desc != nullptr && desc->full_name() == "std_msgs.Header";
+}
+
+bool MessageGenerator::IsRosIntrinsic(
+    const google::protobuf::FieldDescriptor* field) const {
+  if (field == nullptr ||
+      field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+    return false;
+  }
+  const auto* desc = field->message_type();
+  return IsRosTime(desc) || IsRosDuration(desc) || IsRosHeader(desc);
+}
+
+std::string MessageGenerator::RosIntrinsicFieldType(
+    const google::protobuf::FieldDescriptor* field) {
+  const std::string backend = MessageName(field->message_type(), true);
+  if (IsRosTime(field->message_type())) {
+    return "RosTimeField<" + backend + ">";
+  }
+  if (IsRosDuration(field->message_type())) {
+    return "RosDurationField<" + backend + ">";
+  }
+  assert(IsRosHeader(field->message_type()));
+  return "RosHeaderField<" + backend + ">";
+}
+
+std::string MessageGenerator::RosIntrinsicCType(
+    const google::protobuf::FieldDescriptor* field) {
+  if (IsRosTime(field->message_type())) {
+    return "::ros::Time";
+  }
+  if (IsRosDuration(field->message_type())) {
+    return "::ros::Duration";
+  }
+  assert(IsRosHeader(field->message_type()));
+  return "::std_msgs::Header";
+}
+
 bool MessageGenerator::IsAny(const google::protobuf::FieldDescriptor* field) {
   return field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
          field->message_type()->full_name() == "google.protobuf.Any";
@@ -453,7 +724,8 @@ void MessageGenerator::CompileUnions() {
     union_info->member_type += "::phaser::" + field_type;
     uint32_t field_size = FieldBinarySize(field);
     union_info->members.push_back(std::make_shared<FieldInfo>(
-        field, 0, union_info->id, std::string(field->name()) + "_", field_type,
+        field, 0, union_info->id,
+        MemberVariableName(std::string(field->name())), field_type,
         FieldCType(field), field_size));
     union_info->binary_size = std::max(union_info->binary_size, 4 + field_size);
     union_info->id++;
@@ -483,7 +755,8 @@ void MessageGenerator::CompileFields() {
       auto it = unions_.find(oneof);
       if (it == unions_.end()) {
         auto union_info = std::make_shared<UnionInfo>(
-            oneof, 4, std::string(oneof->name()) + "_", "UnionField");
+            oneof, 4, MemberVariableName(std::string(oneof->name())),
+            "UnionField");
         unions_[oneof] = union_info;
         fields_in_order_.push_back(union_info);
       }
@@ -505,8 +778,8 @@ void MessageGenerator::CompileFields() {
     }
     offset = (offset + (field_size - 1)) & ~(field_size - 1);
     fields_.push_back(std::make_shared<FieldInfo>(
-        field, offset, id, std::string(field->name()) + "_", field_type,
-        FieldCType(field), field_size));
+        field, offset, id, MemberVariableName(std::string(field->name())),
+        field_type, FieldCType(field), field_size));
     fields_in_order_.push_back(fields_.back());
     offset += field_size;
     id = next_id;
@@ -550,38 +823,70 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
   binary_size_ = size;
 }
 
-void MessageGenerator::GenerateHeader(std::ostream& os) {
+absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
+  if (absl::Status status = ValidateFieldOptions(); !status.ok()) {
+    return status;
+  }
   for (const auto& nested : nested_message_gens_) {
-    nested->GenerateHeader(os);
+    if (absl::Status status = nested->GenerateHeader(os); !status.ok()) {
+      return status;
+    }
   }
   CompileFields();
   CompileUnions();
   FinalizeOffsetsAndSizes();
 
-  os << "class " << MessageName(message_) << " : public ::phaser::Message {\n";
+  os << (IsRosFrontend() ? "struct " : "class ") << MessageName(message_)
+     << " : public ::phaser::Message {\n";
   os << " public:\n";
+  if (IsRosFrontend()) {
+    GenerateRosOneofTypes(os);
+  }
   if (generate_active_message_) {
     os << "  // Optional user-attached payload, not part of the wire format.\n";
     os << "  std::any active_message;\n\n";
   }
+  for (const auto& [oneof, u] : unions_) {
+    os << "  inline static constexpr uint32_t " << u->member_name
+       << "_field_numbers[] = {";
+    const char* separator = "";
+    for (const auto& field : u->members) {
+      os << separator << field->field->number();
+      separator = ", ";
+    }
+    os << "};\n";
+  }
+  if (!unions_.empty()) {
+    os << "\n";
+  }
   // Generate constructors.
   GenerateConstructors(os, true);
+  os << "  " << MessageName(message_) << "* operator->() { return this; }\n";
+  os << "  const " << MessageName(message_)
+     << "* operator->() const { return this; }\n";
   // Generate size functions.
   GenerateSizeFunctions(os);
   // Generate creators.
   GenerateCreators(os, true);
   // Generate clear function.
   GenerateClear(os, true);
+  if (IsRosFrontend()) {
+    GenerateRosSyncToPayload(os);
+  }
   // Generate field metadata.
   GenerateFieldMetadata(os);
+  os << "  static constexpr size_t MetadataTypeCount() { return "
+     << ReachableMessageTypeCount() << "; }\n";
 
-  os << "  static std::string FullName() { return \"" << message_->full_name()
-     << "\"; }\n";
-  os << "  static std::string Name() { return \"" << message_->name()
-     << "\"; }\n\n";
+  os << "  static constexpr std::string_view FullName() { return \""
+     << message_->full_name() << "\"; }\n";
+  os << "  static constexpr std::string_view Name() { return \""
+     << message_->name() << "\"; }\n\n";
 
-  os << "  std::string GetName() const override { return Name(); }\n";
-  os << "  std::string GetFullName() const override { return FullName(); }\n";
+  os << "  std::string GetName() const override { return std::string(Name()); "
+        "}\n";
+  os << "  std::string GetFullName() const override { return "
+        "std::string(FullName()); }\n";
 
   os << "  friend std::ostream &operator<<(std::ostream &os, const "
      << MessageName(message_) << " &msg);\n\n";
@@ -602,10 +907,18 @@ void MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateCopy(os, true);
   GenerateDebugString(os);
 
+  if (IsRosFrontend()) {
+    GenerateRosOwnerCopyMove(os, true);
+    GeneratePublicFieldDeclarations(os);
+  }
+
   // Generate protobuf accessors.
-  GenerateProtobufAccessors(os);
+  if (!IsRosFrontend()) {
+    GenerateProtobufAccessors(os);
+  }
 
   GenerateProtobufSerialization(os);
+  GenerateROSSerialization(os, true);
 
   // Generate serialized size.
   GenerateSerializedSize(os, true);
@@ -614,13 +927,107 @@ void MessageGenerator::GenerateHeader(std::ostream& os) {
   // Generate deserializer.
   GenerateDeserializer(os, true);
 
-  os << " private:\n";
-  GenerateFieldDeclarations(os);
+  if (!IsRosFrontend()) {
+    os << " private:\n";
+    GenerateFieldDeclarations(os);
+  }
   os << "};\n\n";
 
   // Steamer outside the class.
   GenerateStreamer(os);
   GenerateCopy(os, false);
+  return absl::OkStatus();
+}
+
+void MessageGenerator::GenerateRosSyncToPayload(std::ostream& os) {
+  os << "  void SyncToPayload() const override {\n";
+  for (const auto& field : fields_) {
+    if (field->field->type() !=
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+        (!field->field->is_repeated() && IsAny(field->field))) {
+      continue;
+    }
+    os << "    " << field->member_name << ".SyncToPayload();\n";
+  }
+  for (const auto& [oneof, union_info] : unions_) {
+    os << "    switch (" << union_info->member_name << ".Discriminator()) {\n";
+    for (size_t i = 0; i < union_info->members.size(); ++i) {
+      const auto& member = union_info->members[i];
+      if (member->field->type() !=
+          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+        continue;
+      }
+      os << "      case " << member->field->number() << ":\n";
+      os << "        " << union_info->member_name << ".template GetReference<"
+         << i << ", " << member->c_type << ">().SyncToPayload();\n";
+      os << "        break;\n";
+    }
+    os << "      default:\n";
+    os << "        break;\n";
+    os << "    }\n";
+  }
+  os << "  }\n\n";
+}
+
+void MessageGenerator::GenerateRosOwnerCopyMove(std::ostream& os, bool decl) {
+  if (!IsRosFrontend()) {
+    return;
+  }
+  const std::string name = MessageName(message_);
+  if (decl) {
+    os << "  " << name << "(const " << name << "& other);\n";
+    os << "  " << name << "& operator=(const " << name << "& other);\n";
+    os << "  " << name << "(" << name << "&& other) noexcept;\n";
+    os << "  " << name << "& operator=(" << name << "&& other) noexcept;\n\n";
+    return;
+  }
+
+  os << name << "::" << name << "(const " << name
+     << "& other) : Message(other)\n";
+  GenerateFieldInitializers(os, ", ");
+  os << R"XXX({
+  if (other.runtime != nullptr && other.runtime.use_count() == 0) {
+    return;
+  }
+  size_t initial_size = other.BinarySize() * 2;
+  if (initial_size < 8192) {
+    initial_size = 8192;
+  }
+  InitDynamicMutable(initial_size, ::phaser::Tuning::kPerformance);
+  (void)CloneFrom(other);
+}
+
+)XXX";
+
+  os << name << "& " << name << "::operator=(const " << name << "& other) {\n";
+  os << "  if (this != &other) {\n";
+  os << "    (void)CloneFrom(other);\n";
+  os << "  }\n";
+  os << "  return *this;\n";
+  os << "}\n\n";
+
+  os << name << "::" << name << "(" << name << "&& other) noexcept\n";
+  os << "  : Message(std::move(other))\n";
+  const char* sep = ", ";
+  for (auto& field : fields_) {
+    os << sep << field->member_name << "(std::move(other." << field->member_name
+       << "))\n";
+    sep = ", ";
+  }
+  for (auto& [oneof, u] : unions_) {
+    os << sep << u->member_name << "(std::move(other." << u->member_name
+       << "))\n";
+  }
+  os << "{}\n\n";
+
+  os << name << "& " << name << "::operator=(" << name << "&& other) noexcept "
+     << "{\n";
+  os << "  if (this != &other) {\n";
+  os << "    (void)CloneFrom(other);\n";
+  os << "    other.Clear();\n";
+  os << "  }\n";
+  os << "  return *this;\n";
+  os << "}\n\n";
 }
 
 void MessageGenerator::GenerateSource(std::ostream& os) {
@@ -629,6 +1036,9 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
   }
 
   GenerateConstructors(os, false);
+  if (IsRosFrontend()) {
+    GenerateRosOwnerCopyMove(os, false);
+  }
 
   // Generate creators.
   GenerateCreators(os, false);
@@ -643,6 +1053,7 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
   GenerateSerializer(os, false);
   // Generate deserializer.
   GenerateDeserializer(os, false);
+  GenerateROSSerialization(os, false);
 
   // Phaser bank
   GeneratePhaserBank(os);
@@ -654,8 +1065,56 @@ void MessageGenerator::GenerateFieldDeclarations(std::ostream& os) {
        << ";\n";
   }
   for (auto& [oneof, u] : unions_) {
-    os << "  ::phaser::" << u->member_type << " " << u->member_name << ";\n";
+    if (IsRosFrontend()) {
+      os << "  " << OneofVariantTypeName(oneof) << " " << u->member_name
+         << ";\n";
+    } else {
+      os << "  ::phaser::" << u->member_type << " " << u->member_name << ";\n";
+    }
   }
+}
+
+void MessageGenerator::GenerateRosOneofTypes(std::ostream& os) {
+  for (auto& [oneof, u] : unions_) {
+    const std::string variant_name = OneofVariantTypeName(oneof);
+    os << "  struct " << variant_name
+       << " : public ::phaser::" << u->member_type << " {\n";
+    os << "    using Base = ::phaser::" << u->member_type << ";\n";
+    os << "    using Base::Base;\n";
+    for (size_t i = 0; i < u->members.size(); ++i) {
+      const auto& field = u->members[i];
+      const std::string alternative_name =
+          OneofAlternativeTypeName(field->field);
+      os << "    struct " << alternative_name << " {\n";
+      os << "      using value_type = " << field->c_type << ";\n";
+      os << "      static constexpr size_t kIndex = " << i << ";\n";
+      os << "      static constexpr int kFieldNumber = "
+         << field->field->number() << ";\n";
+      os << "      static constexpr bool kIsMessage = "
+         << (field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_MESSAGE
+                 ? "true"
+                 : "false")
+         << ";\n";
+      os << "    };\n";
+    }
+    os << "  };\n";
+    for (const auto& field : u->members) {
+      const std::string alternative_name =
+          OneofAlternativeTypeName(field->field);
+      os << "  using " << alternative_name << " = " << variant_name
+         << "::" << alternative_name << ";\n";
+    }
+    os << "\n";
+  }
+}
+
+void MessageGenerator::GeneratePublicFieldDeclarations(std::ostream& os) {
+  if (fields_.empty() && unions_.empty()) {
+    return;
+  }
+  os << "\n";
+  GenerateFieldDeclarations(os);
 }
 
 void MessageGenerator::GenerateEnums(std::ostream& os) {
@@ -742,13 +1201,8 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream& os,
   }
   for (auto& [oneof, u] : unions_) {
     os << sep << u->member_name << "(offsetof(" << MessageName(message_) << ", "
-       << u->member_name << "), " << u->offset << ", 0, 0, {";
-    const char* num_sep = "";
-    for (auto& field : u->members) {
-      os << num_sep << field->field->number();
-      num_sep = ",";
-    }
-    os << "})\n";
+       << u->member_name << "), " << u->offset << ", 0, 0, "
+       << "absl::MakeConstSpan(" << u->member_name << "_field_numbers))\n";
     sep = ", ";
   }
   os << "#pragma clang diagnostic pop\n\n";
@@ -784,11 +1238,13 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
-        "  auto runtime = "
-        "std::make_shared<::phaser::MutableMessageRuntime>(pb);\n"
+        "  ::phaser::InitializeRuntimeControl(&pb, "
+     << MessageName(message_)
+     << "::MetadataTypeCount());\n"
+        "  ::phaser::MessageRuntime runtime(pb, true);\n"
         "  auto msg = "
      << MessageName(message_)
-     << "(runtime, pb->message);\n"
+     << "(BorrowRuntime(runtime), pb->message);\n"
         "  msg.InstallMetadata<"
      << MessageName(message_)
      << ">();\n"
@@ -803,11 +1259,10 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::toolbelt::PayloadBuffer *pb ="
         "reinterpret_cast<::toolbelt::PayloadBuffer "
         "*>(const_cast<void*>(addr));\n"
-        "  auto runtime = std::make_shared<::phaser::MessageRuntime>(pb, "
-        "size);\n"
+        "  ::phaser::MessageRuntime runtime(pb, size);\n"
         "  return "
      << MessageName(message_)
-     << "(runtime, pb->message);\n"
+     << "(BorrowRuntime(runtime), pb->message);\n"
         "}\n\n";
   os << "// Create a message in a dynamically resized buffer allocated from "
         "the heap.\n";
@@ -826,6 +1281,9 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
+        "  ::phaser::InitializeRuntimeControl(&pb, "
+     << MessageName(message_)
+     << "::MetadataTypeCount());\n"
         "  auto runtime = "
         "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
         "std::move(free));\n"
@@ -855,6 +1313,9 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
+        "  ::phaser::InitializeRuntimeControl(&pb, "
+     << MessageName(message_)
+     << "::MetadataTypeCount());\n"
         "  auto runtime = "
         "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
         "::free);\n"
@@ -875,6 +1336,25 @@ void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
         "PresenceMaskSize(); }\n";
 }
 
+size_t MessageGenerator::ReachableMessageTypeCount() const {
+  std::set<const google::protobuf::Descriptor*> reachable;
+  std::function<void(const google::protobuf::Descriptor*)> visit =
+      [&](const google::protobuf::Descriptor* descriptor) {
+        if (descriptor == nullptr || !reachable.insert(descriptor).second) {
+          return;
+        }
+        for (int i = 0; i < descriptor->field_count(); ++i) {
+          const auto* field = descriptor->field(i);
+          if (field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+            visit(field->message_type());
+          }
+        }
+      };
+  visit(message_);
+  return reachable.size();
+}
+
 void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {
   // Build a vector of fields from the fields an unions, sorted by field number.
   std::vector<std::shared_ptr<FieldInfo>> all_fields;
@@ -892,31 +1372,116 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {
               return a->field->number() < b->field->number();
             });
 
-  os << "  struct " << MessageName(message_) << "FieldData {";
-  os << R"(
-    uint32_t num;
-    struct Field {
-      uint32_t number;
-      uint32_t offset : 24;
-      uint32_t id : 8;
-)";
-  // A message with no fields would otherwise emit `fields[0]`, a zero-length
-  // array (a non-standard extension). Reserve one (zero-initialized, never read
-  // because num == 0) element instead so the generated header stays clean.
-  os << "    } fields[" << (all_fields.empty() ? size_t{1} : all_fields.size())
-     << "];\n";
-  os << "  };\n";
+  // Find the interval with the greatest metadata-size saving. For [i, j],
+  // sparse entries cost 8 bytes each while the dense representation costs
+  // 4 bytes per field-number slot. Missing slots use a zero field offset.
+  // Separating the start- and end-dependent terms finds the best interval in
+  // O(number_of_fields).
+  size_t dense_begin = 0;
+  size_t dense_end = 0;
+  int64_t best_saving = 0;
+  int64_t best_start_score = std::numeric_limits<int64_t>::min();
+  size_t best_start_index = 0;
+  for (size_t end = 0; end < all_fields.size(); ++end) {
+    const int64_t number = all_fields[end]->field->number();
+    const int64_t start_score = -8 * static_cast<int64_t>(end) + 4 * number;
+    if (start_score > best_start_score) {
+      best_start_score = start_score;
+      best_start_index = end;
+    }
 
-  // Generate the field data.
+    const int64_t end_score =
+        8 * static_cast<int64_t>(end + 1) - 4 * (number + 1);
+    const int64_t saving = end_score + best_start_score;
+    if (saving > best_saving) {
+      best_saving = saving;
+      dense_begin = best_start_index;
+      dense_end = end;
+    }
+  }
+
+  const bool has_dense_range = best_saving > 0;
+  const uint32_t dense_base =
+      has_dense_range
+          ? static_cast<uint32_t>(all_fields[dense_begin]->field->number())
+          : 0;
+  const uint32_t dense_span =
+      has_dense_range
+          ? static_cast<uint32_t>(all_fields[dense_end]->field->number() -
+                                  all_fields[dense_begin]->field->number() + 1)
+          : 0;
+  const size_t dense_count = has_dense_range ? dense_end - dense_begin + 1 : 0;
+  const size_t sparse_count = all_fields.size() - dense_count;
+
+  os << "  struct " << MessageName(message_) << "FieldData {";
+  os << "\n    ::phaser::HybridFieldData header;\n";
+  if (dense_span != 0) {
+    os << "    ::phaser::FieldValue dense_fields[" << dense_span << "];\n";
+  }
+  if (sparse_count != 0) {
+    os << "    ::phaser::SparseFieldData sparse_fields[" << sparse_count
+       << "];\n";
+  }
+  os << "  };\n";
+  const size_t metadata_size =
+      4 * sizeof(uint32_t) +
+      static_cast<size_t>(dense_span) * sizeof(uint32_t) +
+      sparse_count * 2 * sizeof(uint32_t);
+  os << "  static_assert(sizeof(" << MessageName(message_)
+     << "FieldData) == " << metadata_size
+     << "u, \"Unexpected hybrid field metadata padding\");\n";
+
+  uint32_t max_offset = 0;
+  uint32_t max_id = 0;
+  for (const auto& field : all_fields) {
+    max_offset = std::max(max_offset, field->offset);
+    max_id = std::max(max_id, field->id);
+  }
+  os << "  static_assert(" << max_offset
+     << "u <= 0x00ffffffu, \"Field offset exceeds 24 bits\");\n";
+  os << "  static_assert(" << max_id
+     << "u <= 0xffu, \"Field presence id exceeds 8 bits\");\n";
+
   os << "  static constexpr " << MessageName(message_)
      << "FieldData field_data = {\n";
-  os << "    .num = " << all_fields.size() << ",\n";
-  os << "    .fields = {\n";
-  for (auto& field : all_fields) {
-    os << "      { .number = " << field->field->number()
-       << ", .offset = " << field->offset << ", .id = " << field->id << " },\n";
+  os << "    .header = {\n";
+  os << "      .magic = ::phaser::kHybridFieldDataMagic,\n";
+  os << "      .dense_base = " << dense_base << ",\n";
+  os << "      .dense_span = " << dense_span << ",\n";
+  os << "      .sparse_count = " << sparse_count << ",\n";
+  os << "    },\n";
+
+  if (dense_span != 0) {
+    os << "    .dense_fields = {\n";
+    size_t field_index = dense_begin;
+    for (uint32_t dense_index = 0; dense_index < dense_span; ++dense_index) {
+      const uint32_t field_number = dense_base + dense_index;
+      if (field_index <= dense_end &&
+          static_cast<uint32_t>(all_fields[field_index]->field->number()) ==
+              field_number) {
+        const auto& field = all_fields[field_index++];
+        os << "      { .offset = " << field->offset << ", .id = " << field->id
+           << " },\n";
+      } else {
+        os << "      {},\n";
+      }
+    }
+    os << "    },\n";
   }
-  os << "    }\n";
+
+  if (sparse_count != 0) {
+    os << "    .sparse_fields = {\n";
+    for (size_t i = 0; i < all_fields.size(); ++i) {
+      if (has_dense_range && i >= dense_begin && i <= dense_end) {
+        continue;
+      }
+      const auto& field = all_fields[i];
+      os << "      { .number = " << field->field->number()
+         << ", .offset = " << field->offset << ", .id = " << field->id
+         << " },\n";
+    }
+    os << "    },\n";
+  }
   os << "  };\n";
 }
 
@@ -938,6 +1503,9 @@ void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
 }
 
 void MessageGenerator::GenerateProtobufAccessors(std::ostream& os) {
+  if (IsRosFrontend()) {
+    return;
+  }
   // Generate field accessors.
   GenerateFieldProtobufAccessors(os);
   // Union accessors.
@@ -1042,7 +1610,6 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
           os << "  }\n";
           os << "  const ::phaser::StringVectorField& " << sanitized_field_name
              << "() const {\n";
-          os << "    " << member_name << ".Populate();\n";
           os << "    return " << member_name << ";\n";
           os << "  }\n";
         } else {
@@ -1087,20 +1654,19 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "  void clear_" << field_name << "() {\n";
         os << "    " << member_name << ".Clear();\n";
         os << "  }\n";
-        os << "  const " << field->c_type << "& " << sanitized_field_name
+        os << "  " << field->c_type << " " << sanitized_field_name
            << "(size_t index) const {\n";
         os << "    return " << member_name << ".Get(index);\n";
         os << "  }\n";
-        os << "  " << field->c_type << "* mutable_" << field_name
+        os << "  " << field->c_type << " mutable_" << field_name
            << "(size_t index) {\n";
         os << "    return " << member_name << ".Mutable(index);\n";
         os << "  }\n";
-        os << "  " << field->c_type << "* add_" << field_name << "() {\n";
+        os << "  " << field->c_type << " add_" << field_name << "() {\n";
         os << "    return " << member_name << ".Add();\n";
         os << "  }\n";
         os << "  const ::phaser::MessageVectorField<" << field->c_type << ">& "
            << sanitized_field_name << "() const {\n";
-        os << "    " << member_name << ".Populate();\n";
         os << "    return " << member_name << ";\n";
         os << "  }\n";
         os << "  void reserve_" << field_name << "(size_t num) {\n";
@@ -1109,7 +1675,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "  void resize_" << field_name << "(size_t num) {\n";
         os << "    " << member_name << ".resize(num);\n";
         os << "  }\n";
-        os << "  std::vector<" << field->c_type << "*> allocate_" << field_name
+        os << "  std::vector<" << field->c_type << "> allocate_" << field_name
            << "(size_t n) {\n";
         os << "    return " << member_name << ".Allocate(n);\n";
         os << "  }\n";
@@ -1305,6 +1871,1386 @@ void MessageGenerator::GenerateFieldNumbers(std::ostream& os) {
   }
 }
 
+std::string MessageGenerator::ROSFieldValueExpression(
+    const std::shared_ptr<FieldInfo>& field,
+    const std::shared_ptr<UnionInfo>& union_field, int union_index) const {
+  if (union_field == nullptr) {
+    return field->member_name + ".Get()";
+  }
+  if (field->field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+    return union_field->member_name + ".template GetReference<" +
+           std::to_string(union_index) + ", " + field->c_type + ">()";
+  }
+  return union_field->member_name + ".template GetValue<" +
+         std::to_string(union_index) + ", " + field->c_type + ">()";
+}
+
+static std::string ROSBulkPrimitiveType(
+    const google::protobuf::FieldDescriptor* field) {
+  switch (field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+      return "int32_t";
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+      return "int64_t";
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+      return "uint32_t";
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+      return "uint64_t";
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      return "double";
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+      return "float";
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+      return "bool";
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      return "";
+  }
+  return "";
+}
+
+void MessageGenerator::GenerateROSFieldSize(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& value_expression, const std::string& indent) {
+  switch (field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+      os << indent << "size += 4;\n";
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      os << indent << "size += 8;\n";
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+      os << indent << "size += 1;\n";
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
+      os << indent << "size += 4 + (" << value_expression << ").size();\n";
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsAny(field)) {
+        // Any has no static ROS1 type. An absent Any is represented by its two
+        // empty declared fields; a populated Any is rejected by the writer.
+        os << indent << "size += 8;\n";
+      } else if (IsRosFrontend() && IsRosTime(field->message_type())) {
+        os << indent << "size += 8;\n";
+      } else if (IsRosFrontend() && IsRosDuration(field->message_type())) {
+        os << indent << "size += 8;\n";
+      } else if (IsRosFrontend() && IsRosHeader(field->message_type())) {
+        os << indent << "size += 16 + (" << value_expression
+           << ").frame_id.size();\n";
+      } else {
+        os << indent << "size += (" << value_expression
+           << ").ROSSerializedSize();\n";
+      }
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      abort();
+  }
+  abort();
+}
+
+void MessageGenerator::GenerateROSFieldWrite(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& value_expression, const std::string& indent) {
+  auto write = [&](const std::string& expression) {
+    os << indent << "if (absl::Status status = buffer.Write(" << expression
+       << "); !status.ok()) return status;\n";
+  };
+  switch (field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+      write("static_cast<int32_t>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+      write("static_cast<int64_t>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+      write("static_cast<uint32_t>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+      write("static_cast<uint64_t>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      write("static_cast<double>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+      write("static_cast<float>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+      write("static_cast<bool>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+      write("static_cast<int32_t>(" + value_expression + ")");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
+      os << indent << "if (absl::Status status = buffer.WriteString("
+         << value_expression << "); !status.ok()) return status;\n";
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsAny(field)) {
+        os << indent << "if ((" << value_expression << ").has_type_url() || ("
+           << value_expression << ").has_value()) {\n";
+        os << indent
+           << "  return absl::UnimplementedError(\"ROS1 serialization of a "
+              "populated google.protobuf.Any is unsupported\");\n";
+        os << indent << "}\n";
+        os << indent
+           << "if (absl::Status status = buffer.WriteString({}); "
+              "!status.ok()) return status;\n";
+        os << indent
+           << "if (absl::Status status = buffer.WriteString({}); "
+              "!status.ok()) return status;\n";
+      } else if (IsRosFrontend() && IsRosTime(field->message_type())) {
+        write("static_cast<uint32_t>((" + value_expression + ").sec)");
+        write("static_cast<uint32_t>((" + value_expression + ").nsec)");
+      } else if (IsRosFrontend() && IsRosDuration(field->message_type())) {
+        write("static_cast<int32_t>((" + value_expression + ").sec)");
+        write("static_cast<int32_t>((" + value_expression + ").nsec)");
+      } else if (IsRosFrontend() && IsRosHeader(field->message_type())) {
+        write("static_cast<uint32_t>((" + value_expression + ").seq)");
+        write("static_cast<uint32_t>((" + value_expression + ").stamp.sec)");
+        write("static_cast<uint32_t>((" + value_expression + ").stamp.nsec)");
+        os << indent << "if (absl::Status status = buffer.WriteString(("
+           << value_expression << ").frame_id); !status.ok()) return status;\n";
+      } else {
+        os << indent << "if (absl::Status status = (" << value_expression
+           << ").SerializeToROS(buffer); !status.ok()) return status;\n";
+      }
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      abort();
+  }
+  abort();
+}
+
+void MessageGenerator::GenerateROSFieldRead(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& target_expression, const std::string& indent,
+    bool append, const std::string& index_expression, int union_index) {
+  auto set_value = [&](const std::string& value) {
+    if (union_index >= 0) {
+      os << indent << target_expression << ".template Set<" << union_index
+         << ">(" << value << ");\n";
+    } else if (!index_expression.empty()) {
+      os << indent << target_expression << ".Set(" << index_expression << ", "
+         << value << ");\n";
+    } else if (append) {
+      os << indent << target_expression << ".Add(" << value << ");\n";
+    } else {
+      os << indent << target_expression << ".Set(" << value << ");\n";
+    }
+  };
+  auto mutable_message = [&]() {
+    if (union_index >= 0) {
+      return target_expression + ".template Mutable<" +
+             std::to_string(union_index) + ", " +
+             MessageName(field->message_type(), true) + ">()";
+    }
+    if (!index_expression.empty()) {
+      return target_expression + ".Mutable(" + index_expression + ")";
+    }
+    if (append) {
+      return target_expression + ".Add()";
+    }
+    return target_expression + ".Mutable()";
+  };
+  auto read_value = [&](const std::string& type,
+                        const std::string& conversion = "") {
+    os << indent << "{\n";
+    os << indent << "  absl::StatusOr<" << type << "> ros_value = buffer.Read<"
+       << type << ">();\n";
+    os << indent << "  if (!ros_value.ok()) return ros_value.status();\n";
+    const std::string value =
+        conversion.empty() ? "*ros_value" : conversion + "(*ros_value)";
+    set_value(value);
+    os << indent << "}\n";
+  };
+
+  switch (field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+      read_value("int32_t");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+      read_value("int64_t");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+      read_value("uint32_t");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+      read_value("uint64_t");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      read_value("double");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+      read_value("float");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+      read_value("bool");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+      read_value("int32_t",
+                 "static_cast<" + EnumName(field->enum_type()) + ">");
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
+      os << indent << "{\n";
+      os << indent
+         << "  absl::StatusOr<std::string_view> ros_value = "
+            "buffer.ReadString();\n";
+      os << indent << "  if (!ros_value.ok()) return ros_value.status();\n";
+      set_value("*ros_value");
+      os << indent << "}\n";
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsAny(field)) {
+        os << indent << "{\n";
+        os << indent
+           << "  absl::StatusOr<std::string_view> ros_type_url = "
+              "buffer.ReadString();\n";
+        os << indent
+           << "  if (!ros_type_url.ok()) return ros_type_url.status();\n";
+        os << indent
+           << "  absl::StatusOr<std::string_view> ros_any_value = "
+              "buffer.ReadString();\n";
+        os << indent
+           << "  if (!ros_any_value.ok()) return ros_any_value.status();\n";
+        os << indent
+           << "  if (!ros_type_url->empty() || !ros_any_value->empty()) {\n";
+        os << indent
+           << "    return absl::UnimplementedError(\"ROS1 deserialization of "
+              "a populated google.protobuf.Any is unsupported\");\n";
+        os << indent << "  }\n";
+        os << indent << "  " << mutable_message() << "->Clear();\n";
+        os << indent << "}\n";
+      } else if (IsRosFrontend() && IsRosTime(field->message_type())) {
+        os << indent << "{\n";
+        os << indent
+           << "  absl::StatusOr<uint32_t> ros_sec = "
+              "buffer.Read<uint32_t>();\n";
+        os << indent << "  if (!ros_sec.ok()) return ros_sec.status();\n";
+        os << indent
+           << "  absl::StatusOr<uint32_t> ros_nsec = "
+              "buffer.Read<uint32_t>();\n";
+        os << indent << "  if (!ros_nsec.ok()) return ros_nsec.status();\n";
+        os << indent << "  ::ros::Time ros_value;\n";
+        os << indent << "  ros_value.sec = *ros_sec;\n";
+        os << indent << "  ros_value.nsec = *ros_nsec;\n";
+        set_value("ros_value");
+        os << indent << "}\n";
+      } else if (IsRosFrontend() && IsRosDuration(field->message_type())) {
+        os << indent << "{\n";
+        os << indent
+           << "  absl::StatusOr<int32_t> ros_sec = "
+              "buffer.Read<int32_t>();\n";
+        os << indent << "  if (!ros_sec.ok()) return ros_sec.status();\n";
+        os << indent
+           << "  absl::StatusOr<int32_t> ros_nsec = "
+              "buffer.Read<int32_t>();\n";
+        os << indent << "  if (!ros_nsec.ok()) return ros_nsec.status();\n";
+        os << indent << "  ::ros::Duration ros_value;\n";
+        os << indent << "  ros_value.sec = *ros_sec;\n";
+        os << indent << "  ros_value.nsec = *ros_nsec;\n";
+        set_value("ros_value");
+        os << indent << "}\n";
+      } else if (IsRosFrontend() && IsRosHeader(field->message_type())) {
+        os << indent << "{\n";
+        os << indent
+           << "  absl::StatusOr<uint32_t> ros_seq = "
+              "buffer.Read<uint32_t>();\n";
+        os << indent << "  if (!ros_seq.ok()) return ros_seq.status();\n";
+        os << indent
+           << "  absl::StatusOr<uint32_t> ros_sec = "
+              "buffer.Read<uint32_t>();\n";
+        os << indent << "  if (!ros_sec.ok()) return ros_sec.status();\n";
+        os << indent
+           << "  absl::StatusOr<uint32_t> ros_nsec = "
+              "buffer.Read<uint32_t>();\n";
+        os << indent << "  if (!ros_nsec.ok()) return ros_nsec.status();\n";
+        os << indent
+           << "  absl::StatusOr<std::string_view> ros_frame_id = "
+              "buffer.ReadString();\n";
+        os << indent
+           << "  if (!ros_frame_id.ok()) return ros_frame_id.status();\n";
+        if (union_index < 0 && !append && index_expression.empty()) {
+          os << indent << "  auto ros_value = " << target_expression
+             << ".Mutable();\n";
+          os << indent << "  ros_value.seq = *ros_seq;\n";
+          os << indent << "  ros_value.stamp.sec = *ros_sec;\n";
+          os << indent << "  ros_value.stamp.nsec = *ros_nsec;\n";
+          os << indent << "  ros_value.frame_id = *ros_frame_id;\n";
+        } else {
+          os << indent << "  auto ros_value = " << mutable_message() << ";\n";
+          os << indent << "  ros_value->seq = *ros_seq;\n";
+          os << indent << "  ros_value->stamp = "
+             << "::ros::Time(*ros_sec, *ros_nsec);\n";
+          os << indent << "  ros_value->frame_id = *ros_frame_id;\n";
+          os << indent << "  ros_value->SyncToPayload();\n";
+        }
+        os << indent << "}\n";
+      } else {
+        os << indent << "{\n";
+        os << indent << "  auto ros_message = " << mutable_message() << ";\n";
+        os << indent
+           << "  if (absl::Status status = "
+              "ros_message->DeserializeFromROS(buffer); !status.ok()) "
+              "return status;\n";
+        os << indent << "}\n";
+      }
+      return;
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      abort();
+  }
+  abort();
+}
+
+std::string MessageGenerator::DirectProtobufValueType(
+    const google::protobuf::FieldDescriptor* field) const {
+  using Field = google::protobuf::FieldDescriptor;
+  switch (field->type()) {
+    case Field::TYPE_INT32:
+    case Field::TYPE_SINT32:
+    case Field::TYPE_SFIXED32:
+    case Field::TYPE_ENUM:
+      return "int32_t";
+    case Field::TYPE_INT64:
+    case Field::TYPE_SINT64:
+    case Field::TYPE_SFIXED64:
+      return "int64_t";
+    case Field::TYPE_UINT32:
+    case Field::TYPE_FIXED32:
+      return "uint32_t";
+    case Field::TYPE_UINT64:
+    case Field::TYPE_FIXED64:
+      return "uint64_t";
+    case Field::TYPE_FLOAT:
+      return "float";
+    case Field::TYPE_DOUBLE:
+      return "double";
+    case Field::TYPE_BOOL:
+      return "bool";
+    case Field::TYPE_STRING:
+    case Field::TYPE_BYTES:
+    case Field::TYPE_MESSAGE:
+      return "std::string_view";
+    case Field::TYPE_GROUP:
+      break;
+  }
+  abort();
+}
+
+void MessageGenerator::GenerateDirectProtobufReadValue(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& buffer, const std::string& value,
+    const std::string& indent) {
+  using Field = google::protobuf::FieldDescriptor;
+  const std::string type = DirectProtobufValueType(field);
+  if (field->type() == Field::TYPE_STRING ||
+      field->type() == Field::TYPE_BYTES) {
+    os << indent << "absl::StatusOr<std::string_view> ros_parsed = " << buffer
+       << ".DeserializeString();\n";
+    os << indent << "if (!ros_parsed.ok()) return ros_parsed.status();\n";
+    os << indent << value << " = *ros_parsed;\n";
+    return;
+  }
+  if (field->type() == Field::TYPE_MESSAGE) {
+    os << indent << "absl::StatusOr<absl::Span<char>> ros_parsed = " << buffer
+       << ".DeserializeLengthDelimited();\n";
+    os << indent << "if (!ros_parsed.ok()) return ros_parsed.status();\n";
+    os << indent << value
+       << " = std::string_view(ros_parsed->data(), ros_parsed->size());\n";
+    return;
+  }
+
+  const bool fixed = field->type() == Field::TYPE_FIXED32 ||
+                     field->type() == Field::TYPE_SFIXED32 ||
+                     field->type() == Field::TYPE_FLOAT ||
+                     field->type() == Field::TYPE_FIXED64 ||
+                     field->type() == Field::TYPE_SFIXED64 ||
+                     field->type() == Field::TYPE_DOUBLE;
+  const bool is_signed = field->type() == Field::TYPE_SINT32 ||
+                         field->type() == Field::TYPE_SINT64;
+  os << indent << "absl::StatusOr<" << type << "> ros_parsed = " << buffer
+     << (fixed ? ".DeserializeFixed<" : ".DeserializeVarint<") << type;
+  if (fixed) {
+    os << ">();\n";
+  } else {
+    os << ", " << (is_signed ? "true" : "false") << ">();\n";
+  }
+  os << indent << "if (!ros_parsed.ok()) return ros_parsed.status();\n";
+  os << indent << value << " = *ros_parsed;\n";
+}
+
+void MessageGenerator::GenerateDirectROSWriteValue(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& value, const std::string& indent) {
+  using Field = google::protobuf::FieldDescriptor;
+  switch (field->type()) {
+    case Field::TYPE_STRING:
+    case Field::TYPE_BYTES:
+      os << indent << "if (absl::Status status = output.WriteString(" << value
+         << "); !status.ok()) return status;\n";
+      return;
+    case Field::TYPE_MESSAGE:
+      if (IsAny(field)) {
+        os << indent << "{\n";
+        os << indent << "  ::phaser::ProtoBuffer any_scan(" << value << ");\n";
+        os << indent << "  while (!any_scan.Eof()) {\n";
+        os << indent
+           << "    absl::StatusOr<uint32_t> any_tag = "
+              "any_scan.DeserializeVarint<uint32_t, false>();\n";
+        os << indent << "    if (!any_tag.ok()) return any_tag.status();\n";
+        os << indent
+           << "    const uint32_t any_number = "
+              "*any_tag >> ::phaser::ProtoBuffer::kFieldIdShift;\n";
+        os << indent << "    if (any_number == 1 || any_number == 2) {\n";
+        os << indent
+           << "      return absl::UnimplementedError(\"ROS1 serialization of "
+              "a populated google.protobuf.Any is unsupported\");\n";
+        os << indent << "    }\n";
+        os << indent
+           << "    if (absl::Status status = any_scan.SkipTag(*any_tag); "
+              "!status.ok()) return status;\n";
+        os << indent << "  }\n";
+        os << indent
+           << "  if (absl::Status status = output.WriteString({}); "
+              "!status.ok()) return status;\n";
+        os << indent
+           << "  if (absl::Status status = output.WriteString({}); "
+              "!status.ok()) return status;\n";
+        os << indent << "}\n";
+      } else {
+        os << indent << "if (absl::Status status = "
+           << MessageName(field->message_type(), true) << "::ProtobufWireToROS("
+           << value << ", output); !status.ok()) return status;\n";
+      }
+      return;
+    case Field::TYPE_ENUM:
+      os << indent
+         << "if (absl::Status status = output.Write(static_cast<int32_t>("
+         << value << ")); !status.ok()) return status;\n";
+      return;
+    default:
+      os << indent << "if (absl::Status status = output.Write(" << value
+         << "); !status.ok()) return status;\n";
+      return;
+  }
+}
+
+void MessageGenerator::GenerateDirectProtobufSingularField(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& indent) {
+  const std::string type = DirectProtobufValueType(field);
+  os << indent << "{\n";
+  os << indent << "  " << type << " ros_value{};\n";
+  os << indent << "  ::phaser::ProtoBuffer ros_scan(protobuf);\n";
+  os << indent << "  while (!ros_scan.Eof()) {\n";
+  os << indent
+     << "    absl::StatusOr<uint32_t> ros_tag = "
+        "ros_scan.DeserializeVarint<uint32_t, false>();\n";
+  os << indent << "    if (!ros_tag.ok()) return ros_tag.status();\n";
+  os << indent
+     << "    const uint32_t ros_number = "
+        "*ros_tag >> ::phaser::ProtoBuffer::kFieldIdShift;\n";
+  os << indent << "    if (ros_number == " << field->number() << ") {\n";
+  os << indent << "      {\n";
+  GenerateDirectProtobufReadValue(os, field, "ros_scan", "ros_value",
+                                  indent + "        ");
+  os << indent << "      }\n";
+  os << indent << "    } else {\n";
+  os << indent
+     << "      if (absl::Status status = ros_scan.SkipTag(*ros_tag); "
+        "!status.ok()) return status;\n";
+  os << indent << "    }\n";
+  os << indent << "  }\n";
+  GenerateDirectROSWriteValue(os, field, "ros_value", indent + "  ");
+  os << indent << "}\n";
+}
+
+void MessageGenerator::GenerateDirectProtobufField(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& indent) {
+  if (!field->is_repeated()) {
+    GenerateDirectProtobufSingularField(os, field, indent);
+    return;
+  }
+
+  const std::string type = DirectProtobufValueType(field);
+  const int fixed_extent = GetArraySize(field);
+  const bool fixed_wire_type = IsFixedWireType(field);
+  os << indent << "{\n";
+  if (fixed_extent <= 0) {
+    os << indent << "  size_t ros_count = 0;\n";
+    os << indent << "  ::phaser::ProtoBuffer ros_count_scan(protobuf);\n";
+    os << indent << "  while (!ros_count_scan.Eof()) {\n";
+    os << indent
+       << "    absl::StatusOr<uint32_t> ros_tag = "
+          "ros_count_scan.DeserializeVarint<uint32_t, false>();\n";
+    os << indent << "    if (!ros_tag.ok()) return ros_tag.status();\n";
+    os << indent
+       << "    const uint32_t ros_number = "
+          "*ros_tag >> ::phaser::ProtoBuffer::kFieldIdShift;\n";
+    os << indent << "    if (ros_number == " << field->number() << ") {\n";
+    if (field->is_packable()) {
+      os << indent
+         << "      if ((*ros_tag & 7u) == "
+            "static_cast<uint32_t>(::phaser::WireType::kLengthDelimited)) {\n";
+      os << indent
+         << "        absl::StatusOr<absl::Span<char>> ros_packed = "
+            "ros_count_scan.DeserializeLengthDelimited();\n";
+      os << indent
+         << "        if (!ros_packed.ok()) return ros_packed.status();\n";
+      if (fixed_wire_type) {
+        os << indent << "        if (ros_packed->size() % sizeof(" << type
+           << ") != 0) {\n";
+        os << indent
+           << "          return absl::InvalidArgumentError("
+              "\"packed fixed-width field has a partial element\");\n";
+        os << indent << "        }\n";
+        os << indent << "        ros_count += ros_packed->size() / sizeof("
+           << type << ");\n";
+      } else {
+        os << indent
+           << "        ::phaser::ProtoBuffer ros_values(*ros_packed);\n";
+        os << indent << "        while (!ros_values.Eof()) {\n";
+        os << indent << "          " << type << " ros_ignored{};\n";
+        os << indent << "          {\n";
+        GenerateDirectProtobufReadValue(os, field, "ros_values", "ros_ignored",
+                                        indent + "            ");
+        os << indent << "          }\n";
+        os << indent << "          ++ros_count;\n";
+        os << indent << "        }\n";
+      }
+      os << indent << "      } else {\n";
+      os << indent << "        " << type << " ros_ignored{};\n";
+      os << indent << "        {\n";
+      GenerateDirectProtobufReadValue(os, field, "ros_count_scan",
+                                      "ros_ignored", indent + "          ");
+      os << indent << "        }\n";
+      os << indent << "        ++ros_count;\n";
+      os << indent << "      }\n";
+    } else {
+      os << indent << "      " << type << " ros_ignored{};\n";
+      os << indent << "      {\n";
+      GenerateDirectProtobufReadValue(os, field, "ros_count_scan",
+                                      "ros_ignored", indent + "        ");
+      os << indent << "      }\n";
+      os << indent << "      ++ros_count;\n";
+    }
+    os << indent << "    } else {\n";
+    os << indent
+       << "      if (absl::Status status = "
+          "ros_count_scan.SkipTag(*ros_tag); !status.ok()) return status;\n";
+    os << indent << "    }\n";
+    os << indent << "  }\n";
+    os << indent
+       << "  if (absl::Status status = output.WriteSequenceLength(ros_count); "
+          "!status.ok()) return status;\n";
+  }
+
+  os << indent << "  size_t ros_emitted = 0;\n";
+  os << indent << "  ::phaser::ProtoBuffer ros_scan(protobuf);\n";
+  os << indent << "  while (!ros_scan.Eof()) {\n";
+  os << indent
+     << "    absl::StatusOr<uint32_t> ros_tag = "
+        "ros_scan.DeserializeVarint<uint32_t, false>();\n";
+  os << indent << "    if (!ros_tag.ok()) return ros_tag.status();\n";
+  os << indent
+     << "    const uint32_t ros_number = "
+        "*ros_tag >> ::phaser::ProtoBuffer::kFieldIdShift;\n";
+  os << indent << "    if (ros_number == " << field->number() << ") {\n";
+  auto emit_value = [&](const std::string& buffer,
+                        const std::string& emit_indent) {
+    os << emit_indent << type << " ros_value{};\n";
+    os << emit_indent << "{\n";
+    GenerateDirectProtobufReadValue(os, field, buffer, "ros_value",
+                                    emit_indent + "  ");
+    os << emit_indent << "}\n";
+    if (fixed_extent > 0) {
+      os << emit_indent << "if (ros_emitted >= " << fixed_extent << ") {\n";
+      os << emit_indent
+         << "  return absl::InvalidArgumentError("
+            "\"protobuf input exceeds fixed ROS array extent\");\n";
+      os << emit_indent << "}\n";
+    }
+    GenerateDirectROSWriteValue(os, field, "ros_value", emit_indent);
+    os << emit_indent << "++ros_emitted;\n";
+  };
+  if (field->is_packable()) {
+    os << indent
+       << "      if ((*ros_tag & 7u) == "
+          "static_cast<uint32_t>(::phaser::WireType::kLengthDelimited)) {\n";
+    os << indent
+       << "        absl::StatusOr<absl::Span<char>> ros_packed = "
+          "ros_scan.DeserializeLengthDelimited();\n";
+    os << indent
+       << "        if (!ros_packed.ok()) return ros_packed.status();\n";
+    if (fixed_wire_type) {
+      os << indent << "        if (ros_packed->size() % sizeof(" << type
+         << ") != 0) {\n";
+      os << indent
+         << "          return absl::InvalidArgumentError("
+            "\"packed fixed-width field has a partial element\");\n";
+      os << indent << "        }\n";
+      os << indent << "        const size_t ros_packed_count = "
+         << "ros_packed->size() / sizeof(" << type << ");\n";
+      if (fixed_extent > 0) {
+        os << indent << "        if (ros_packed_count > " << fixed_extent
+           << " - ros_emitted) {\n";
+        os << indent
+           << "          return absl::InvalidArgumentError("
+              "\"protobuf input exceeds fixed ROS array extent\");\n";
+        os << indent << "        }\n";
+      }
+      os << indent
+         << "        if (absl::Status status = output.WriteRaw("
+            "ros_packed->data(), ros_packed->size()); !status.ok()) "
+            "return status;\n";
+      os << indent << "        ros_emitted += ros_packed_count;\n";
+    } else {
+      os << indent << "        ::phaser::ProtoBuffer ros_values(*ros_packed);\n";
+      os << indent << "        while (!ros_values.Eof()) {\n";
+      emit_value("ros_values", indent + "          ");
+      os << indent << "        }\n";
+    }
+    os << indent << "      } else {\n";
+    emit_value("ros_scan", indent + "        ");
+    os << indent << "      }\n";
+  } else {
+    emit_value("ros_scan", indent + "      ");
+  }
+  os << indent << "    } else {\n";
+  os << indent
+     << "      if (absl::Status status = ros_scan.SkipTag(*ros_tag); "
+        "!status.ok()) return status;\n";
+  os << indent << "    }\n";
+  os << indent << "  }\n";
+  if (fixed_extent > 0) {
+    os << indent << "  while (ros_emitted < " << fixed_extent << ") {\n";
+    os << indent << "    " << type << " ros_value{};\n";
+    GenerateDirectROSWriteValue(os, field, "ros_value", indent + "    ");
+    os << indent << "    ++ros_emitted;\n";
+    os << indent << "  }\n";
+  }
+  os << indent << "}\n";
+}
+
+void MessageGenerator::GenerateDirectProtobufToROS(std::ostream& os) {
+  const std::string name = MessageName(message_);
+  os << "absl::Status " << name
+     << "::ProtobufWireToROS(std::string_view protobuf, "
+        "::phaser::ROSBuffer& output) {\n";
+  if (IsRosTime(message_) || IsRosDuration(message_)) {
+    os << "  int64_t ros_seconds = 0;\n";
+    os << "  int32_t ros_nanos = 0;\n";
+    os << "  ::phaser::ProtoBuffer ros_scan(protobuf);\n";
+    os << "  while (!ros_scan.Eof()) {\n";
+    os << "    absl::StatusOr<uint32_t> ros_tag = "
+          "ros_scan.DeserializeVarint<uint32_t, false>();\n";
+    os << "    if (!ros_tag.ok()) return ros_tag.status();\n";
+    os << "    switch (*ros_tag >> ::phaser::ProtoBuffer::kFieldIdShift) {\n";
+    os << "      case 1: {\n";
+    os << "        absl::StatusOr<int64_t> value = "
+          "ros_scan.DeserializeVarint<int64_t, false>();\n";
+    os << "        if (!value.ok()) return value.status();\n";
+    os << "        ros_seconds = *value;\n";
+    os << "        break;\n";
+    os << "      }\n";
+    os << "      case 2: {\n";
+    os << "        absl::StatusOr<int32_t> value = "
+          "ros_scan.DeserializeVarint<int32_t, false>();\n";
+    os << "        if (!value.ok()) return value.status();\n";
+    os << "        ros_nanos = *value;\n";
+    os << "        break;\n";
+    os << "      }\n";
+    os << "      default:\n";
+    os << "        if (absl::Status status = ros_scan.SkipTag(*ros_tag); "
+          "!status.ok()) return status;\n";
+    os << "    }\n";
+    os << "  }\n";
+    const std::string wire_type = IsRosTime(message_) ? "uint32_t" : "int32_t";
+    os << "  if (absl::Status status = output.Write(static_cast<" << wire_type
+       << ">(ros_seconds)); !status.ok()) return status;\n";
+    os << "  if (absl::Status status = output.Write(static_cast<" << wire_type
+       << ">(ros_nanos)); !status.ok()) return status;\n";
+  } else {
+    for (const auto& item : fields_in_order_) {
+      if (!item->IsUnion()) {
+        GenerateDirectProtobufField(os, item->field, "  ");
+        continue;
+      }
+      auto union_info = std::static_pointer_cast<UnionInfo>(item);
+      os << "  {\n";
+      os << "    uint32_t ros_discriminator = 0;\n";
+      os << "    ::phaser::ProtoBuffer ros_scan(protobuf);\n";
+      os << "    while (!ros_scan.Eof()) {\n";
+      os << "      absl::StatusOr<uint32_t> ros_tag = "
+            "ros_scan.DeserializeVarint<uint32_t, false>();\n";
+      os << "      if (!ros_tag.ok()) return ros_tag.status();\n";
+      os << "      const uint32_t ros_number = "
+            "*ros_tag >> ::phaser::ProtoBuffer::kFieldIdShift;\n";
+      os << "      switch (ros_number) {\n";
+      for (const auto& member : union_info->members) {
+        os << "        case " << member->field->number() << ":\n";
+        os << "          ros_discriminator = ros_number;\n";
+        os << "          break;\n";
+      }
+      os << "        default:\n";
+      os << "          break;\n";
+      os << "      }\n";
+      os << "      if (absl::Status status = ros_scan.SkipTag(*ros_tag); "
+            "!status.ok()) return status;\n";
+      os << "    }\n";
+      os << "    if (absl::Status status = output.Write(ros_discriminator); "
+            "!status.ok()) return status;\n";
+      os << "    switch (ros_discriminator) {\n";
+      for (const auto& member : union_info->members) {
+        os << "      case " << member->field->number() << ":\n";
+        GenerateDirectProtobufSingularField(os, member->field, "        ");
+        os << "        break;\n";
+      }
+      os << "      default:\n";
+      os << "        break;\n";
+      os << "    }\n";
+      os << "  }\n";
+    }
+  }
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+}
+
+void MessageGenerator::GenerateDirectROSReadValue(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& reader, const std::string& value,
+    const std::string& indent) {
+  using Field = google::protobuf::FieldDescriptor;
+  if (field->type() == Field::TYPE_STRING ||
+      field->type() == Field::TYPE_BYTES) {
+    os << indent << "absl::StatusOr<std::string_view> ros_value = " << reader
+       << ".ReadString();\n";
+    os << indent << "if (!ros_value.ok()) return ros_value.status();\n";
+    os << indent << value << " = *ros_value;\n";
+    return;
+  }
+  if (field->type() == Field::TYPE_MESSAGE) {
+    abort();
+  }
+  const std::string type = DirectProtobufValueType(field);
+  os << indent << "absl::StatusOr<" << type << "> ros_value = " << reader
+     << ".Read<" << type << ">();\n";
+  os << indent << "if (!ros_value.ok()) return ros_value.status();\n";
+  os << indent << value << " = *ros_value;\n";
+}
+
+void MessageGenerator::GenerateDirectProtoWriteValue(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& value, const std::string& field_number,
+    const std::string& indent, bool raw) {
+  using Field = google::protobuf::FieldDescriptor;
+  const std::string type = DirectProtobufValueType(field);
+  if (field->type() == Field::TYPE_STRING ||
+      field->type() == Field::TYPE_BYTES) {
+    os << indent << "if (absl::Status status = output.SerializeLengthDelimited("
+       << field_number << ", " << value << ".data(), " << value
+       << ".size()); !status.ok()) return status;\n";
+    return;
+  }
+  if (field->type() == Field::TYPE_MESSAGE) {
+    abort();
+  }
+  const bool fixed = field->type() == Field::TYPE_FIXED32 ||
+                     field->type() == Field::TYPE_SFIXED32 ||
+                     field->type() == Field::TYPE_FLOAT ||
+                     field->type() == Field::TYPE_FIXED64 ||
+                     field->type() == Field::TYPE_SFIXED64 ||
+                     field->type() == Field::TYPE_DOUBLE;
+  const bool is_signed = field->type() == Field::TYPE_SINT32 ||
+                         field->type() == Field::TYPE_SINT64;
+  if (raw && fixed) {
+    os << indent << "if (absl::Status status = output.SerializeRaw(&" << value
+       << ", sizeof(" << value << ")); !status.ok()) return status;\n";
+    return;
+  }
+  os << indent << "if (absl::Status status = output.";
+  if (fixed) {
+    os << "SerializeFixed(" << field_number << ", " << value << ")";
+  } else if (raw) {
+    os << "SerializeRawVarint<" << type << ", "
+       << (is_signed ? "true" : "false") << ">(" << value << ")";
+  } else {
+    os << "SerializeVarint<" << type << ", " << (is_signed ? "true" : "false")
+       << ">(" << field_number << ", " << value << ")";
+  }
+  os << "; !status.ok()) return status;\n";
+}
+
+void MessageGenerator::GenerateDirectROSFieldToProtobuf(
+    std::ostream& os, const google::protobuf::FieldDescriptor* field,
+    const std::string& indent) {
+  const std::string type = DirectProtobufValueType(field);
+  const int fixed_extent = GetArraySize(field);
+  const bool fixed_wire_type = IsFixedWireType(field);
+  const std::string count =
+      fixed_extent > 0 ? std::to_string(fixed_extent) : "ros_count";
+
+  os << indent << "{\n";
+  if (field->is_repeated() && fixed_extent <= 0) {
+    os << indent
+       << "  absl::StatusOr<uint32_t> ros_count_value = "
+          "ros.ReadSequenceLength();\n";
+    os << indent
+       << "  if (!ros_count_value.ok()) return ros_count_value.status();\n";
+    os << indent << "  const size_t ros_count = *ros_count_value;\n";
+  }
+
+  auto emit_one = [&](const std::string& reader, const std::string& writer,
+                      const std::string& emit_indent, bool raw) {
+    if (field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+      if (IsAny(field)) {
+        os << emit_indent
+           << "absl::StatusOr<std::string_view> ros_type_url = " << reader
+           << ".ReadString();\n";
+        os << emit_indent
+           << "if (!ros_type_url.ok()) return ros_type_url.status();\n";
+        os << emit_indent
+           << "absl::StatusOr<std::string_view> ros_any_value = " << reader
+           << ".ReadString();\n";
+        os << emit_indent
+           << "if (!ros_any_value.ok()) return ros_any_value.status();\n";
+        os << emit_indent
+           << "if (!ros_type_url->empty() || !ros_any_value->empty()) {\n";
+        os << emit_indent
+           << "  return absl::UnimplementedError(\"ROS1 conversion of a "
+              "populated google.protobuf.Any is unsupported\");\n";
+        os << emit_indent << "}\n";
+        os << emit_indent << "if (absl::Status status = " << writer
+           << ".SerializeLengthDelimitedHeader(" << field->number()
+           << ", 0); !status.ok()) return status;\n";
+      } else {
+        const std::string nested = MessageName(field->message_type(), true);
+        os << emit_indent << "::phaser::ROSReader ros_size_reader = " << reader
+           << ";\n";
+        os << emit_indent << "::phaser::ProtoWriter ros_size_output;\n";
+        os << emit_indent << "if (absl::Status status = " << nested
+           << "::ROSReaderToProtobuf(ros_size_reader, ros_size_output); "
+              "!status.ok()) return status;\n";
+        os << emit_indent << "if (absl::Status status = " << writer
+           << ".SerializeLengthDelimitedHeader(" << field->number()
+           << ", ros_size_output.Size()); !status.ok()) return status;\n";
+        os << emit_indent << "if (absl::Status status = " << nested
+           << "::ROSReaderToProtobuf(" << reader << ", " << writer
+           << "); !status.ok()) return status;\n";
+      }
+      return;
+    }
+
+    os << emit_indent << type << " ros_field_value{};\n";
+    os << emit_indent << "{\n";
+    GenerateDirectROSReadValue(os, field, reader, "ros_field_value",
+                               emit_indent + "  ");
+    os << emit_indent << "}\n";
+    const std::string old_output = "output";
+    if (writer != old_output) {
+      os << emit_indent << "{\n";
+      os << emit_indent << "  auto& output = " << writer << ";\n";
+      GenerateDirectProtoWriteValue(os, field, "ros_field_value",
+                                    std::to_string(field->number()),
+                                    emit_indent + "  ", raw);
+      os << emit_indent << "}\n";
+    } else {
+      GenerateDirectProtoWriteValue(os, field, "ros_field_value",
+                                    std::to_string(field->number()),
+                                    emit_indent, raw);
+    }
+  };
+
+  if (!field->is_repeated()) {
+    emit_one("ros", "output", indent + "  ", false);
+    os << indent << "}\n";
+    return;
+  }
+
+  if (field->is_packable() && field->is_packed() && fixed_wire_type) {
+    os << indent << "  const uint64_t ros_packed_byte_size = "
+       << "static_cast<uint64_t>(" << count << ") * sizeof(" << type << ");\n";
+    os << indent
+       << "  if (ros_packed_byte_size > ros.Remaining()) {\n";
+    os << indent
+       << "    return absl::InvalidArgumentError("
+          "\"truncated ROS packed fixed-width field\");\n";
+    os << indent << "  }\n";
+    os << indent
+       << "  absl::StatusOr<absl::Span<const char>> ros_packed = "
+          "ros.ReadRaw(static_cast<size_t>(ros_packed_byte_size));\n";
+    os << indent << "  if (!ros_packed.ok()) return ros_packed.status();\n";
+    os << indent
+       << "  if (absl::Status status = output.SerializeLengthDelimited("
+       << field->number()
+       << ", ros_packed->data(), ros_packed->size()); !status.ok()) "
+          "return status;\n";
+  } else if (field->is_packable() && field->is_packed()) {
+    os << indent << "  ::phaser::ROSReader ros_packed_reader = ros;\n";
+    os << indent << "  ::phaser::ProtoWriter ros_packed_size;\n";
+    os << indent << "  for (size_t ros_index = 0; ros_index < " << count
+       << "; ++ros_index) {\n";
+    emit_one("ros_packed_reader", "ros_packed_size", indent + "    ", true);
+    os << indent << "  }\n";
+    os << indent
+       << "  if (absl::Status status = "
+          "output.SerializeLengthDelimitedHeader("
+       << field->number()
+       << ", ros_packed_size.Size()); !status.ok()) return status;\n";
+    os << indent << "  for (size_t ros_index = 0; ros_index < " << count
+       << "; ++ros_index) {\n";
+    emit_one("ros", "output", indent + "    ", true);
+    os << indent << "  }\n";
+  } else {
+    os << indent << "  for (size_t ros_index = 0; ros_index < " << count
+       << "; ++ros_index) {\n";
+    emit_one("ros", "output", indent + "    ", false);
+    os << indent << "  }\n";
+  }
+  os << indent << "}\n";
+}
+
+void MessageGenerator::GenerateDirectROSToProtobuf(std::ostream& os) {
+  const std::string name = MessageName(message_);
+  os << "absl::Status " << name
+     << "::ROSReaderToProtobuf(::phaser::ROSReader& ros, "
+        "::phaser::ProtoWriter& output) {\n";
+  if (IsRosTime(message_) || IsRosDuration(message_)) {
+    const std::string seconds_type =
+        IsRosTime(message_) ? "uint32_t" : "int32_t";
+    os << "  absl::StatusOr<" << seconds_type << "> ros_seconds = ros.Read<"
+       << seconds_type << ">();\n";
+    os << "  if (!ros_seconds.ok()) return ros_seconds.status();\n";
+    os << "  absl::StatusOr<" << seconds_type << "> ros_nanos = ros.Read<"
+       << seconds_type << ">();\n";
+    os << "  if (!ros_nanos.ok()) return ros_nanos.status();\n";
+    os << "  if (absl::Status status = "
+          "output.SerializeVarint<int64_t, false>(1, "
+          "static_cast<int64_t>(*ros_seconds)); !status.ok()) return status;\n";
+    os << "  if (absl::Status status = "
+          "output.SerializeVarint<int32_t, false>(2, "
+          "static_cast<int32_t>(*ros_nanos)); !status.ok()) return status;\n";
+  } else {
+    for (const auto& item : fields_in_order_) {
+      if (!item->IsUnion()) {
+        GenerateDirectROSFieldToProtobuf(os, item->field, "  ");
+        continue;
+      }
+      auto union_info = std::static_pointer_cast<UnionInfo>(item);
+      os << "  {\n";
+      os << "    absl::StatusOr<uint32_t> ros_discriminator = "
+            "ros.Read<uint32_t>();\n";
+      os << "    if (!ros_discriminator.ok()) return "
+            "ros_discriminator.status();\n";
+      os << "    switch (*ros_discriminator) {\n";
+      os << "      case 0:\n";
+      os << "        break;\n";
+      for (const auto& member : union_info->members) {
+        os << "      case " << member->field->number() << ":\n";
+        GenerateDirectROSFieldToProtobuf(os, member->field, "        ");
+        os << "        break;\n";
+      }
+      os << "      default:\n";
+      os << "        return absl::InvalidArgumentError("
+            "\"Unknown ROS oneof discriminator\");\n";
+      os << "    }\n";
+      os << "  }\n";
+    }
+  }
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::ROSToProtobuf(absl::Span<const char> ros_bytes, "
+        "::phaser::ProtoBuffer& output) {\n";
+  os << "  ::phaser::ROSReader ros(ros_bytes);\n";
+  os << "  ::phaser::ProtoWriter writer(output);\n";
+  os << "  if (absl::Status status = ROSReaderToProtobuf(ros, writer); "
+        "!status.ok()) return status;\n";
+  os << "  if (!ros.Eof()) return absl::InvalidArgumentError("
+        "\"Trailing bytes after ROS message\");\n";
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+}
+
+void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
+  const std::string name = MessageName(message_);
+  if (decl) {
+    os << "  size_t ROSSerializedSize() const;\n";
+    os << "  absl::Status SerializeToROS(::phaser::ROSBuffer& buffer) const;\n";
+    os << "  absl::Status DeserializeFromROS("
+          "::phaser::ROSReader& buffer);\n";
+    os << "  absl::Status ParseFromROS(absl::Span<const char> input);\n";
+    os << R"XXX(  absl::Status SerializeToROSArray(void* data, size_t size) const {
+    ::phaser::ROSBuffer buffer(data, size);
+    return SerializeToROS(buffer);
+  }
+  absl::Status SerializeToROSString(std::string* output) const {
+    if (output == nullptr) {
+      return absl::InvalidArgumentError("ROS output string is null");
+    }
+    output->resize(ROSSerializedSize());
+    ::phaser::ROSBuffer buffer(output->data(), output->size());
+    absl::Status status = SerializeToROS(buffer);
+    if (!status.ok()) {
+      output->clear();
+    }
+    return status;
+  }
+)XXX";
+    os << "  static absl::Status ProtobufToROS("
+          "std::string_view protobuf, ::phaser::ROSBuffer& output);\n";
+    os << "  static absl::Status ProtobufWireToROS("
+          "std::string_view protobuf, ::phaser::ROSBuffer& output);\n";
+    os << "  static absl::Status ROSReaderToProtobuf("
+          "::phaser::ROSReader& ros, ::phaser::ProtoWriter& output);\n";
+    os << "  static absl::Status ROSToProtobuf("
+          "absl::Span<const char> ros, ::phaser::ProtoBuffer& output);\n";
+    os << R"XXX(  static bool ROSToProtobufArray(
+      absl::Span<const char> ros, void* output, size_t output_size) {
+    ::phaser::ProtoBuffer buffer(static_cast<char*>(output), output_size);
+    return ROSToProtobuf(ros, buffer).ok();
+  }
+)XXX";
+    os << "  static absl::Status PhaserToROS("
+          "absl::Span<const char> phaser, ::phaser::ROSBuffer& output);\n\n";
+    os << "  static absl::Status ConvertToROS("
+          "absl::Span<const char> input, ::phaser::ROSBuffer& output);\n\n";
+    return;
+  }
+
+  os << "size_t " << name << "::ROSSerializedSize() const {\n";
+  os << "  SyncToPayload();\n";
+  if (IsRosTime(message_) || IsRosDuration(message_)) {
+    os << "  return 8;\n";
+  } else {
+    os << "  size_t size = 0;\n";
+    for (const auto& item : fields_in_order_) {
+      if (item->IsUnion()) {
+        auto union_info = std::static_pointer_cast<UnionInfo>(item);
+        os << "  size += 4;\n";
+        os << "  switch (" << union_info->member_name
+           << ".Discriminator()) {\n";
+        for (size_t i = 0; i < union_info->members.size(); ++i) {
+          const auto& field = union_info->members[i];
+          os << "    case " << field->field->number() << ":\n";
+          GenerateROSFieldSize(
+              os, field->field,
+              ROSFieldValueExpression(field, union_info, static_cast<int>(i)),
+              "      ");
+          os << "      break;\n";
+        }
+        os << "    default:\n";
+        os << "      break;\n";
+        os << "  }\n";
+        continue;
+      }
+
+      const auto* descriptor = item->field;
+      if (!descriptor->is_repeated()) {
+        GenerateROSFieldSize(os, descriptor, ROSFieldValueExpression(item),
+                             "  ");
+        continue;
+      }
+
+      const int fixed_extent = GetArraySize(descriptor);
+      if (fixed_extent <= 0) {
+        os << "  size += 4;\n";
+      }
+      const std::string count = fixed_extent > 0
+                                    ? std::to_string(fixed_extent)
+                                    : item->member_name + ".size()";
+      std::string bulk_type = ROSBulkPrimitiveType(descriptor);
+      if (descriptor->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
+        bulk_type = EnumName(descriptor->enum_type());
+      }
+      if (!bulk_type.empty()) {
+        os << "  size += " << count << " * sizeof(" << bulk_type << ");\n";
+      } else {
+        os << "  for (size_t ros_index = 0; ros_index < " << count
+           << "; ++ros_index) {\n";
+        GenerateROSFieldSize(os, descriptor,
+                             item->member_name + ".Get(ros_index)", "    ");
+        os << "  }\n";
+      }
+    }
+    os << "  return size;\n";
+  }
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::SerializeToROS(::phaser::ROSBuffer& buffer) const {\n";
+  os << "  SyncToPayload();\n";
+  if (IsRosTime(message_)) {
+    os << "  if (absl::Status status = buffer.Write("
+          "static_cast<uint32_t>(seconds())); !status.ok()) return status;\n";
+    os << "  if (absl::Status status = buffer.Write("
+          "static_cast<uint32_t>(nanos())); !status.ok()) return status;\n";
+  } else if (IsRosDuration(message_)) {
+    os << "  if (absl::Status status = buffer.Write("
+          "static_cast<int32_t>(seconds())); !status.ok()) return status;\n";
+    os << "  if (absl::Status status = buffer.Write("
+          "static_cast<int32_t>(nanos())); !status.ok()) return status;\n";
+  } else {
+    for (const auto& item : fields_in_order_) {
+      if (item->IsUnion()) {
+        auto union_info = std::static_pointer_cast<UnionInfo>(item);
+        os << "  if (absl::Status status = buffer.Write(static_cast<uint32_t>("
+           << union_info->member_name
+           << ".Discriminator())); !status.ok()) return status;\n";
+        os << "  switch (" << union_info->member_name
+           << ".Discriminator()) {\n";
+        for (size_t i = 0; i < union_info->members.size(); ++i) {
+          const auto& field = union_info->members[i];
+          os << "    case " << field->field->number() << ":\n";
+          GenerateROSFieldWrite(
+              os, field->field,
+              ROSFieldValueExpression(field, union_info, static_cast<int>(i)),
+              "      ");
+          os << "      break;\n";
+        }
+        os << "    default:\n";
+        os << "      break;\n";
+        os << "  }\n";
+        continue;
+      }
+
+      const auto* descriptor = item->field;
+      if (!descriptor->is_repeated()) {
+        GenerateROSFieldWrite(os, descriptor, ROSFieldValueExpression(item),
+                              "  ");
+        continue;
+      }
+
+      const int fixed_extent = GetArraySize(descriptor);
+      if (fixed_extent <= 0) {
+        os << "  if (absl::Status status = buffer.WriteSequenceLength("
+           << item->member_name << ".size()); !status.ok()) return status;\n";
+      }
+      const std::string count = fixed_extent > 0
+                                    ? std::to_string(fixed_extent)
+                                    : item->member_name + ".size()";
+      std::string bulk_type = ROSBulkPrimitiveType(descriptor);
+      if (descriptor->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
+        bulk_type = EnumName(descriptor->enum_type());
+      }
+      if (!bulk_type.empty()) {
+        if (fixed_extent > 0) {
+          os << "  if (" << item->member_name << ".data() == nullptr) {\n";
+          os << "    if (absl::Status status = buffer.WriteZeros(" << count
+             << " * sizeof(" << bulk_type
+             << ")); !status.ok()) return status;\n";
+          os << "  } else {\n";
+          os << "    if (absl::Status status = buffer.WriteArray<" << bulk_type
+             << ">(absl::Span<const " << bulk_type << ">(" << item->member_name
+             << ".data(), " << count << ")); !status.ok()) return status;\n";
+          os << "  }\n";
+        } else {
+          os << "  if (absl::Status status = buffer.WriteArray<" << bulk_type
+             << ">(absl::Span<const " << bulk_type << ">(" << item->member_name
+             << ".data(), " << count << ")); !status.ok()) return status;\n";
+        }
+      } else {
+        os << "  for (size_t ros_index = 0; ros_index < " << count
+           << "; ++ros_index) {\n";
+        GenerateROSFieldWrite(os, descriptor,
+                              item->member_name + ".Get(ros_index)", "    ");
+        os << "  }\n";
+      }
+    }
+  }
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::DeserializeFromROS(::phaser::ROSReader& buffer) {\n";
+  os << "  Clear();\n";
+  if (IsRosTime(message_)) {
+    os << "  absl::StatusOr<uint32_t> ros_sec = buffer.Read<uint32_t>();\n";
+    os << "  if (!ros_sec.ok()) return ros_sec.status();\n";
+    os << "  absl::StatusOr<uint32_t> ros_nsec = buffer.Read<uint32_t>();\n";
+    os << "  if (!ros_nsec.ok()) return ros_nsec.status();\n";
+    os << "  set_seconds(static_cast<int64_t>(*ros_sec));\n";
+    os << "  set_nanos(static_cast<int32_t>(*ros_nsec));\n";
+  } else if (IsRosDuration(message_)) {
+    os << "  absl::StatusOr<int32_t> ros_sec = buffer.Read<int32_t>();\n";
+    os << "  if (!ros_sec.ok()) return ros_sec.status();\n";
+    os << "  absl::StatusOr<int32_t> ros_nsec = buffer.Read<int32_t>();\n";
+    os << "  if (!ros_nsec.ok()) return ros_nsec.status();\n";
+    os << "  set_seconds(static_cast<int64_t>(*ros_sec));\n";
+    os << "  set_nanos(*ros_nsec);\n";
+  } else {
+    for (const auto& item : fields_in_order_) {
+      if (item->IsUnion()) {
+        auto union_info = std::static_pointer_cast<UnionInfo>(item);
+        os << "  {\n";
+        os << "    absl::StatusOr<uint32_t> ros_discriminator = "
+              "buffer.Read<uint32_t>();\n";
+        os << "    if (!ros_discriminator.ok()) return "
+              "ros_discriminator.status();\n";
+        os << "    switch (*ros_discriminator) {\n";
+        os << "      case 0:\n";
+        os << "        " << union_info->member_name << ".reset();\n";
+        os << "        break;\n";
+        for (size_t i = 0; i < union_info->members.size(); ++i) {
+          const auto& field = union_info->members[i];
+          os << "      case " << field->field->number() << ":\n";
+          GenerateROSFieldRead(os, field->field, union_info->member_name,
+                               "        ", false, "", static_cast<int>(i));
+          os << "        break;\n";
+        }
+        os << "      default:\n";
+        os << "        return absl::InvalidArgumentError("
+              "\"Unknown ROS oneof discriminator\");\n";
+        os << "    }\n";
+        os << "  }\n";
+        continue;
+      }
+
+      const auto* descriptor = item->field;
+      if (!descriptor->is_repeated()) {
+        GenerateROSFieldRead(os, descriptor, item->member_name, "  ");
+        continue;
+      }
+
+      const int fixed_extent = GetArraySize(descriptor);
+      std::string bulk_type = ROSBulkPrimitiveType(descriptor);
+      if (descriptor->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
+        bulk_type = EnumName(descriptor->enum_type());
+      }
+      if (fixed_extent <= 0) {
+        os << "  {\n";
+        os << "    absl::StatusOr<uint32_t> ros_count = "
+              "buffer.ReadSequenceLength();\n";
+        os << "    if (!ros_count.ok()) return ros_count.status();\n";
+        if (!bulk_type.empty()) {
+          os << "    if (*ros_count > buffer.Remaining() / sizeof(" << bulk_type
+             << ")) {\n";
+          os << "      return absl::InvalidArgumentError("
+                "\"ROS sequence length exceeds remaining input\");\n";
+          os << "    }\n";
+          os << "    " << item->member_name << ".resize(*ros_count);\n";
+          os << "    if (absl::Status status = buffer.ReadArray<" << bulk_type
+             << ">(absl::Span<" << bulk_type << ">(" << item->member_name
+             << ".data(), static_cast<size_t>(*ros_count))); "
+                "!status.ok()) return status;\n";
+        } else {
+          os << "    for (uint32_t ros_index = 0; ros_index < *ros_count; "
+                "++ros_index) {\n";
+          GenerateROSFieldRead(os, descriptor, item->member_name, "      ",
+                               true);
+          os << "    }\n";
+        }
+        os << "  }\n";
+      } else if (!bulk_type.empty()) {
+        os << "  if (absl::Status status = buffer.ReadArray<" << bulk_type
+           << ">(absl::Span<" << bulk_type << ">(" << item->member_name
+           << ".data(), " << fixed_extent
+           << ")); !status.ok()) return status;\n";
+      } else {
+        os << "  for (size_t ros_index = 0; ros_index < " << fixed_extent
+           << "; ++ros_index) {\n";
+        GenerateROSFieldRead(os, descriptor, item->member_name, "    ", false,
+                             "ros_index");
+        os << "  }\n";
+      }
+    }
+  }
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::ParseFromROS(absl::Span<const char> input) {\n";
+  os << "  ::phaser::ROSReader buffer(input);\n";
+  os << "  if (absl::Status status = DeserializeFromROS(buffer); "
+        "!status.ok()) return status;\n";
+  os << "  if (!buffer.Eof()) {\n";
+  os << "    return absl::InvalidArgumentError("
+        "\"Trailing bytes after ROS message\");\n";
+  os << "  }\n";
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+
+  GenerateDirectProtobufToROS(os);
+  GenerateDirectROSToProtobuf(os);
+
+  os << "absl::Status " << name
+     << "::ProtobufToROS(std::string_view protobuf, "
+        "::phaser::ROSBuffer& output) {\n";
+  os << "  output.Clear();\n";
+  os << "  absl::Status status = ProtobufWireToROS(protobuf, output);\n";
+  os << "  if (!status.ok()) output.Clear();\n";
+  os << "  return status;\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::PhaserToROS(absl::Span<const char> phaser, "
+        "::phaser::ROSBuffer& output) {\n";
+  os << "  if (phaser.empty()) {\n";
+  os << "    return absl::InvalidArgumentError("
+        "\"Native Phaser payload is empty\");\n";
+  os << "  }\n";
+  os << "  " << name
+     << " message = CreateReadonly(phaser.data(), phaser.size());\n";
+  os << "  return message.SerializeToROS(output);\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::ConvertToROS(absl::Span<const char> input, "
+        "::phaser::ROSBuffer& output) {\n";
+  os << "  switch (::phaser::InferMessageWireFormat(input)) {\n";
+  os << "    case ::phaser::MessageWireFormat::kProtobuf:\n";
+  os << "      return ProtobufToROS("
+        "std::string_view(input.data(), input.size()), output);\n";
+  os << "    case ::phaser::MessageWireFormat::kPhaser:\n";
+  os << "      return PhaserToROS(input, output);\n";
+  os << "    case ::phaser::MessageWireFormat::kAmbiguous:\n";
+  os << "      return absl::InvalidArgumentError("
+        "\"Input is structurally valid as both Phaser and protobuf\");\n";
+  os << "    case ::phaser::MessageWireFormat::kUnknown:\n";
+  os << "      return absl::InvalidArgumentError("
+        "\"Input is neither a valid Phaser payload nor protobuf wire "
+        "message\");\n";
+  os << "  }\n";
+  os << "  return absl::InvalidArgumentError(\"Unknown input format\");\n";
+  os << "}\n\n";
+}
+
 void MessageGenerator::GenerateSerializedSize(std::ostream& os, bool decl) {
   if (decl) {
     os << "  size_t SerializedSize() const;\n";
@@ -1377,6 +3323,21 @@ void MessageGenerator::GenerateDeserializer(std::ostream& os, bool decl) {
   }
   os << "absl::Status " << MessageName(message_)
      << "::Deserialize(::phaser::ProtoBuffer &buffer) {";
+  bool has_array_fields = false;
+  for (auto& field : fields_) {
+    if (UsesArrayFacade(field->field)) {
+      has_array_fields = true;
+      break;
+    }
+  }
+  if (has_array_fields) {
+    os << "\n";
+    for (auto& field : fields_) {
+      if (UsesArrayFacade(field->field)) {
+        os << "  " << field->member_name << ".BeginDeserialize();\n";
+      }
+    }
+  }
   os << R"XXX(
   while (!buffer.Eof()) {
     absl::StatusOr<uint32_t> tag =
@@ -1411,6 +3372,15 @@ void MessageGenerator::GenerateDeserializer(std::ostream& os, bool decl) {
     }
   }
 )XXX";
+  if (has_array_fields) {
+    os << "\n";
+    for (auto& field : fields_) {
+      if (UsesArrayFacade(field->field)) {
+        os << "  if (absl::Status status = " << field->member_name
+           << ".FinalizeDeserialize(); !status.ok()) return status;\n";
+      }
+    }
+  }
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
 }
@@ -1498,13 +3468,19 @@ void MessageGenerator::GenerateStreamer(std::ostream& os) {
     }
 
     if (field->field->is_repeated()) {
-      os << "  for (auto& v : msg." << field->member_name << ") {\n";
+      os << "  for (auto v : msg." << field->member_name << ") {\n";
       os << "    msg." << field->member_name << ".PrintIndent(os);\n";
       if (field->field->type() ==
           google::protobuf::FieldDescriptor::TYPE_ENUM) {
         os << "    os << \"" << field->field->name() << ": \" << "
            << EnumName(field->field->enum_type())
            << "Stringizer()(v) << std::endl;\n";
+      } else if (field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_STRING ||
+                 field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_BYTES) {
+        os << "    os << \"" << field->field->name()
+           << ": \\\"\" << v << \"\\\"\" << std::endl;\n";
       } else {
         os << "    os << \"" << field->field->name()
            << ": \" << v << std::endl;\n";
@@ -1546,45 +3522,157 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
   os << "template <typename T>\n";
   os << "inline absl::Status " << MessageName(message_)
      << "::CloneFrom([[maybe_unused]] const T & other) {\n";
-  for (auto& field : fields_) {
-    if (field->field->is_repeated()) {
-      os << "  for (auto& v : other." << field->field->name() << "()) {\n";
-      if (field->field->type() ==
-          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-        os << "    auto* m = add_" << field->field->name() << "();\n";
-        os << "    if (absl::Status s = m->CloneFrom(v.Msg()); !s.ok()) return "
-              "s;\n";
+  if (IsRosFrontend()) {
+    for (auto& field : fields_) {
+      if (field->field->is_repeated()) {
+        os << "  " << field->member_name << ".Clear();\n";
+        if (UsesArrayFacade(field->field)) {
+          const int array_size = GetArraySize(field->field);
+          if (field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+            os << "  for (size_t i = 0; i < static_cast<size_t>(" << array_size
+               << "); i++) {\n";
+            os << "    auto source = other." << field->member_name
+               << ".Get(i);\n";
+            os << "    if (source.IsBound()) {\n";
+            os << "      auto destination = " << field->member_name
+               << ".Mutable(i);\n";
+            os << "      if (absl::Status s = destination.CloneFrom(source); "
+                  "!s.ok()) return s;\n";
+            os << "    }\n";
+            os << "  }\n";
+          } else if (field->field->type() ==
+                         google::protobuf::FieldDescriptor::TYPE_STRING ||
+                     field->field->type() ==
+                         google::protobuf::FieldDescriptor::TYPE_BYTES) {
+            os << "  for (size_t i = 0; i < static_cast<size_t>(" << array_size
+               << "); i++) {\n";
+            os << "    " << field->member_name << ".Set(i, other."
+               << field->member_name << ".Get(i));\n";
+            os << "  }\n";
+          } else {
+            os << "  for (size_t i = 0; i < static_cast<size_t>(" << array_size
+               << "); i++) {\n";
+            os << "    " << field->member_name << ".Set(i, other."
+               << field->member_name << ".Get(i));\n";
+            os << "  }\n";
+          }
+        } else if (field->field->type() ==
+                   google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+          os << "  for (auto v : other." << field->member_name << ") {\n";
+          os << "    auto m = " << field->member_name << ".Add();\n";
+          os << "    if (absl::Status s = m.CloneFrom(v); !s.ok()) return "
+                "s;\n";
+          os << "  }\n";
+        } else {
+          os << "  for (auto v : other." << field->member_name << ") {\n";
+          os << "    " << field->member_name << ".Add(v);\n";
+          os << "  }\n";
+        }
+      } else if (field->field->type() ==
+                 google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        if (IsRosIntrinsic(field->field)) {
+          os << "    " << field->member_name << ".Set(other."
+             << field->member_name << ".Get());\n";
+        } else {
+          os << "    if (absl::Status s = " << field->member_name
+             << ".Mutable()->CloneFrom(other." << field->member_name
+             << ".Get()); !s.ok()) return s;\n";
+        }
+        os << "  } else {\n";
+        os << "    " << field->member_name << ".Clear();\n";
+        os << "  }\n";
+      } else if (field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_STRING ||
+                 field->field->type() ==
+                     google::protobuf::FieldDescriptor::TYPE_BYTES) {
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        os << "    " << field->member_name << ".Set(other."
+           << field->member_name << ".Get());\n";
+        os << "  } else {\n";
+        os << "    " << field->member_name << ".Clear();\n";
+        os << "  }\n";
       } else {
-        os << "    add_" << field->field->name() << "(v);\n";
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        os << "    " << field->member_name << ".Set(other."
+           << field->member_name << ".Get());\n";
+        os << "  } else {\n";
+        os << "    " << field->member_name << ".Clear();\n";
+        os << "  }\n";
       }
-      os << "  }\n";
-
-    } else {
-      os << "  if (other." << field->member_name << ".IsPresent()) {\n";
-      if (field->field->type() ==
-          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-        os << "    auto* m = mutable_" << field->field->name() << "();\n";
-        os << "    if (absl::Status s = m->CloneFrom(other."
-           << field->field->name() << "()); !s.ok()) return s;\n";
-      } else {
-        os << "    set_" << field->field->name() << "(other."
-           << field->field->name() << "());\n";
-      }
-      os << "  }\n";
     }
-  }
-  if (!unions_.empty()) {
-    for (auto& [oneof, u] : unions_) {
-      os << "  switch (other." << u->member_name << ".Discriminator()) {\n";
-      for (size_t i = 0; i < u->members.size(); i++) {
-        auto& field = u->members[i];
-        os << "  case " << field->field->number() << ":\n";
-        os << "    if (absl::Status s = " << u->member_name
-           << ".template CloneFrom<" << i << ">(other." << field->field->name()
-           << "()); !s.ok()) return s;\n";
+    if (!unions_.empty()) {
+      for (auto& [oneof, u] : unions_) {
+        os << "  switch (other." << u->member_name << ".Discriminator()) {\n";
+        for (size_t i = 0; i < u->members.size(); i++) {
+          auto& field = u->members[i];
+          os << "  case " << field->field->number() << ":\n";
+          if (field->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+            os << "    if (absl::Status s = " << u->member_name
+               << ".template CloneFrom<" << i << ">(other." << u->member_name
+               << ".template GetReference<" << i << ", "
+               << MessageName(field->field->message_type())
+               << ">()); !s.ok()) "
+                  "return s;\n";
+          } else {
+            os << "    if (absl::Status s = " << u->member_name
+               << ".template CloneFrom<" << i << ">(other." << u->member_name
+               << ".template GetValue<" << i << ", " << field->c_type
+               << ">()); !s.ok()) return s;\n";
+          }
+          os << "    break;\n";
+        }
+        os << "  default:\n";
+        for (size_t i = 0; i < u->members.size(); i++) {
+          os << "    " << u->member_name << ".Clear<" << i << ">();\n";
+        }
         os << "    break;\n";
+        os << "  }\n";
       }
-      os << "  }\n";
+    }
+  } else {
+    for (auto& field : fields_) {
+      if (field->field->is_repeated()) {
+        os << "  for (auto v : other." << field->field->name() << "()) {\n";
+        if (field->field->type() ==
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+          os << "    auto m = add_" << field->field->name() << "();\n";
+          os << "    if (absl::Status s = m.CloneFrom(v); !s.ok()) return "
+                "s;\n";
+        } else {
+          os << "    add_" << field->field->name() << "(v);\n";
+        }
+        os << "  }\n";
+
+      } else {
+        os << "  if (other." << field->member_name << ".IsPresent()) {\n";
+        if (field->field->type() ==
+            google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+          os << "    auto* m = mutable_" << field->field->name() << "();\n";
+          os << "    if (absl::Status s = m->CloneFrom(other."
+             << field->field->name() << "()); !s.ok()) return s;\n";
+        } else {
+          os << "    set_" << field->field->name() << "(other."
+             << field->field->name() << "());\n";
+        }
+        os << "  }\n";
+      }
+    }
+    if (!unions_.empty()) {
+      for (auto& [oneof, u] : unions_) {
+        os << "  switch (other." << u->member_name << ".Discriminator()) {\n";
+        for (size_t i = 0; i < u->members.size(); i++) {
+          auto& field = u->members[i];
+          os << "  case " << field->field->number() << ":\n";
+          os << "    if (absl::Status s = " << u->member_name
+             << ".template CloneFrom<" << i << ">(other."
+             << field->field->name() << "()); !s.ok()) return s;\n";
+          os << "    break;\n";
+        }
+        os << "  }\n";
+      }
     }
   }
   os << "  return absl::OkStatus();\n";
@@ -1635,6 +3723,30 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "  const " << MessageName(message_) << " *m = static_cast<const "
      << MessageName(message_) << "*>(&msg);\n";
   os << "  return m->SerializedSize();\n";
+  os << "}\n\n";
+
+  os << "static absl::Status " << MessageName(message_)
+     << "SerializeAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, "
+        "::toolbelt::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
+  os << "  const " << MessageName(message_) << " message(runtime, offset);\n";
+  os << "  return message.Serialize(buffer);\n";
+  os << "}\n\n";
+
+  os << "static absl::Status " << MessageName(message_)
+     << "DeserializeAtOffset("
+        "std::shared_ptr<::phaser::MessageRuntime> runtime, "
+        "::toolbelt::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
+  os << "  " << MessageName(message_) << " message(runtime, offset);\n";
+  os << "  message.InstallMetadata<" << MessageName(message_) << ">();\n";
+  os << "  return message.Deserialize(buffer);\n";
+  os << "}\n\n";
+
+  os << "static size_t " << MessageName(message_)
+     << "SerializedSizeAtOffset("
+        "std::shared_ptr<::phaser::MessageRuntime> runtime, "
+        "::toolbelt::BufferOffset offset) {\n";
+  os << "  const " << MessageName(message_) << " message(runtime, offset);\n";
+  os << "  return message.SerializedSize();\n";
   os << "}\n\n";
 
   os << "static ::phaser::Message* " << MessageName(message_)
@@ -1689,7 +3801,13 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "  switch (number) {\n";
   for (auto& field : fields_) {
     os << "  case " << field->field->number() << ":\n";
-    if (field->field->is_repeated()) {
+    if (IsRosFrontend()) {
+      if (field->field->is_repeated()) {
+        os << "    return m->" << field->member_name << ".Size() > 0;\n";
+      } else {
+        os << "    return m->" << field->member_name << ".IsPresent();\n";
+      }
+    } else if (field->field->is_repeated()) {
       os << "    return m->" << field->field->name() << "_size() > 0;\n";
     } else {
       os << "    return m->has_" << field->field->name() << "();\n";
@@ -1699,8 +3817,13 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
     for (size_t i = 0; i < u->members.size(); i++) {
       auto& field = u->members[i];
       os << "  case " << field->field->number() << ":\n";
-      os << "    return m->" << oneof->name()
-         << "_case() == " << field->field->number() << ";\n";
+      if (IsRosFrontend()) {
+        os << "    return m->" << u->member_name
+           << ".Discriminator() == " << field->field->number() << ";\n";
+      } else {
+        os << "    return m->" << oneof->name()
+           << "_case() == " << field->field->number() << ";\n";
+      }
     }
   }
   os << "  }\n";
@@ -1753,6 +3876,12 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "  .deserialize_from_buffer = " << MessageName(message_)
      << "DeserializeFromBuffer,\n";
   os << "  .serialized_size = " << MessageName(message_) << "SerializedSize,\n";
+  os << "  .serialize_at_offset = " << MessageName(message_)
+     << "SerializeAtOffset,\n";
+  os << "  .deserialize_at_offset = " << MessageName(message_)
+     << "DeserializeAtOffset,\n";
+  os << "  .serialized_size_at_offset = " << MessageName(message_)
+     << "SerializedSizeAtOffset,\n";
   os << "  .allocate_at_offset = " << MessageName(message_)
      << "AllocateAtOffset,\n";
   os << "  .allocate = " << MessageName(message_) << "Allocate,\n";

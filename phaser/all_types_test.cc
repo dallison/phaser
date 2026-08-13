@@ -166,10 +166,10 @@ void ExpectBidirectionalWireRoundTrip(FillPhaser fill_phaser, FillPb fill_pb,
 }
 
 void FillMapHolder(MapHolder& msg) {
-  auto* a = msg.add_values();
+  auto a = msg.add_values();
   a->set_key("alpha");
   a->set_value(-7);
-  auto* b = msg.add_values();
+  auto b = msg.add_values();
   b->set_key("beta");
   b->set_value(42);
 }
@@ -303,9 +303,9 @@ void ExpectRepeatedBytesMatchPb(const PbRepeatedBytes& pb,
 }
 
 void FillRepeatedMessages(RepeatedMessages& msg) {
-  auto* m0 = msg.add_items();
-  FillAllScalars(*m0);
-  auto* m1 = msg.add_items();
+  auto m0 = msg.add_items();
+  FillAllScalars(m0);
+  auto m1 = msg.add_items();
   m1->set_f_int32(99);
   m1->set_f_string("nested");
 }
@@ -572,10 +572,10 @@ TEST(AllTypesTest, LargeSintWireCompat) {
 
 TEST(AllTypesTest, MapInsertOverwriteAndClear) {
   MapHolder msg;
-  auto* e1 = msg.add_values();
+  auto e1 = msg.add_values();
   e1->set_key("alpha");
   e1->set_value(1);
-  auto* e2 = msg.add_values();
+  auto e2 = msg.add_values();
   e2->set_key("beta");
   e2->set_value(2);
 
@@ -591,7 +591,7 @@ TEST(AllTypesTest, MapInsertOverwriteAndClear) {
   msg.clear_values();
   EXPECT_EQ(0u, msg.values_size());
 
-  auto* e3 = msg.add_values();
+  auto e3 = msg.add_values();
   e3->set_key("gamma");
   e3->set_value(3);
   EXPECT_EQ(1u, msg.values_size());
@@ -664,9 +664,9 @@ TEST(AllTypesTest, RepeatedBytesWithNulls) {
 
 TEST(AllTypesTest, RepeatedMessagesSparseMutable) {
   RepeatedMessages msg;
-  auto* m5 = msg.mutable_items(5);
+  auto m5 = msg.mutable_items(5);
   m5->set_f_string("slot-five");
-  auto* m0 = msg.mutable_items(0);
+  auto m0 = msg.mutable_items(0);
   m0->set_f_int32(7);
   EXPECT_EQ(7, msg.items(0).f_int32());
   EXPECT_EQ("slot-five", msg.items(5).f_string());
@@ -777,6 +777,18 @@ TEST(AllTypesTest, WireFormatRepeatedPackedBidirectional) {
       [](const PbRepeatedPacked& pb, const RepeatedPrimitivesPacked& m) {
         ExpectRepeatedPackedMatchPb(pb, m);
       });
+}
+
+TEST(AllTypesTest, RejectsPartialPackedFixedWidthElement) {
+  // Field 3 is repeated fixed64. A nine-byte packed body contains one complete
+  // value plus a partial value and must not be copied into an eight-byte slot.
+  std::string malformed;
+  malformed.push_back(static_cast<char>(0x1a));  // (3 << 3) | length-delimited
+  malformed.push_back(static_cast<char>(0x09));
+  malformed.append(9, '\0');
+
+  RepeatedPrimitivesPacked message;
+  EXPECT_FALSE(message.ParseFromString(malformed));
 }
 
 // Proto has [packed=false], but phaser currently emits a length-delimited

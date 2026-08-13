@@ -11,11 +11,14 @@
 #include <string>
 #include <string_view>
 #include <tuple>
-#include <vector>
+#include <type_traits>
+#include <utility>
+#include <variant>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "toolbelt/payload_buffer.h"
@@ -308,11 +311,10 @@ class UnionMessageField : public UnionMemberField {
                          uint32_t abs_offset) const {
     ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr == 0) {
-      return msg_;
+      return DefaultMessage();
     }
     // Populate msg_ with the information from the message.
-    msg_.runtime = runtime;
-    msg_.absolute_binary_offset = *addr;
+    Bind(runtime, *addr);
     return msg_;
   }
 
@@ -333,7 +335,7 @@ class UnionMessageField : public UnionMemberField {
   bool IsPresent(const std::shared_ptr<MessageRuntime>& runtime,
                  uint32_t abs_offset) const {
     ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
-    return addr == nullptr || *addr != 0;
+    return addr != nullptr && *addr != 0;
   }
 
   MessageType* Mutable(const std::shared_ptr<MessageRuntime>& runtime,
@@ -341,6 +343,9 @@ class UnionMessageField : public UnionMemberField {
     ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr != 0) {
       // Already allocated.
+      if (addr != nullptr) {
+        Bind(runtime, *addr);
+      }
       return &msg_;
     }
     // Allocate a new message.
@@ -388,8 +393,10 @@ class UnionMessageField : public UnionMemberField {
       return;
     }
     if (*addr != 0) {
+      const ::toolbelt::BufferOffset old_offset = *addr;
+      Bind(runtime, old_offset);
       msg_.Clear();
-      GetBuffer(runtime)->Free(runtime->ToAddress(*addr));
+      GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
     }
     // Allocate a new message.
     void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
@@ -419,9 +426,15 @@ class UnionMessageField : public UnionMemberField {
       return;
     }
     if (*addr != 0) {
+      const ::toolbelt::BufferOffset old_offset = *addr;
+      Bind(runtime, old_offset);
       msg_.Clear();
-      GetBuffer(runtime)->Free(runtime->ToAddress(*addr));
-      *addr = 0;
+      GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
+      // Clearing the nested message may move the payload buffer.
+      addr = GetIndirectAddress(runtime, abs_offset);
+      if (addr != nullptr) {
+        *addr = 0;
+      }
     }
   }
 
@@ -472,6 +485,17 @@ class UnionMessageField : public UnionMemberField {
   }
 
  private:
+  static const MessageType& DefaultMessage() {
+    static const MessageType message(InternalDefault{});
+    return message;
+  }
+
+  void Bind(const std::shared_ptr<MessageRuntime>& runtime,
+            ::toolbelt::BufferOffset offset) const {
+    msg_.runtime = runtime;
+    msg_.absolute_binary_offset = offset;
+  }
+
   ::toolbelt::BufferOffset* GetIndirectAddress(
       const std::shared_ptr<MessageRuntime>& runtime,
       uint32_t abs_offset) const {
@@ -497,11 +521,79 @@ class UnionField : public Field {
  public:
   UnionField() = default;
   UnionField(uint32_t source_offset, uint32_t relative_binary_offset, int id,
-             int number, std::vector<uint32_t> field_numbers)
+             int number, absl::Span<const uint32_t> field_numbers)
       : Field(id, number),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset),
         field_numbers_(field_numbers) {}
+
+  size_t index() const {
+    const int32_t discriminator = Discriminator();
+    for (size_t i = 0; i < field_numbers_.size(); ++i) {
+      if (discriminator == static_cast<int32_t>(field_numbers_[i])) {
+        return i;
+      }
+    }
+    return std::variant_npos;
+  }
+
+  int32_t case_number() const { return Discriminator(); }
+  bool valueless_by_exception() const {
+    return index() == std::variant_npos;
+  }
+
+  void reset() { ClearActive(); }
+
+  template <typename Alternative>
+  bool holds_alternative() const {
+    static_assert(Alternative::kIndex < sizeof...(T),
+                  "oneof alternative index is out of range");
+    return IsPresent<Alternative::kIndex>();
+  }
+
+  template <typename Alternative>
+  decltype(auto) get() const {
+    if (!holds_alternative<Alternative>()) {
+      throw std::bad_variant_access();
+    }
+    if constexpr (Alternative::kIsMessage) {
+      return GetReference<Alternative::kIndex,
+                          typename Alternative::value_type>();
+    } else {
+      return GetValue<Alternative::kIndex,
+                      typename Alternative::value_type>();
+    }
+  }
+
+  template <typename Alternative>
+  decltype(auto) get() {
+    if (!holds_alternative<Alternative>()) {
+      throw std::bad_variant_access();
+    }
+    if constexpr (Alternative::kIsMessage) {
+      return *Mutable<Alternative::kIndex, typename Alternative::value_type>();
+    } else {
+      return GetValue<Alternative::kIndex,
+                      typename Alternative::value_type>();
+    }
+  }
+
+  template <typename Alternative, typename... Args>
+  decltype(auto) emplace(Args&&... args) {
+    static_assert(Alternative::kIndex < sizeof...(T),
+                  "oneof alternative index is out of range");
+    if constexpr (Alternative::kIsMessage) {
+      static_assert(sizeof...(Args) == 0,
+                    "message oneof alternatives are emplaced empty and then "
+                    "mutated through the returned reference");
+      return *Mutable<Alternative::kIndex, typename Alternative::value_type>();
+    } else {
+      using Value = typename Alternative::value_type;
+      Value value(std::forward<Args>(args)...);
+      Set<Alternative::kIndex>(value);
+      return GetValue<Alternative::kIndex, Value>();
+    }
+  }
 
   template <int Id, typename F>
   const F& GetReference() const {
@@ -550,6 +642,7 @@ class UnionField : public Field {
 
   template <int Id, typename U>
   void Set(const U& v) {
+    PrepareArm<Id>();
     // Write the field number into the discriminator.
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
@@ -563,6 +656,7 @@ class UnionField : public Field {
 
   template <int Id, typename U>
   U* Mutable() {
+    PrepareArm<Id>();
     // Write the field number into the discriminator.
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
@@ -578,6 +672,7 @@ class UnionField : public Field {
   // Only valid for strings and bytes.
   template <int Id>
   absl::Span<char> Allocate(size_t size) {
+    PrepareArm<Id>();
     // Write the field number into the discriminator.
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
@@ -672,6 +767,7 @@ class UnionField : public Field {
     if (relative_offset < 0) {  // Field not present.
       return absl::OkStatus();
     }
+    PrepareArm<Id>();
     if (absl::Status status = std::get<Id>(value_).Deserialize(
             buffer, GetRuntime(),
             GetMessageBinaryStart() +
@@ -693,6 +789,7 @@ class UnionField : public Field {
     if (relative_offset < 0) {  // Field not present.
       return absl::OkStatus();
     }
+    PrepareArm<Id>();
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
@@ -719,6 +816,7 @@ class UnionField : public Field {
 
   template <int Id>
   void SetOffset(toolbelt::BufferOffset offset) {
+    PrepareArm<Id>();
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
@@ -732,6 +830,48 @@ class UnionField : public Field {
   }
 
  private:
+  template <size_t Id = 0>
+  void ClearByIndex(size_t active_index) {
+    if constexpr (Id < sizeof...(T)) {
+      if (active_index == Id) {
+        Clear<static_cast<int>(Id)>();
+        return;
+      }
+      ClearByIndex<Id + 1>(active_index);
+    }
+  }
+
+  void ClearActive() {
+    const size_t active_index = index();
+    if (active_index != std::variant_npos) {
+      ClearByIndex(active_index);
+      return;
+    }
+    int32_t* discriminator = GetRuntime()->template ToAddress<int32_t>(
+        GetMessageBinaryStart() + relative_binary_offset_);
+    if (discriminator != nullptr) {
+      *discriminator = 0;
+    }
+  }
+
+  template <int Id>
+  void PrepareArm() {
+    static_assert(Id >= 0 && Id < static_cast<int>(sizeof...(T)),
+                  "oneof arm index is out of range");
+    const int32_t desired = static_cast<int32_t>(field_numbers_[Id]);
+    const int32_t current = Discriminator();
+    if (current == desired) {
+      return;
+    }
+    ClearActive();
+    ::toolbelt::BufferOffset* slot =
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+            GetMessageBinaryStart() + relative_binary_offset_ + 4);
+    if (slot != nullptr) {
+      *slot = 0;
+    }
+  }
+
   ::toolbelt::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
@@ -749,7 +889,8 @@ class UnionField : public Field {
 
   uint32_t source_offset_;
   ::toolbelt::BufferOffset relative_binary_offset_;
-  std::vector<uint32_t> field_numbers_;  // field number for each tuple type
+  absl::Span<const uint32_t>
+      field_numbers_;  // Static field number for each tuple type.
   mutable std::tuple<T...> value_;
 };
 }  // namespace phaser

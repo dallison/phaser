@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package foo.bar.pb;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "phaser/options.proto";
+import "phaser/testdata/RosHeader.proto";
+
+message WireChild {
+  int32 id = 1;
+  string label = 2;
+}
+
+message RosIntrinsicMessage {
+  google.protobuf.Timestamp stamp = 1;
+  google.protobuf.Duration timeout = 2;
+  std_msgs.Header header = 3;
+  int32 count = 4;
+  string name = 5;
+  repeated int32 samples = 6;
+  repeated string tags = 7;
+  repeated WireChild children = 8;
+  repeated string fixed_names = 9 [(phaser.array_size) = 2];
+  repeated WireChild fixed_children = 10 [(phaser.array_size) = 2];
+
+  oneof choice {
+    int32 choice_number = 11;
+    string choice_text = 12;
+    WireChild choice_child = 13;
+  }
+}

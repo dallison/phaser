@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package foo.bar;
+
+import "phaser/options.proto";
+
+message InvalidArraySizeMessage {
+  int32 bad = 1 [(phaser.array_size) = 4];
+}
