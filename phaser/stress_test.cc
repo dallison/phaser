@@ -62,6 +62,17 @@ TEST(StressTest, DynamicExplicitBufferExpansion) {
   EXPECT_EQ("expand-me", msg.s());
 }
 
+TEST(StressTest, FinalizeSetsPayloadSize) {
+  TestMessage msg(512);
+  msg.set_s("finalize-me");
+  auto* payload = reinterpret_cast<::toolbelt::PayloadBuffer*>(msg.Data());
+  payload->full_size = 0;
+
+  msg.Finalize();
+
+  EXPECT_EQ(payload->full_size, payload->hwm);
+}
+
 TEST(StressTest, AllocFailsAtStart) {
   auto status = ::phaser::NewDynamicBuffer(
       1024, ::phaser::test::AllocUntilLimit(0),

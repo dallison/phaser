@@ -1688,6 +1688,10 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
 }
 
 void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
+  os << "  void Finalize() const {\n"
+        "    const size_t _phaser_size = Size();\n"
+        "    runtime->pb->full_size = static_cast<uint32_t>(_phaser_size);\n"
+        "  }\n";
   os << "  static constexpr size_t BinarySize() { return HeaderSize() + "
      << binary_size_ << "; }\n";
   os << "  static constexpr size_t PresenceMaskSize() { return "
