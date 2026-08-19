@@ -48,3 +48,24 @@ message RosPackedFixedMessage {
   repeated double double_values = 6;
   repeated fixed64 fixed_array = 7 [(phaser.array_size) = 3];
 }
+
+// These names have all been used by generated method parameters or local
+// variables. They must remain usable as unmodified ROS frontend field names.
+message GeneratorNameCollisions {
+  int32 status = 1;
+  uint32 size = 2;
+  string buffer = 3;
+  bool other = 4;
+  int32 indent = 5;
+  repeated int32 i = 6;
+  string source = 7;
+  string destination = 8;
+  string message = 9;
+  string input = 10;
+  string output = 11;
+  uint32 tag = 12;
+  uint32 field_number = 13;
+  uint32 count = 14;
+  string data = 15;
+  string value = 16;
+}

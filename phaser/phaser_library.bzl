@@ -23,7 +23,8 @@ def _phaser_action(
         add_namespace,
         target_name,
         frontend,
-        enable_active_message):
+        enable_active_message,
+        ros_metadata):
     # The protobuf compiler allow plugins to get arguments specified in the --plugin_out
     # argument.  The args are passed as a comma separated list of key=value pairs followed
     # by a colon and the output directory.
@@ -35,6 +36,8 @@ def _phaser_action(
     options.append("frontend={}".format(frontend))
     if enable_active_message:
         options.append("active_message=true")
+    if ros_metadata:
+        options.append("ros_metadata=true")
     options_and_out_dir = "--phaser_out={}:{}".format(",".join(options), out_dir)
 
     inputs = depset(direct = direct_sources, transitive = transitive_sources)
@@ -195,6 +198,7 @@ def _phaser_impl(ctx):
         ctx.attr.target_name,
         frontend,
         ctx.attr.enable_active_message,
+        ctx.attr.ros_metadata,
     )
 
     return [DefaultInfo(files = depset(outputs))]
@@ -220,6 +224,7 @@ _phaser_gen = rule(
         "target_name": attr.string(),
         "frontend": attr.string(default = "protobuf"),
         "enable_active_message": attr.bool(default = False),
+        "ros_metadata": attr.bool(default = False),
     },
     implementation = _phaser_impl,
 )
@@ -248,7 +253,8 @@ def phaser_library(
         enable_active_message = False,
         frontend = "protobuf",
         cc_deps = [],
-        direct_header_symlinks = True):
+        direct_header_symlinks = True,
+        ros_metadata = False):
     """
     Generate a cc_libary for protobuf files specified in deps.
 
@@ -266,6 +272,7 @@ def phaser_library(
             such as ROS1 message/runtime libraries for intrinsic ROS fields.
         direct_header_symlinks: create short direct-source header aliases.
             Disable this when generating multiple frontends from one proto target.
+        ros_metadata: generate ROS datatype, definition, and MD5 functions.
     """
     if frontend not in ("protobuf", "ros"):
         fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
@@ -281,6 +288,7 @@ def phaser_library(
         target_name = name,
         enable_active_message = enable_active_message,
         frontend = frontend,
+        ros_metadata = ros_metadata,
     )
 
     srcs = name + "_srcs"

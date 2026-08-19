@@ -107,6 +107,10 @@ bool CodeGenerator::Generate(
       generate_active_message_ = option.second.empty() ||
                                  option.second == "true" ||
                                  option.second == "1";
+    } else if (option.first == "ros_metadata") {
+      generate_ros_metadata_ = option.second.empty() ||
+                               option.second == "true" ||
+                               option.second == "1";
     } else if (option.first == "frontend") {
       if (option.second == "protobuf" || option.second.empty()) {
         frontend_style_ = FrontendStyle::kProtobuf;
@@ -123,6 +127,9 @@ bool CodeGenerator::Generate(
 
   const FrontendStyle effective_frontend =
       EffectiveFrontendStyle(file, frontend_style_);
+  const bool effective_ros_metadata =
+      generate_ros_metadata_ &&
+      file->package().rfind("google.protobuf", 0) != 0;
 
   // Custom option schemas and other message-free protos need no C++ output.
   // descriptor.proto is imported for extensions but must not be emitted as a
@@ -136,7 +143,8 @@ bool CodeGenerator::Generate(
   }
 
   Generator gen(file, added_namespace_, package_name_, target_name_,
-                generate_active_message_, effective_frontend);
+                generate_active_message_, effective_frontend,
+                effective_ros_metadata);
 
   std::string filename =
       GeneratedFilename(package_name_, target_name_, std::string(file->name()));
@@ -208,17 +216,19 @@ void Generator::CloseNamespace(std::ostream& os) {
 Generator::Generator(const google::protobuf::FileDescriptor* file,
                      const std::string& ns, const std::string& pn,
                      const std::string& tn, bool generate_active_message,
-                     FrontendStyle frontend_style)
+                     FrontendStyle frontend_style,
+                     bool generate_ros_metadata)
     : file_(file),
       added_namespace_(ns),
       package_name_(pn),
       target_name_(tn),
       generate_active_message_(generate_active_message),
+      generate_ros_metadata_(generate_ros_metadata),
       frontend_style_(frontend_style) {
   for (int i = 0; i < file->message_type_count(); i++) {
     message_gens_.push_back(std::make_unique<MessageGenerator>(
         file->message_type(i), added_namespace_, std::string(file->package()),
-        generate_active_message_, frontend_style_));
+        generate_active_message_, frontend_style_, generate_ros_metadata_));
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {

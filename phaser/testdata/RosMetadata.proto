@@ -1,45 +1,40 @@
 syntax = "proto3";
 
-package ros_metadata;
+package example_msgs.proto;
 
 import "phaser/options.proto";
+import "google/protobuf/timestamp.proto";
 
-enum Status {
-  STATUS_OK = 0;
-  STATUS_BAD = 1;
+message Status {
+  enum Constants {
+    option (phaser.ros_enum) = {
+      type: "int32"
+    };
+
+    OK = 0;
+    BAD = 1;
+  }
+
+  int32 value = 1;
 }
 
 message Bool {
-  option (phaser.ros_message) = {
-    data_type: "std_msgs/Bool"
-    definition: "bool data\n"
-  };
-
   bool data = 1;
 }
 
 message Wrapper {
-  option (phaser.ros_message) = {
-    data_type: "example_msgs/Wrapper"
-    definition: "uint8 READY=1\nstd_msgs/Bool child\nint32[3] samples\nexample_msgs/Status status\nbool ready\n"
-    constants: "uint8 READY=1"
-  };
+  enum Constants {
+    option (phaser.ros_enum) = {
+      type: "uint8"
+    };
+
+    CONSTANTS_UNSPECIFIED = 0 [(phaser.ros_enum_value) = { ignore: true }];
+    READY = 1;
+  }
 
   Bool child = 1;
-  repeated int32 samples = 2 [
-    (phaser.array_size) = 3,
-    (phaser.ros_field) = {
-      type: "int32[3]"
-    }
-  ];
-  Status status_ = 3 [(phaser.ros_field) = {
-    type: "example_msgs/Status"
-    name: "status"
-    nested_md5_text: "uint8 OK=0\nuint8 BAD=1"
-    nested_data_type: "example_msgs/Status"
-    nested_definition: "uint8 OK=0\nuint8 BAD=1\n"
-  }];
-  bool ready_ = 4 [(phaser.ros_field) = {
-    name: "ready"
-  }];
+  repeated int32 samples = 2 [(phaser.array_size) = 3];
+  Status status = 3;
+  bool ready = 4;
+  google.protobuf.Timestamp stamp = 5;
 }

@@ -57,16 +57,18 @@ class MessageGenerator {
                    const std::string& added_namespace,
                    const std::string& package_name,
                    bool generate_active_message = false,
-                   FrontendStyle frontend_style = FrontendStyle::kProtobuf)
+                   FrontendStyle frontend_style = FrontendStyle::kProtobuf,
+                   bool generate_ros_metadata = false)
       : message_(message),
         added_namespace_(added_namespace),
         package_name_(package_name),
         generate_active_message_(generate_active_message),
-        frontend_style_(frontend_style) {
+        frontend_style_(frontend_style),
+        generate_ros_metadata_(generate_ros_metadata) {
     for (int i = 0; i < message_->nested_type_count(); i++) {
       nested_message_gens_.push_back(std::make_unique<MessageGenerator>(
           message_->nested_type(i), added_namespace, package_name,
-          generate_active_message, frontend_style));
+          generate_active_message, frontend_style, generate_ros_metadata));
     }
     // Enums
     for (int i = 0; i < message_->enum_type_count(); i++) {
@@ -227,6 +229,7 @@ class MessageGenerator {
   std::string package_name_;
   bool generate_active_message_ = false;
   FrontendStyle frontend_style_ = FrontendStyle::kProtobuf;
+  bool generate_ros_metadata_ = false;
 };
 
 }  // namespace phaser

@@ -72,6 +72,7 @@ cc_test(
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_compile_cc_proto",
         "//phaser/testdata:ros_compile_phaser",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
 )
