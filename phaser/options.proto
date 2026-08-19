@@ -4,9 +4,47 @@ package phaser;
 
 import "google/protobuf/descriptor.proto";
 
+message RosMessageMetadata {
+  // Original ROS datatype in package/Message form.
+  string data_type = 1;
+
+  // Original ROS source definition. Phaser appends transitive definitions.
+  string definition = 2;
+
+  // Canonical constant declarations used by the ROS MD5 algorithm.
+  repeated string constants = 3;
+}
+
+message RosFieldMetadata {
+  // Original ROS field type, including any array suffix. Omit when the
+  // protobuf type maps unambiguously to a ROS type.
+  string type = 1;
+
+  // Original ROS field name. Omit when it is unchanged.
+  string name = 2;
+
+  // Canonical MD5 text for a nested ROS message that is not represented as a
+  // protobuf message, such as a constants-only ROS enum message.
+  string nested_md5_text = 3;
+
+  // Datatype for the non-protobuf nested ROS message.
+  string nested_data_type = 4;
+
+  // Source definition for the non-protobuf nested ROS message.
+  string nested_definition = 5;
+}
+
 extend google.protobuf.FieldOptions {
   // Fixed logical extent for a repeated field. Must be a positive integer.
   // Only valid on non-map repeated fields. ROS frontend generation exposes a
   // fixed-extent array facade; protobuf frontend keeps repeated accessors.
   uint32 array_size = 50001;
+
+  // Overrides for ROS information that cannot be inferred from the field.
+  RosFieldMetadata ros_field = 50002;
+}
+
+extend google.protobuf.MessageOptions {
+  // Original ROS message identity and source definition.
+  RosMessageMetadata ros_message = 50001;
 }

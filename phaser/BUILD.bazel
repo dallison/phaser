@@ -77,6 +77,28 @@ cc_test(
 )
 
 cc_test(
+    name = "ros_metadata_protobuf_frontend_test",
+    srcs = ["ros_metadata_protobuf_frontend_test.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_metadata_protobuf_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "ros_metadata_ros_frontend_test",
+    srcs = ["ros_metadata_ros_frontend_test.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_metadata_ros_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "ros_intrinsics_test",
     srcs = ["ros_intrinsics_test.cc"],
     copts = PHASER_COPTS,

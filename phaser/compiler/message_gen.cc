@@ -13,6 +13,7 @@
 #include <limits>
 #include <set>
 
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "phaser/options.pb.h"
@@ -138,6 +139,159 @@ static bool IsFixedWireType(
   }
 }
 
+static std::string RosBaseType(std::string type) {
+  const size_t array = type.find('[');
+  if (array != std::string::npos) {
+    type.resize(array);
+  }
+  return type;
+}
+
+static bool IsRosBuiltinType(const std::string& type) {
+  static const absl::flat_hash_set<std::string> builtin_types = {
+      "bool",  "byte",   "char",   "duration", "float32", "float64",
+      "int8",  "int16",  "int32",  "int64",    "string",  "time",
+      "uint8", "uint16", "uint32", "uint64",
+  };
+  return builtin_types.contains(RosBaseType(type));
+}
+
+static std::string RosArraySuffix(
+    const google::protobuf::FieldDescriptor* field) {
+  if (!field->is_repeated()) {
+    return "";
+  }
+  if (field->options().HasExtension(phaser::array_size)) {
+    return absl::StrFormat(
+        "[%u]", field->options().GetExtension(phaser::array_size));
+  }
+  return "[]";
+}
+
+static std::string InferredRosFieldType(
+    const google::protobuf::FieldDescriptor* field) {
+  using Field = google::protobuf::FieldDescriptor;
+  std::string type;
+  switch (field->type()) {
+    case Field::TYPE_BOOL:
+      type = "bool";
+      break;
+    case Field::TYPE_INT64:
+      type = "int64";
+      break;
+    case Field::TYPE_UINT64:
+      type = "uint64";
+      break;
+    case Field::TYPE_FLOAT:
+      type = "float32";
+      break;
+    case Field::TYPE_DOUBLE:
+      type = "float64";
+      break;
+    case Field::TYPE_STRING:
+      type = "string";
+      break;
+    case Field::TYPE_MESSAGE:
+      if (field->message_type()->full_name() == "google.protobuf.Timestamp") {
+        type = "time";
+      } else if (field->message_type()->full_name() ==
+                 "google.protobuf.Duration") {
+        type = "duration";
+      } else if (field->message_type()->options().HasExtension(
+                     phaser::ros_message)) {
+        type = field->message_type()
+                   ->options()
+                   .GetExtension(phaser::ros_message)
+                   .data_type();
+      }
+      break;
+    default:
+      // int32, uint32, bytes, and enums each have multiple possible ROS
+      // source types and therefore require an explicit override.
+      break;
+  }
+  if (type.empty()) {
+    return "";
+  }
+  return type + RosArraySuffix(field);
+}
+
+static std::string RosFieldType(
+    const google::protobuf::FieldDescriptor* field) {
+  if (field->options().HasExtension(phaser::ros_field)) {
+    const auto& metadata =
+        field->options().GetExtension(phaser::ros_field);
+    if (!metadata.type().empty()) {
+      return metadata.type();
+    }
+  }
+  return InferredRosFieldType(field);
+}
+
+static std::string RosFieldName(
+    const google::protobuf::FieldDescriptor* field) {
+  if (field->options().HasExtension(phaser::ros_field)) {
+    const auto& metadata =
+        field->options().GetExtension(phaser::ros_field);
+    if (!metadata.name().empty()) {
+      return metadata.name();
+    }
+  }
+  return std::string(field->name());
+}
+
+static void AppendRosDependencies(const google::protobuf::Descriptor* message,
+                                  absl::flat_hash_set<std::string>* seen,
+                                  std::string* definition) {
+  for (int i = 0; i < message->field_count(); ++i) {
+    const auto* field = message->field(i);
+    const auto& field_metadata =
+        field->options().GetExtension(phaser::ros_field);
+    if (IsRosBuiltinType(RosFieldType(field))) {
+      continue;
+    }
+
+    std::string data_type;
+    std::string source_definition;
+    const google::protobuf::Descriptor* dependency = nullptr;
+    if (!field_metadata.nested_data_type().empty()) {
+      data_type = field_metadata.nested_data_type();
+      source_definition = field_metadata.nested_definition();
+    } else if (field->type() ==
+                   google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+               field->message_type()->options().HasExtension(
+                   phaser::ros_message)) {
+      dependency = field->message_type();
+      const auto& dependency_metadata =
+          dependency->options().GetExtension(phaser::ros_message);
+      data_type = dependency_metadata.data_type();
+      source_definition = dependency_metadata.definition();
+    } else {
+      continue;
+    }
+
+    if (!seen->insert(data_type).second) {
+      continue;
+    }
+    *definition += std::string(80, '=') + "\n";
+    *definition += "MSG: " + data_type + "\n";
+    *definition += source_definition + "\n";
+    if (dependency != nullptr) {
+      AppendRosDependencies(dependency, seen, definition);
+    }
+  }
+}
+
+static std::string RosFullDefinition(
+    const google::protobuf::Descriptor* message) {
+  const auto& metadata = message->options().GetExtension(phaser::ros_message);
+  std::string definition = metadata.definition() + "\n";
+  absl::flat_hash_set<std::string> seen;
+  AppendRosDependencies(message, &seen, &definition);
+  definition.pop_back();
+  return definition;
+}
+
 std::string MessageGenerator::SanitizedIdentifier(
     const std::string& name) const {
   if (IsCppReservedWord(name)) {
@@ -215,6 +369,9 @@ absl::Status MessageGenerator::ValidateArraySizeOption(
 }
 
 absl::Status MessageGenerator::ValidateFieldOptions() const {
+  if (absl::Status status = ValidateRosMetadataOptions(); !status.ok()) {
+    return status;
+  }
   if (IsRosFrontend() && IsRosHeader(message_) && added_namespace_.empty()) {
     return absl::InvalidArgumentError(
         "ROS frontend generation for std_msgs.Header requires add_namespace "
@@ -241,6 +398,56 @@ absl::Status MessageGenerator::ValidateFieldOptions() const {
   for (const auto& nested : nested_message_gens_) {
     if (absl::Status status = nested->ValidateFieldOptions(); !status.ok()) {
       return status;
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MessageGenerator::ValidateRosMetadataOptions() const {
+  if (!message_->options().HasExtension(phaser::ros_message)) {
+    return absl::OkStatus();
+  }
+  const auto& metadata = message_->options().GetExtension(phaser::ros_message);
+  if (metadata.data_type().empty()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "phaser.ros_message.data_type must not be empty on message %s",
+        message_->full_name()));
+  }
+  for (int i = 0; i < message_->field_count(); ++i) {
+    const auto* field = message_->field(i);
+    const std::string field_type = RosFieldType(field);
+    if (field_type.empty()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "ROS type for field %s.%s is ambiguous; set phaser.ros_field.type",
+          message_->full_name(), field->name()));
+    }
+    const auto& field_metadata =
+        field->options().GetExtension(phaser::ros_field);
+    if (!IsRosBuiltinType(field_type) &&
+        field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+        field_metadata.nested_md5_text().empty()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "non-builtin ROS field %s.%s must map to a protobuf message or "
+          "provide nested_md5_text",
+          message_->full_name(), field->name()));
+    }
+    if (!field_metadata.nested_md5_text().empty() &&
+        (field_metadata.nested_data_type().empty() ||
+         field_metadata.nested_definition().empty())) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "non-protobuf ROS field %s.%s must provide nested_data_type and "
+          "nested_definition",
+          message_->full_name(), field->name()));
+    }
+    if (!IsRosBuiltinType(field_type) &&
+        field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+        !field->message_type()->options().HasExtension(phaser::ros_message) &&
+        field_metadata.nested_md5_text().empty()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "non-builtin ROS field %s.%s references %s, which must declare "
+          "phaser.ros_message",
+          message_->full_name(), field->name(),
+          field->message_type()->full_name()));
     }
   }
   return absl::OkStatus();
@@ -882,6 +1089,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
      << message_->full_name() << "\"; }\n";
   os << "  static constexpr std::string_view Name() { return \""
      << message_->name() << "\"; }\n\n";
+  GenerateRosMetadata(os);
 
   os << "  std::string GetName() const override { return std::string(Name()); "
         "}\n";
@@ -937,6 +1145,57 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateStreamer(os);
   GenerateCopy(os, false);
   return absl::OkStatus();
+}
+
+void MessageGenerator::GenerateRosMetadata(std::ostream& os) {
+  if (!message_->options().HasExtension(phaser::ros_message)) {
+    return;
+  }
+  const auto& metadata = message_->options().GetExtension(phaser::ros_message);
+  os << "  static constexpr std::string_view RosDataType() { return \""
+     << absl::CEscape(metadata.data_type()) << "\"; }\n";
+  os << "  static constexpr std::string_view RosDefinition() { return \""
+     << absl::CEscape(RosFullDefinition(message_)) << "\"; }\n";
+  os << "  static std::string RosMd5() {\n";
+  os << "    std::string text;\n";
+
+  bool first_declaration = true;
+  auto generate_separator = [&os, &first_declaration]() {
+    if (!first_declaration) {
+      os << "    text.push_back('\\n');\n";
+    }
+    first_declaration = false;
+  };
+  auto generate_append_literal =
+      [&os, &generate_separator](const std::string& line) {
+        generate_separator();
+        os << "    text += \"" << absl::CEscape(line) << "\";\n";
+      };
+  for (const auto& constant : metadata.constants()) {
+    generate_append_literal(constant);
+  }
+  for (int i = 0; i < message_->field_count(); ++i) {
+    const auto* field = message_->field(i);
+    const auto& field_metadata =
+        field->options().GetExtension(phaser::ros_field);
+    const std::string field_type = RosFieldType(field);
+    const std::string field_name = RosFieldName(field);
+    generate_separator();
+    if (IsRosBuiltinType(field_type)) {
+      os << "    text += \""
+         << absl::CEscape(field_type + " " + field_name) << "\";\n";
+    } else if (!field_metadata.nested_md5_text().empty()) {
+      os << "    text += ::phaser::Md5(\""
+         << absl::CEscape(field_metadata.nested_md5_text()) << "\");\n";
+      os << "    text += \" " << absl::CEscape(field_name) << "\";\n";
+    } else {
+      os << "    text += " << MessageName(field->message_type())
+         << "::RosMd5();\n";
+      os << "    text += \" " << absl::CEscape(field_name) << "\";\n";
+    }
+  }
+  os << "    return ::phaser::Md5(text);\n";
+  os << "  }\n\n";
 }
 
 void MessageGenerator::GenerateRosSyncToPayload(std::ostream& os) {

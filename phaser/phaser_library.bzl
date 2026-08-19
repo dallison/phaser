@@ -162,7 +162,11 @@ def _phaser_impl(ctx):
             # #include "phaser/testdata/Test.phaser.h"
             # so we create the symlink:
             # Test.phaser.h -> phaser/testdata/phaser/testdata/Test.phaser.h
-            if out_file.extension == "h" and out in dep[MessageInfo].symlink_headers:
+            if (
+                ctx.attr.direct_header_symlinks and
+                out_file.extension == "h" and
+                out in dep[MessageInfo].symlink_headers
+            ):
                 prefix = paths.join(ctx.attr.target_name, package_name)
                 symlink_name = out_file.short_path[len(prefix) + 1:]
                 if symlink_name.startswith(package_name):
@@ -211,6 +215,7 @@ _phaser_gen = rule(
             aspects = [phaser_aspect],
         ),
         "add_namespace": attr.string(),
+        "direct_header_symlinks": attr.bool(default = True),
         "package_name": attr.string(),
         "target_name": attr.string(),
         "frontend": attr.string(default = "protobuf"),
@@ -235,7 +240,15 @@ _split_files = rule(
     implementation = _split_files_impl,
 )
 
-def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_runtime", add_namespace = "", enable_active_message = False, frontend = "protobuf", cc_deps = []):
+def phaser_library(
+        name,
+        deps = [],
+        runtime = "@phaser//phaser/runtime:phaser_runtime",
+        add_namespace = "",
+        enable_active_message = False,
+        frontend = "protobuf",
+        cc_deps = [],
+        direct_header_symlinks = True):
     """
     Generate a cc_libary for protobuf files specified in deps.
 
@@ -251,6 +264,8 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
         frontend: generated C++ API style, either "protobuf" (default) or "ros".
         cc_deps: additional C++ dependencies required by generated headers,
             such as ROS1 message/runtime libraries for intrinsic ROS fields.
+        direct_header_symlinks: create short direct-source header aliases.
+            Disable this when generating multiple frontends from one proto target.
     """
     if frontend not in ("protobuf", "ros"):
         fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
@@ -261,6 +276,7 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
         name = phaser,
         deps = deps,
         add_namespace = add_namespace,
+        direct_header_symlinks = direct_header_symlinks,
         package_name = native.package_name(),
         target_name = name,
         enable_active_message = enable_active_message,

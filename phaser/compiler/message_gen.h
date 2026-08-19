@@ -101,6 +101,7 @@ class MessageGenerator {
   void GeneratePublicFieldDeclarations(std::ostream& os);
   void GenerateRosOneofTypes(std::ostream& os);
   void GenerateRosOwnerCopyMove(std::ostream& os, bool decl);
+  void GenerateRosMetadata(std::ostream& os);
   void GenerateRosSyncToPayload(std::ostream& os);
   void GenerateProtobufAccessors(std::ostream& os);
   void GenerateFieldProtobufAccessors(std::ostream& os);
@@ -205,6 +206,7 @@ class MessageGenerator {
   std::string RosIntrinsicCType(
       const google::protobuf::FieldDescriptor* field);
   absl::Status ValidateFieldOptions() const;
+  absl::Status ValidateRosMetadataOptions() const;
   absl::Status ValidateArraySizeOption(
       const google::protobuf::FieldDescriptor* field) const;
   absl::Status ValidateRosHeaderDescriptor() const;

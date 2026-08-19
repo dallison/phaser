@@ -130,7 +130,8 @@ bool CodeGenerator::Generate(
   if (file->message_type_count() == 0 && file->enum_type_count() == 0) {
     return true;
   }
-  if (file->name() == std::string("google/protobuf/descriptor.proto")) {
+  if (file->name() == std::string("google/protobuf/descriptor.proto") ||
+      file->name() == std::string("phaser/options.proto")) {
     return true;
   }
 
@@ -239,7 +240,8 @@ void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
     if (dep->message_type_count() == 0 && dep->enum_type_count() == 0) {
       continue;
     }
-    if (dep->name() == std::string("google/protobuf/descriptor.proto")) {
+    if (dep->name() == std::string("google/protobuf/descriptor.proto") ||
+        dep->name() == std::string("phaser/options.proto")) {
       continue;
     }
     std::string base = GeneratedFilename(
