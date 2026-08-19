@@ -1559,6 +1559,13 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
           "= ::phaser::Tuning::kPerformance);\n";
     os << "  void InitDynamicMutable(size_t initial_size = 8192, "
           "::phaser::Tuning tuning = ::phaser::Tuning::kPerformance);\n";
+    os << "  static absl::StatusOr<" << MessageName(message_)
+       << "> TryCreateDynamicMutable(size_t initial_size, "
+          "std::function<absl::StatusOr<void*>(size_t)> alloc, "
+          "std::function<void(void*)> free, "
+          "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> "
+          "realloc, ::phaser::Tuning tuning = "
+          "::phaser::Tuning::kPerformance);\n";
     os << "  static " << MessageName(message_)
        << " CreateDynamicMutable(size_t initial_size, "
           "std::function<absl::StatusOr<void*>(size_t)> alloc, "
@@ -1605,8 +1612,9 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "}\n\n";
   os << "// Create a message in a dynamically resized buffer allocated from "
         "the heap.\n";
-  os << MessageName(message_) << " " << MessageName(message_)
-     << "::CreateDynamicMutable(size_t initial_size, "
+  os << "absl::StatusOr<" << MessageName(message_) << "> "
+     << MessageName(message_)
+     << "::TryCreateDynamicMutable(size_t initial_size, "
         "std::function<absl::StatusOr<void*>(size_t)> alloc, "
         "std::function<void(void*)> free,"
         "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc, "
@@ -1615,7 +1623,7 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  absl::StatusOr<::toolbelt::PayloadBuffer *> pbs = "
         "::phaser::NewDynamicBuffer(initial_size, std::move(alloc), "
         "std::move(realloc), tuning);\n"
-        "  if (!pbs.ok()) abort();\n"
+        "  if (!pbs.ok()) return pbs.status();\n"
         "  ::toolbelt::PayloadBuffer *pb = *pbs;\n"
         "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
@@ -1633,6 +1641,19 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
      << MessageName(message_)
      << ">();\n"
         "  return msg;\n"
+        "}\n\n";
+
+  os << MessageName(message_) << " " << MessageName(message_)
+     << "::CreateDynamicMutable(size_t initial_size, "
+        "std::function<absl::StatusOr<void*>(size_t)> alloc, "
+        "std::function<void(void*)> free,"
+        "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc, "
+        "::phaser::Tuning tuning) "
+        "{\n"
+        "  auto message = TryCreateDynamicMutable(initial_size, "
+        "std::move(alloc), std::move(free), std::move(realloc), tuning);\n"
+        "  if (!message.ok()) abort();\n"
+        "  return std::move(*message);\n"
         "}\n\n";
 
   os << MessageName(message_) << " " << MessageName(message_)

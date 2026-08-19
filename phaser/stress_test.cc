@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <utility>
 #include <vector>
 
 #include "phaser/runtime/message.h"
@@ -80,6 +81,30 @@ TEST(StressTest, CustomAllocSucceeds) {
       });
   msg.set_s("custom-alloc");
   EXPECT_EQ("custom-alloc", msg.s());
+}
+
+TEST(StressTest, TryCreateCustomAllocSucceeds) {
+  auto result = TestMessage::TryCreateDynamicMutable(
+      512, ::phaser::test::AllocUntilLimit(64 * 1024), [](void* p) { free(p); },
+      [](void* p, size_t, size_t new_size) -> absl::StatusOr<void*> {
+        void* r = realloc(p, new_size);
+        if (r == nullptr) {
+          return absl::ResourceExhaustedError("realloc failed");
+        }
+        return r;
+      });
+  ASSERT_TRUE(result.ok()) << result.status();
+  TestMessage msg = std::move(*result);
+  msg.set_s("fallible-custom-alloc");
+  EXPECT_EQ("fallible-custom-alloc", msg.s());
+}
+
+TEST(StressTest, TryCreateReportsInitialAllocationFailure) {
+  auto result = TestMessage::TryCreateDynamicMutable(
+      512, ::phaser::test::AllocUntilLimit(0), [](void* p) { free(p); },
+      ::phaser::test::ReallocAlwaysFails());
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.status().code(), absl::StatusCode::kResourceExhausted);
 }
 
 TEST(StressTest, ReallocFailureAborts) {

@@ -74,6 +74,16 @@ static void WriteToZeroCopyStream(
 static std::string GeneratedFilename(const std::filesystem::path& package_name,
                                      const std::filesystem::path& target_name,
                                      std::string filename) {
+  if (filename.rfind("../", 0) == 0) {
+    // Bazel represents external sources as ../<repo>/<path>. Keep only the
+    // repository-relative path so it cannot escape target_name.
+    const size_t repository_end = filename.find('/', 3);
+    filename = filename.substr(repository_end + 1);
+  } else if (filename.rfind("external/", 0) == 0) {
+    // protoc can instead preserve the execroot-relative external/<repo>/ form.
+    const size_t repository_end = filename.find('/', sizeof("external/") - 1);
+    filename = filename.substr(repository_end + 1);
+  }
   size_t virtual_imports = filename.find("_virtual_imports/");
   if (virtual_imports != std::string::npos) {
     // This is something like:
@@ -83,6 +93,17 @@ static std::string GeneratedFilename(const std::filesystem::path& package_name,
     filename = filename.substr(filename.find('/') + 1);
   }
   return package_name / target_name / filename;
+}
+
+static std::string GeneratedIncludeFilename(
+    const std::filesystem::path& package_name,
+    const std::filesystem::path& target_name, const std::string& filename) {
+  std::string result = GeneratedFilename(package_name, target_name, filename);
+  if (result.rfind("external/", 0) == 0) {
+    const size_t repository_end = result.find('/', sizeof("external/") - 1);
+    result = result.substr(repository_end + 1);
+  }
+  return result;
 }
 
 bool CodeGenerator::Generate(
@@ -254,8 +275,8 @@ void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
         dep->name() == std::string("phaser/options.proto")) {
       continue;
     }
-    std::string base = GeneratedFilename(
-        package_name_, target_name_, std::string(dep->name()));
+    std::string base = GeneratedIncludeFilename(package_name_, target_name_,
+                                                std::string(dep->name()));
     std::filesystem::path p(base);
     p.replace_extension(".phaser.h");
     os << "#include \"" << p.string() << "\"\n";
@@ -285,8 +306,8 @@ void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
 }
 
 void Generator::GenerateSources(std::ostream& os) {
-  std::filesystem::path p(GeneratedFilename(package_name_, target_name_,
-                                            std::string(file_->name())));
+  std::filesystem::path p(GeneratedIncludeFilename(package_name_, target_name_,
+                                                   std::string(file_->name())));
   p.replace_extension(".phaser.h");
   os << "#include \"" << p.string() << "\"\n";
 
