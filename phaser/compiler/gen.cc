@@ -260,6 +260,7 @@ Generator::Generator(const google::protobuf::FileDescriptor* file,
 void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
   os << "#pragma once\n";
   os << "#include \"phaser/runtime/runtime.h\"\n";
+  os << "#include <new>\n";
   if (frontend_style_ == FrontendStyle::kRos && UsesRos1Intrinsic(file_)) {
     os << "#include \"phaser/runtime/ros.h\"\n";
   }
