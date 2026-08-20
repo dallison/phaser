@@ -910,6 +910,8 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   if (IsRosFrontend()) {
     GenerateRosOwnerCopyMove(os, true);
     GeneratePublicFieldDeclarations(os);
+  } else {
+    GenerateProtobufCopyMove(os, true);
   }
 
   // Generate protobuf accessors.
@@ -1030,6 +1032,30 @@ void MessageGenerator::GenerateRosOwnerCopyMove(std::ostream& os, bool decl) {
   os << "}\n\n";
 }
 
+void MessageGenerator::GenerateProtobufCopyMove(std::ostream& os, bool decl) {
+  if (IsRosFrontend()) {
+    return;
+  }
+  const std::string name = MessageName(message_);
+  if (decl) {
+    os << "  " << name << "(const " << name << "& other) = default;\n";
+    os << "  " << name << "& operator=(const " << name
+       << "& other) = default;\n";
+    os << "  " << name << "(" << name << "&& other) noexcept = default;\n";
+    os << "  " << name << "& operator=(" << name << "&& other) noexcept;\n\n";
+    return;
+  }
+
+  os << name << "& " << name << "::operator=(" << name
+     << "&& other) noexcept {\n";
+  os << "  if (this != &other) {\n";
+  os << "    this->~" << name << "();\n";
+  os << "    new (this) " << name << "(std::move(other));\n";
+  os << "  }\n";
+  os << "  return *this;\n";
+  os << "}\n\n";
+}
+
 void MessageGenerator::GenerateSource(std::ostream& os) {
   for (const auto& nested : nested_message_gens_) {
     nested->GenerateSource(os);
@@ -1038,6 +1064,8 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
   GenerateConstructors(os, false);
   if (IsRosFrontend()) {
     GenerateRosOwnerCopyMove(os, false);
+  } else {
+    GenerateProtobufCopyMove(os, false);
   }
 
   // Generate creators.
