@@ -101,6 +101,7 @@ class MessageGenerator {
   void GeneratePublicFieldDeclarations(std::ostream& os);
   void GenerateRosOneofTypes(std::ostream& os);
   void GenerateRosOwnerCopyMove(std::ostream& os, bool decl);
+  void GenerateProtobufCopyMove(std::ostream& os, bool decl);
   void GenerateRosSyncToPayload(std::ostream& os);
   void GenerateProtobufAccessors(std::ostream& os);
   void GenerateFieldProtobufAccessors(std::ostream& os);

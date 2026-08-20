@@ -61,6 +61,22 @@ TEST(StressTest, DynamicExplicitBufferExpansion) {
   EXPECT_EQ("expand-me", msg.s());
 }
 
+TEST(StressTest, MoveAssignmentReplacesMessageStorage) {
+  TestMessage destination;
+  destination.set_x(1);
+  destination.set_s("destination");
+
+  TestMessage source = TestMessage::CreateDynamicMutable(512);
+  source.set_x(42);
+  source.set_s("source");
+
+  destination = std::move(source);
+
+  EXPECT_EQ(destination.x(), 42);
+  EXPECT_EQ(destination.s(), "source");
+  EXPECT_FALSE(source.IsBound());
+}
+
 TEST(StressTest, AllocFailsAtStart) {
   auto status = ::phaser::NewDynamicBuffer(
       1024, ::phaser::test::AllocUntilLimit(0),
