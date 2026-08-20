@@ -81,6 +81,7 @@ cc_test(
     name = "ros_metadata_protobuf_frontend_test",
     srcs = ["ros_metadata_protobuf_frontend_test.cc"],
     copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
     deps = [
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_metadata_protobuf_phaser",
@@ -92,6 +93,7 @@ cc_test(
     name = "ros_metadata_ros_frontend_test",
     srcs = ["ros_metadata_ros_frontend_test.cc"],
     copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
     deps = [
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_metadata_ros_phaser",

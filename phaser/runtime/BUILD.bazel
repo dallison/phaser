@@ -41,6 +41,7 @@ cc_test(
     name = "md5_test",
     srcs = ["md5_test.cc"],
     copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
         "@com_google_googletest//:gtest_main",
