@@ -87,6 +87,35 @@ phaser_library(
     deps = [":ros_compile_proto"],
 )
 
+proto_library(
+    name = "ros_metadata_proto",
+    srcs = ["RosMetadata.proto"],
+    deps = [
+        "//phaser:options_proto",
+        "@com_google_protobuf//:timestamp_proto",
+    ],
+)
+
+phaser_library(
+    name = "ros_metadata_protobuf_phaser",
+    add_namespace = "protobuf_api",
+    direct_header_symlinks = False,
+    ros_metadata = True,
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":ros_metadata_proto"],
+)
+
+phaser_library(
+    name = "ros_metadata_ros_phaser",
+    add_namespace = "ros_api",
+    cc_deps = [":ros1_shim"],
+    direct_header_symlinks = False,
+    frontend = "ros",
+    ros_metadata = True,
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":ros_metadata_proto"],
+)
+
 cc_library(
     name = "ros1_shim",
     hdrs = glob(["ros_shim/**/*.h"]),

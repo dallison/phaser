@@ -9,6 +9,7 @@
 #include "phaser/runtime/arrays.h"
 #include "phaser/runtime/fields.h"
 #include "phaser/runtime/iterators.h"
+#include "phaser/runtime/md5.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/ros_wireformat.h"

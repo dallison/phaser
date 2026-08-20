@@ -6,6 +6,7 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "phaser_runtime",
     srcs = [
+        "md5.cc",
         "message.cc",
         "phaser_bank.cc",
     ],
@@ -15,6 +16,7 @@ cc_library(
         "arrays.h",
         "fields.h",
         "iterators.h",
+        "md5.h",
         "message.h",
         "runtime.h",
         "ros_wireformat.h",
@@ -32,6 +34,17 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@cpp_toolbelt//toolbelt",
+    ],
+)
+
+cc_test(
+    name = "md5_test",
+    srcs = ["md5_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
+    deps = [
+        ":phaser_runtime",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

@@ -1,14 +1,14 @@
 // Compile and runtime fixture for frontend=ros generated messages.
-#include "phaser/testdata/RosCompile.phaser.h"
-#include "phaser/testdata/RosCompile.pb.h"
-
 #include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/types/span.h"
 #include "gtest/gtest.h"
+#include "phaser/testdata/RosCompile.pb.h"
+#include "phaser/testdata/RosCompile.phaser.h"
 
 namespace foo::bar::phaser {
 namespace {
@@ -40,6 +40,49 @@ TEST(RosCompileTest, ScalarConversionAndAssignment) {
   EXPECT_EQ(msg.x.Get(), 7);
   EXPECT_FALSE(static_cast<bool>(msg.flag));
   EXPECT_EQ(msg.color.Get(), RosColor::ROS_COLOR_BLUE);
+}
+
+TEST(RosCompileTest, GeneratedInternalsDoNotClashWithFieldNames) {
+  GeneratorNameCollisions message;
+  message.status = 1;
+  message.size = 2;
+  message.buffer = "buffer";
+  message.other = true;
+  message.indent = 5;
+  message.i.push_back(6);
+  message.source = "source";
+  message.destination = "destination";
+  message.message = "message";
+  message.input = "input";
+  message.output = "output";
+  message.tag = 12;
+  message.field_number = 13;
+  message.count = 14;
+  message.data = "data";
+  message.value = "value";
+
+  std::string protobuf;
+  ASSERT_TRUE(message.SerializeToString(&protobuf));
+  GeneratorNameCollisions protobuf_copy;
+  ASSERT_TRUE(protobuf_copy.ParseFromString(protobuf));
+  EXPECT_EQ(protobuf_copy.status.Get(), 1);
+  EXPECT_EQ(protobuf_copy.size.Get(), 2u);
+  EXPECT_EQ(protobuf_copy.buffer.Get(), "buffer");
+
+  std::string ros;
+  ASSERT_TRUE(message.SerializeToROSString(&ros).ok());
+  GeneratorNameCollisions ros_copy;
+  ASSERT_TRUE(
+      ros_copy.ParseFromROS(absl::Span<const char>(ros.data(), ros.size()))
+          .ok());
+  EXPECT_EQ(ros_copy.other.Get(), true);
+  EXPECT_EQ(ros_copy.i.size(), 1u);
+  EXPECT_EQ(ros_copy.i[0], 6);
+
+  GeneratorNameCollisions clone;
+  ASSERT_TRUE(clone.CloneFrom(message).ok());
+  EXPECT_EQ(clone.source.Get(), "source");
+  EXPECT_EQ(clone.destination.Get(), "destination");
 }
 
 TEST(RosCompileTest, StringConversionAndAssignment) {
@@ -211,7 +254,6 @@ TEST(RosCompileTest, ProxyMoveAssignIsValueSemantics) {
   src.x = 999;
   EXPECT_EQ(dst.x.Get(), 5);
 }
-
 
 TEST(RosCompileTest, MessageCopyAssignUsesCloneFrom) {
   RosCompileMessage src;

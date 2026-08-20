@@ -23,7 +23,8 @@ def _phaser_action(
         add_namespace,
         target_name,
         frontend,
-        enable_active_message):
+        enable_active_message,
+        ros_metadata):
     # The protobuf compiler allow plugins to get arguments specified in the --plugin_out
     # argument.  The args are passed as a comma separated list of key=value pairs followed
     # by a colon and the output directory.
@@ -35,19 +36,24 @@ def _phaser_action(
     options.append("frontend={}".format(frontend))
     if enable_active_message:
         options.append("active_message=true")
+    if ros_metadata:
+        options.append("ros_metadata=true")
     options_and_out_dir = "--phaser_out={}:{}".format(",".join(options), out_dir)
 
     inputs = depset(direct = direct_sources, transitive = transitive_sources)
 
-    import_paths = []
+    import_paths = {}
     for s in transitive_sources:
         for f in s.to_list():
+            if f.short_path.startswith("../"):
+                repository_name = f.short_path.split("/", 2)[1]
+                import_paths["-Iexternal/" + repository_name] = None
             if not f.is_source:
                 index = f.path.find("_virtual_imports")
                 if index != -1:
                     # Go to first slash after _virtual_imports/
                     slash = f.path.find("/", index + 17)
-                    import_paths.append("-I" + f.path[:slash])
+                    import_paths["-I" + f.path[:slash]] = None
 
     plugin, _, plugin_manifests = ctx.resolve_command(tools = [ctx.attr.phaser_plugin])
     plugin_arg = "--plugin=protoc-gen-phaser={}".format(ctx.executable.phaser_plugin.path)
@@ -56,7 +62,7 @@ def _phaser_action(
     args.add(plugin_arg)
     args.add(options_and_out_dir)
     args.add_all(inputs)
-    args.add_all(import_paths)
+    args.add_all(import_paths.keys())
     args.add("-I.")
 
     ctx.actions.run(
@@ -79,6 +85,10 @@ def _to_list(value):
 
 def _proto_output_base(source_file):
     file_path = source_file.short_path
+    if file_path.startswith("../"):
+        # Strip Bazel's ../<repo>/ prefix for external-repository sources.
+        # Otherwise it escapes target_name and collides across frontends.
+        file_path = file_path.split("/", 2)[2]
     if "_virtual_imports" in file_path:
         # For a file that is not in this package, we need to generate the
         # output in our package.
@@ -94,9 +104,9 @@ def _proto_output_base(source_file):
 
 def _skip_phaser_generation(source_file):
     base = _proto_output_base(source_file)
-    if base == "google/protobuf/descriptor.proto":
+    if base.endswith("google/protobuf/descriptor.proto"):
         return True
-    if base == "phaser/options.proto":
+    if base.endswith("phaser/options.proto"):
         return True
     return False
 
@@ -143,7 +153,7 @@ def _phaser_impl(ctx):
         fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
 
     outputs = []
-  
+
     direct_sources = []
     transitive_sources = []
     cpp_outputs = []
@@ -162,15 +172,19 @@ def _phaser_impl(ctx):
             # #include "phaser/testdata/Test.phaser.h"
             # so we create the symlink:
             # Test.phaser.h -> phaser/testdata/phaser/testdata/Test.phaser.h
-            if out_file.extension == "h" and out in dep[MessageInfo].symlink_headers:
-                prefix = paths.join(ctx.attr.target_name, package_name)
-                symlink_name = out_file.short_path[len(prefix) + 1:]
-                if symlink_name.startswith(package_name):
-                    # Header is in our package, remove the package name.
-                    # If the header is outside our package (like google/protobuf/any.h),
-                    # we don't want to create a symlink to it becuase it's in
-                    # the right place already.
-                    symlink_name = symlink_name[len(package_name) + 1:]
+            if (
+                ctx.attr.direct_header_symlinks and
+                out_file.extension == "h" and
+                out in dep[MessageInfo].symlink_headers
+            ):
+                package_prefix = ctx.label.package + "/"
+                symlink_name = out
+                if not ctx.label.package or symlink_name.startswith(package_prefix):
+                    # Header is in our package, remove the package name. If
+                    # the header is outside our package (like
+                    # google/protobuf/any.h), it is already in the right place.
+                    if package_prefix:
+                        symlink_name = symlink_name[len(package_prefix):]
                     symlink = ctx.actions.declare_file(symlink_name)
                     ctx.actions.symlink(output = symlink, target_file = out_file)
                     dep_outs.append(symlink)
@@ -191,6 +205,7 @@ def _phaser_impl(ctx):
         ctx.attr.target_name,
         frontend,
         ctx.attr.enable_active_message,
+        ctx.attr.ros_metadata,
     )
 
     return [DefaultInfo(files = depset(outputs))]
@@ -211,10 +226,12 @@ _phaser_gen = rule(
             aspects = [phaser_aspect],
         ),
         "add_namespace": attr.string(),
+        "direct_header_symlinks": attr.bool(default = True),
         "package_name": attr.string(),
         "target_name": attr.string(),
         "frontend": attr.string(default = "protobuf"),
         "enable_active_message": attr.bool(default = False),
+        "ros_metadata": attr.bool(default = False),
     },
     implementation = _phaser_impl,
 )
@@ -235,7 +252,17 @@ _split_files = rule(
     implementation = _split_files_impl,
 )
 
-def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_runtime", add_namespace = "", enable_active_message = False, frontend = "protobuf", cc_deps = []):
+def phaser_library(
+        name,
+        deps = [],
+        runtime = "@phaser//phaser/runtime:phaser_runtime",
+        add_namespace = "",
+        enable_active_message = False,
+        frontend = "protobuf",
+        cc_deps = [],
+        copts = [],
+        direct_header_symlinks = True,
+        ros_metadata = False):
     """
     Generate a cc_libary for protobuf files specified in deps.
 
@@ -251,20 +278,34 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
         frontend: generated C++ API style, either "protobuf" (default) or "ros".
         cc_deps: additional C++ dependencies required by generated headers,
             such as ROS1 message/runtime libraries for intrinsic ROS fields.
+        copts: additional C++ compiler options for generated sources.
+        direct_header_symlinks: create short direct-source header aliases.
+            Disable this when generating multiple frontends from one proto target.
+        ros_metadata: generate ROS datatype, definition, and MD5 functions.
     """
     if frontend not in ("protobuf", "ros"):
         fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
 
-    phaser = name + "_phaser"
+    output_package_name = native.package_name()
+    repository_name = native.repository_name()
+    if repository_name.startswith("@@"):
+        repository_name = repository_name[2:]
+    elif repository_name.startswith("@"):
+        repository_name = repository_name[1:]
+    if repository_name:
+        output_package_name = paths.join("external", repository_name, output_package_name)
 
+    phaser = name + "_phaser"
     _phaser_gen(
         name = phaser,
         deps = deps,
         add_namespace = add_namespace,
-        package_name = native.package_name(),
+        direct_header_symlinks = direct_header_symlinks,
+        package_name = output_package_name,
         target_name = name,
         enable_active_message = enable_active_message,
         frontend = frontend,
+        ros_metadata = ros_metadata,
     )
 
     srcs = name + "_srcs"
@@ -292,6 +333,7 @@ def phaser_library(name, deps = [], runtime = "@phaser//phaser/runtime:phaser_ru
 
     cc_library(
         name = name,
+        copts = copts,
         srcs = [srcs],
         hdrs = [hdrs],
         deps = libdeps,

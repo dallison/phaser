@@ -72,6 +72,31 @@ cc_test(
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:ros_compile_cc_proto",
         "//phaser/testdata:ros_compile_phaser",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "ros_metadata_protobuf_frontend_test",
+    srcs = ["ros_metadata_protobuf_frontend_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_metadata_protobuf_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "ros_metadata_ros_frontend_test",
+    srcs = ["ros_metadata_ros_frontend_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:ros_metadata_ros_phaser",
         "@com_google_googletest//:gtest_main",
     ],
 )

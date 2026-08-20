@@ -74,6 +74,16 @@ static void WriteToZeroCopyStream(
 static std::string GeneratedFilename(const std::filesystem::path& package_name,
                                      const std::filesystem::path& target_name,
                                      std::string filename) {
+  if (filename.rfind("../", 0) == 0) {
+    // Bazel represents external sources as ../<repo>/<path>. Keep only the
+    // repository-relative path so it cannot escape target_name.
+    const size_t repository_end = filename.find('/', 3);
+    filename = filename.substr(repository_end + 1);
+  } else if (filename.rfind("external/", 0) == 0) {
+    // protoc can instead preserve the execroot-relative external/<repo>/ form.
+    const size_t repository_end = filename.find('/', sizeof("external/") - 1);
+    filename = filename.substr(repository_end + 1);
+  }
   size_t virtual_imports = filename.find("_virtual_imports/");
   if (virtual_imports != std::string::npos) {
     // This is something like:
@@ -83,6 +93,17 @@ static std::string GeneratedFilename(const std::filesystem::path& package_name,
     filename = filename.substr(filename.find('/') + 1);
   }
   return package_name / target_name / filename;
+}
+
+static std::string GeneratedIncludeFilename(
+    const std::filesystem::path& package_name,
+    const std::filesystem::path& target_name, const std::string& filename) {
+  std::string result = GeneratedFilename(package_name, target_name, filename);
+  if (result.rfind("external/", 0) == 0) {
+    const size_t repository_end = result.find('/', sizeof("external/") - 1);
+    result = result.substr(repository_end + 1);
+  }
+  return result;
 }
 
 bool CodeGenerator::Generate(
@@ -107,6 +128,10 @@ bool CodeGenerator::Generate(
       generate_active_message_ = option.second.empty() ||
                                  option.second == "true" ||
                                  option.second == "1";
+    } else if (option.first == "ros_metadata") {
+      generate_ros_metadata_ = option.second.empty() ||
+                               option.second == "true" ||
+                               option.second == "1";
     } else if (option.first == "frontend") {
       if (option.second == "protobuf" || option.second.empty()) {
         frontend_style_ = FrontendStyle::kProtobuf;
@@ -123,6 +148,9 @@ bool CodeGenerator::Generate(
 
   const FrontendStyle effective_frontend =
       EffectiveFrontendStyle(file, frontend_style_);
+  const bool effective_ros_metadata =
+      generate_ros_metadata_ &&
+      file->package().rfind("google.protobuf", 0) != 0;
 
   // Custom option schemas and other message-free protos need no C++ output.
   // descriptor.proto is imported for extensions but must not be emitted as a
@@ -130,12 +158,14 @@ bool CodeGenerator::Generate(
   if (file->message_type_count() == 0 && file->enum_type_count() == 0) {
     return true;
   }
-  if (file->name() == std::string("google/protobuf/descriptor.proto")) {
+  if (file->name() == std::string("google/protobuf/descriptor.proto") ||
+      file->name() == std::string("phaser/options.proto")) {
     return true;
   }
 
   Generator gen(file, added_namespace_, package_name_, target_name_,
-                generate_active_message_, effective_frontend);
+                generate_active_message_, effective_frontend,
+                effective_ros_metadata);
 
   std::string filename =
       GeneratedFilename(package_name_, target_name_, std::string(file->name()));
@@ -207,17 +237,19 @@ void Generator::CloseNamespace(std::ostream& os) {
 Generator::Generator(const google::protobuf::FileDescriptor* file,
                      const std::string& ns, const std::string& pn,
                      const std::string& tn, bool generate_active_message,
-                     FrontendStyle frontend_style)
+                     FrontendStyle frontend_style,
+                     bool generate_ros_metadata)
     : file_(file),
       added_namespace_(ns),
       package_name_(pn),
       target_name_(tn),
       generate_active_message_(generate_active_message),
+      generate_ros_metadata_(generate_ros_metadata),
       frontend_style_(frontend_style) {
   for (int i = 0; i < file->message_type_count(); i++) {
     message_gens_.push_back(std::make_unique<MessageGenerator>(
         file->message_type(i), added_namespace_, std::string(file->package()),
-        generate_active_message_, frontend_style_));
+        generate_active_message_, frontend_style_, generate_ros_metadata_));
   }
   // Enums
   for (int i = 0; i < file->enum_type_count(); i++) {
@@ -240,11 +272,12 @@ void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
     if (dep->message_type_count() == 0 && dep->enum_type_count() == 0) {
       continue;
     }
-    if (dep->name() == std::string("google/protobuf/descriptor.proto")) {
+    if (dep->name() == std::string("google/protobuf/descriptor.proto") ||
+        dep->name() == std::string("phaser/options.proto")) {
       continue;
     }
-    std::string base = GeneratedFilename(
-        package_name_, target_name_, std::string(dep->name()));
+    std::string base = GeneratedIncludeFilename(package_name_, target_name_,
+                                                std::string(dep->name()));
     std::filesystem::path p(base);
     p.replace_extension(".phaser.h");
     os << "#include \"" << p.string() << "\"\n";
@@ -274,8 +307,8 @@ void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
 }
 
 void Generator::GenerateSources(std::ostream& os) {
-  std::filesystem::path p(GeneratedFilename(package_name_, target_name_,
-                                            std::string(file_->name())));
+  std::filesystem::path p(GeneratedIncludeFilename(package_name_, target_name_,
+                                                   std::string(file_->name())));
   p.replace_extension(".phaser.h");
   os << "#include \"" << p.string() << "\"\n";
 

@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package example_msgs.proto;
+
+import "phaser/options.proto";
+import "google/protobuf/timestamp.proto";
+
+message Status {
+  enum Constants {
+    option (phaser.ros_enum) = {
+      type: "int32"
+    };
+
+    OK = 0;
+    BAD = 1;
+  }
+
+  int32 value = 1;
+}
+
+message Bool {
+  bool data = 1;
+}
+
+message Wrapper {
+  enum Constants {
+    option (phaser.ros_enum) = {
+      type: "uint8"
+    };
+
+    CONSTANTS_UNSPECIFIED = 0 [(phaser.ros_enum_value) = { ignore: true }];
+    READY = 1;
+  }
+
+  Bool child = 1;
+  repeated int32 samples = 2 [(phaser.array_size) = 3];
+  Status status = 3;
+  bool ready = 4;
+  google.protobuf.Timestamp stamp = 5;
+}

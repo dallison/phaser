@@ -4,9 +4,67 @@ package phaser;
 
 import "google/protobuf/descriptor.proto";
 
+message RosMessageMetadata {
+  // ROS datatype override in package/Message form. By default Phaser removes
+  // a trailing ".proto" from the protobuf package and appends the message name.
+  string data_type = 1;
+
+  // Canonical constant declarations used by the ROS MD5 algorithm.
+  repeated string constants = 2;
+}
+
+message RosFieldMetadata {
+  // Original ROS field type. Repeated-field array suffixes are inferred from
+  // the protobuf cardinality and phaser.array_size. Omit the type entirely
+  // when the protobuf type maps unambiguously to a ROS type.
+  string type = 1;
+
+  // Original ROS field name. Omit when it is unchanged.
+  string name = 2;
+
+  // Canonical MD5 text for a nested ROS message that is not represented as a
+  // protobuf message, such as a constants-only ROS enum message.
+  string nested_md5_text = 3;
+
+  // Datatype for the non-protobuf nested ROS message.
+  string nested_data_type = 4;
+}
+
+message RosEnumMetadata {
+  // Original ROS primitive type shared by the constants in this enum.
+  string type = 1;
+}
+
+message RosEnumValueMetadata {
+  // Exclude a synthetic protobuf value from the ROS constant list.
+  bool ignore = 1;
+
+  // Original ROS name and textual value when protobuf changed either one.
+  string name = 2;
+  string value = 3;
+}
+
 extend google.protobuf.FieldOptions {
   // Fixed logical extent for a repeated field. Must be a positive integer.
   // Only valid on non-map repeated fields. ROS frontend generation exposes a
   // fixed-extent array facade; protobuf frontend keeps repeated accessors.
   uint32 array_size = 50001;
+
+  // Overrides for ROS information that cannot be inferred from the field.
+  RosFieldMetadata ros_field = 50002;
+}
+
+extend google.protobuf.MessageOptions {
+  // ROS information that cannot be inferred from the protobuf message.
+  RosMessageMetadata ros_message = 50001;
+}
+
+extend google.protobuf.EnumOptions {
+  // Marks an enum as a group of original ROS message constants.
+  RosEnumMetadata ros_enum = 50001;
+}
+
+extend google.protobuf.EnumValueOptions {
+  // Overrides for a ROS constant represented by a protobuf enum value.
+  RosEnumValueMetadata ros_enum_value = 50001;
 }
