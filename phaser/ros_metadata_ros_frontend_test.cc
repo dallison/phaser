@@ -26,7 +26,8 @@ TEST(RosMetadataRosFrontendTest, MatchesRosMetadata) {
       ::phaser::Md5("uint8 READY=1\n"
                     "8b94c1b53db61fb6aed406028ad6332a child\n"
                     "int32[3] samples\n" +
-                    Status::RosMd5() + " status\nbool ready\ntime stamp"));
+                    Status::RosMd5() +
+                    " status\nbool ready\ntime stamp\ntime[] stamps"));
 }
 
 }  // namespace

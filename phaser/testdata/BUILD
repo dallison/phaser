@@ -223,14 +223,83 @@ sh_test(
         "$(rootpath @com_google_protobuf//:protoc)",
         "$(rootpath //phaser/compiler:phaser)",
         "$(rootpath InvalidRosIntrinsic.proto)",
+        "$(rootpath InvalidRosIntrinsicOneof.proto)",
     ],
     data = [
         "InvalidRosIntrinsic.proto",
+        "InvalidRosIntrinsicOneof.proto",
+        "RosHeader.proto",
         "//phaser:valgrind.supp",
         "//phaser/compiler:phaser",
         "@com_google_protobuf//:protoc",
         "@com_google_protobuf//:well_known_protos",
     ],
+)
+
+proto_library(
+    name = "self_named_field_proto",
+    srcs = ["SelfNamedField.proto"],
+)
+
+phaser_library(
+    name = "self_named_field_phaser",
+    add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":self_named_field_proto"],
+)
+
+phaser_library(
+    name = "self_named_field_ros_phaser",
+    add_namespace = "phaser_ros",
+    cc_deps = [":ros1_shim"],
+    direct_header_symlinks = False,
+    frontend = "ros",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":self_named_field_proto"],
+)
+
+proto_library(
+    name = "aliased_enum_proto",
+    srcs = ["AliasedEnum.proto"],
+)
+
+phaser_library(
+    name = "aliased_enum_phaser",
+    add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":aliased_enum_proto"],
+)
+
+proto_library(
+    name = "cross_package_enum_proto",
+    srcs = ["CrossPackageEnum.proto"],
+    deps = ["//phaser:options_proto"],
+)
+
+proto_library(
+    name = "cross_package_enum_user_proto",
+    srcs = ["CrossPackageEnumUser.proto"],
+    deps = [
+        ":cross_package_enum_proto",
+        "//phaser:options_proto",
+    ],
+)
+
+phaser_library(
+    name = "cross_package_enum_phaser",
+    add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":cross_package_enum_user_proto"],
+)
+
+phaser_library(
+    name = "cross_package_enum_ros_phaser",
+    add_namespace = "phaser_ros",
+    cc_deps = [":ros1_shim"],
+    direct_header_symlinks = False,
+    frontend = "ros",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":cross_package_enum_user_proto"],
 )
 
 proto_library(

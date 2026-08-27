@@ -37,4 +37,5 @@ message Wrapper {
   Status status = 3;
   bool ready = 4;
   google.protobuf.Timestamp stamp = 5;
+  repeated google.protobuf.Timestamp stamps = 6;
 }

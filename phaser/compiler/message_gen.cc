@@ -361,12 +361,39 @@ std::string MessageGenerator::SanitizedIdentifier(
   return name;
 }
 
+std::string MessageGenerator::GeneratedClassName() const {
+  std::string name(message_->name());
+  if (message_->containing_type() != nullptr) {
+    name = std::string(message_->containing_type()->name()) + "_" + name;
+  }
+  return name;
+}
+
+// A field is free to carry a name C++ will not take verbatim: a reserved word,
+// or the name of the message holding it, which would turn the accessor into a
+// constructor. Both get trailing underscores, as many as it takes to keep the
+// accessor clear of the class name. protoc never meets the second case because
+// it lowercases accessors, and roscpp never meets it because it names the
+// struct `Foo_<Allocator>` and typedefs `Foo` to that.
+std::string MessageGenerator::FieldAccessorName(
+    const std::string& proto_name) const {
+  std::string name = SanitizedIdentifier(proto_name);
+  while (name == GeneratedClassName()) {
+    name += "_";
+  }
+  return name;
+}
+
 std::string MessageGenerator::MemberVariableName(
     const std::string& proto_name) const {
+  // The ROS frontend exposes the member itself, so there is no accessor for it
+  // to collide with. The protobuf frontend keeps the accessor at the field name
+  // and pushes the member one underscore past it.
+  std::string name = FieldAccessorName(proto_name);
   if (IsRosFrontend()) {
-    return SanitizedIdentifier(proto_name);
+    return name;
   }
-  return proto_name + "_";
+  return name + "_";
 }
 
 std::string MessageGenerator::OneofVariantTypeName(
@@ -449,10 +476,20 @@ absl::Status MessageGenerator::ValidateFieldOptions() const {
       return status;
     }
     if (IsRosFrontend() && IsRosIntrinsic(field) &&
-        (field->is_repeated() || field->containing_oneof() != nullptr)) {
+        field->containing_oneof() != nullptr) {
       return absl::InvalidArgumentError(absl::StrFormat(
-          "ROS intrinsic field %s.%s must be singular and cannot be in a "
-          "oneof",
+          "ROS intrinsic field %s.%s cannot be in a oneof",
+          message_->full_name(), field->name()));
+    }
+    // time[] and duration[] are repeated through RosRepeatedMessageField, which
+    // converts per element. A repeated Header would need the same treatment,
+    // but RosHeaderField hands out a view whose lifetime is tied to the field
+    // rather than a value, so it has no element type to repeat.
+    if (IsRosFrontend() && IsRosIntrinsic(field) && field->is_repeated() &&
+        IsRosHeader(field->message_type())) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "ROS intrinsic field %s.%s must be singular: the ROS frontend does "
+          "not support a repeated Header",
           message_->full_name(), field->name()));
     }
   }
@@ -559,7 +596,19 @@ std::string MessageGenerator::EnumName(
   if (desc->containing_type() != nullptr) {
     name = std::string(desc->containing_type()->name()) + "_" + name;
   }
-  return name;
+  // Enums, along with their stringizer and parser, are emitted at namespace
+  // scope, so the short name only resolves inside the package that declared
+  // them. A field referring to an enum from another package has to spell out
+  // that package's namespace and the added namespace, if any.
+  std::string enum_package(desc->file()->package());
+  if (enum_package == package_name_) {
+    return name;
+  }
+  std::string scope = absl::StrReplaceAll(enum_package, {{".", "::"}});
+  if (!added_namespace_.empty()) {
+    scope += "::" + added_namespace_;
+  }
+  return scope + "::" + name;
 }
 
 std::string MessageGenerator::MessageName(
@@ -775,6 +824,9 @@ std::string MessageGenerator::FieldRepeatedVectorCType(
     case google::protobuf::FieldDescriptor::TYPE_BYTES:
       return "StringVectorField";
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsRosFrontend() && IsRosIntrinsic(field)) {
+        return RosIntrinsicVectorFieldType(field);
+      }
       return "MessageVectorField<" + MessageName(field->message_type(), true) +
              ">";
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
@@ -834,6 +886,9 @@ std::string MessageGenerator::FieldRepeatedArrayCType(
     case google::protobuf::FieldDescriptor::TYPE_BYTES:
       return "StringArrayField<" + extent + ">";
     case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      if (IsRosFrontend() && IsRosIntrinsic(field)) {
+        return RosIntrinsicArrayFieldType(field, extent);
+      }
       return "MessageArrayField<" + MessageName(field->message_type(), true) +
              ", " + extent + ">";
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
@@ -968,6 +1023,28 @@ std::string MessageGenerator::RosIntrinsicFieldType(
   }
   assert(IsRosHeader(field->message_type()));
   return "RosHeaderField<" + backend + ">";
+}
+
+std::string MessageGenerator::RosIntrinsicVectorFieldType(
+    const google::protobuf::FieldDescriptor* field) {
+  const std::string backend = MessageName(field->message_type(), true);
+  if (IsRosTime(field->message_type())) {
+    return "RosTimeVectorField<" + backend + ">";
+  }
+  // A repeated Header is rejected in ValidateFieldOptions.
+  assert(IsRosDuration(field->message_type()));
+  return "RosDurationVectorField<" + backend + ">";
+}
+
+std::string MessageGenerator::RosIntrinsicArrayFieldType(
+    const google::protobuf::FieldDescriptor* field, const std::string& extent) {
+  const std::string backend = MessageName(field->message_type(), true);
+  if (IsRosTime(field->message_type())) {
+    return "RosTimeArrayField<" + backend + ", " + extent + ">";
+  }
+  // A repeated Header is rejected in ValidateFieldOptions.
+  assert(IsRosDuration(field->message_type()));
+  return "RosDurationArrayField<" + backend + ", " + extent + ">";
 }
 
 std::string MessageGenerator::RosIntrinsicCType(
@@ -1914,8 +1991,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
     std::shared_ptr<FieldInfo> field, std::shared_ptr<UnionInfo> union_field,
     int union_index, std::ostream& os) {
   std::string field_name(field->field->name());
-  std::string sanitized_field_name =
-      field_name + +(IsCppReservedWord(field_name) ? "_" : "");
+  std::string sanitized_field_name = FieldAccessorName(field_name);
 
   std::string member_name = field->member_name;
   if (union_field != nullptr) {
@@ -3934,6 +4010,11 @@ void MessageGenerator::GenerateStreamer(std::ostream& os) {
                      google::protobuf::FieldDescriptor::TYPE_BYTES) {
         os << "    os << \"" << field->field->name()
            << ": \\\"\" << v << \"\\\"\" << std::endl;\n";
+      } else if (IsRosFrontend() && IsRosIntrinsic(field->field)) {
+        // Like a singular message field, no colon after the name.
+        os << "    os << \"" << field->field->name() << " \";\n";
+        os << "    msg." << field->member_name << ".PrintElement(os, v);\n";
+        os << "    os << std::endl;\n";
       } else {
         os << "    os << \"" << field->field->name()
            << ": \" << v << std::endl;\n";
@@ -3961,8 +4042,11 @@ void MessageGenerator::GenerateStreamer(std::ostream& os) {
 
 void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
   if (decl) {
-    os << "  template <typename T>\n";
-    os << "  absl::Status CloneFrom(const T& _phaser_other);\n\n";
+    // The template parameter carries the _phaser_ prefix for the same reason
+    // the locals below do: a field is free to be named T, and inside the
+    // template the parameter would win the name lookup.
+    os << "  template <typename _phaser_Source>\n";
+    os << "  absl::Status CloneFrom(const _phaser_Source& _phaser_other);\n\n";
     os << "  void CopyFrom("
           "const ::phaser::Message& _phaser_other) override {\n";
     os << "    const " << MessageName(message_)
@@ -3974,17 +4058,21 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
   }
 
   // CloneFrom.
-  os << "template <typename T>\n";
+  os << "template <typename _phaser_Source>\n";
   os << "inline absl::Status " << MessageName(message_)
-     << "::CloneFrom([[maybe_unused]] const T& _phaser_other) {\n";
+     << "::CloneFrom([[maybe_unused]] const _phaser_Source& _phaser_other) "
+        "{\n";
   if (IsRosFrontend()) {
     for (auto& field : fields_) {
       if (field->field->is_repeated()) {
         os << "  " << field->member_name << ".Clear();\n";
         if (UsesArrayFacade(field->field)) {
           const int array_size = GetArraySize(field->field);
+          // A ROS intrinsic element is a value, not a bound message, so it
+          // clones through Set/Get like a string rather than through CloneFrom.
           if (field->field->type() ==
-              google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+                  google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+              !IsRosIntrinsic(field->field)) {
             os << "  for (size_t _phaser_index = 0; "
                   "_phaser_index < static_cast<size_t>("
                << array_size << "); ++_phaser_index) {\n";
@@ -4019,7 +4107,8 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
             os << "  }\n";
           }
         } else if (field->field->type() ==
-                   google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+                       google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+                   !IsRosIntrinsic(field->field)) {
           os << "  for (auto _phaser_value : _phaser_other."
              << field->member_name << ") {\n";
           os << "    auto _phaser_message = " << field->member_name
@@ -4103,18 +4192,21 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
     }
   } else {
     for (auto& field : fields_) {
+      // Only the bare accessor carries the sanitizing; a prefixed one such as
+      // `set_x` is already a legal name whatever the field is called.
+      const std::string name(field->field->name());
+      const std::string accessor = FieldAccessorName(name);
       if (field->field->is_repeated()) {
-        os << "  for (auto _phaser_value : _phaser_other."
-           << field->field->name() << "()) {\n";
+        os << "  for (auto _phaser_value : _phaser_other." << accessor
+           << "()) {\n";
         if (field->field->type() ==
             google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-          os << "    auto _phaser_message = add_" << field->field->name()
-             << "();\n";
+          os << "    auto _phaser_message = add_" << name << "();\n";
           os << "    if (absl::Status _phaser_status = "
                 "_phaser_message.CloneFrom(_phaser_value); "
                 "!_phaser_status.ok()) return _phaser_status;\n";
         } else {
-          os << "    add_" << field->field->name() << "(_phaser_value);\n";
+          os << "    add_" << name << "(_phaser_value);\n";
         }
         os << "  }\n";
 
@@ -4123,15 +4215,14 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
            << ".IsPresent()) {\n";
         if (field->field->type() ==
             google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-          os << "    auto* _phaser_message = mutable_" << field->field->name()
-             << "();\n";
+          os << "    auto* _phaser_message = mutable_" << name << "();\n";
           os << "    if (absl::Status _phaser_status = "
                 "_phaser_message->CloneFrom(_phaser_other."
-             << field->field->name()
+             << accessor
              << "()); !_phaser_status.ok()) return _phaser_status;\n";
         } else {
-          os << "    set_" << field->field->name() << "(_phaser_other."
-             << field->field->name() << "());\n";
+          os << "    set_" << name << "(_phaser_other." << accessor
+             << "());\n";
         }
         os << "  }\n";
       }
@@ -4145,7 +4236,7 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
           os << "  case " << field->field->number() << ":\n";
           os << "    if (absl::Status _phaser_status = " << u->member_name
              << ".template CloneFrom<" << i << ">(_phaser_other."
-             << field->field->name()
+             << FieldAccessorName(std::string(field->field->name()))
              << "()); !_phaser_status.ok()) return _phaser_status;\n";
           os << "    break;\n";
         }

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package canvas;
+
+import "phaser/options.proto";
+import "phaser/testdata/CrossPackageEnum.proto";
+
+// Every enum field here refers to an enum declared in another proto package, so
+// the generated code has to name the enum, its stringizer, and its parser with
+// that package's namespace rather than the short name.
+message Drawing {
+  palette.Color background = 1;
+  repeated palette.Color strokes = 2;
+  repeated palette.Color corners = 3 [(phaser.array_size) = 4];
+  palette.Shade.Depth depth = 4;
+  palette.Palette palette = 5;
+
+  oneof accent {
+    palette.Color accent_color = 6;
+    int32 accent_index = 7;
+  }
+}

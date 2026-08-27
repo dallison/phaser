@@ -5,6 +5,7 @@
 #include "phaser/compiler/enum_gen.h"
 
 #include <algorithm>
+#include <set>
 
 namespace phaser {
 
@@ -24,12 +25,19 @@ void EnumGenerator::GenerateHeader(std::ostream& os) {
   }
   os << "};\n\n";
 
-  // Stringizer
+  // Stringizer. With `option allow_alias`, several names share one number, so
+  // only the first is given a case label; a switch cannot repeat one. That
+  // matches protobuf's own _Name, which also reports the first name declared
+  // for a number.
   os << "struct " << name << "Stringizer {\n";
   os << "  std::string operator()(" << name << " e) {\n";
   os << "    switch (e) {\n";
+  std::set<int> stringized_numbers;
   for (int i = 0; i < enum_->value_count(); i++) {
     const google::protobuf::EnumValueDescriptor* value = enum_->value(i);
+    if (!stringized_numbers.insert(value->number()).second) {
+      continue;
+    }
     std::string const_name(value->name());
     if (enum_->containing_type() != nullptr) {
       const_name = name + "_" + const_name;

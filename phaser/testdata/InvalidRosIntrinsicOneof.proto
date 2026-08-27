@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package invalid;
+
+import "google/protobuf/timestamp.proto";
+
+message InvalidRosIntrinsicOneof {
+  oneof choice {
+    google.protobuf.Timestamp stamp = 1;
+    int32 count = 2;
+  }
+}

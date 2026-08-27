@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package alias;
+
+// `allow_alias` lets several names share one number. Protobuf accepts it, so
+// the generated stringizer has to pick one name per number rather than emit a
+// switch case for each.
+enum Signal {
+  option allow_alias = true;
+
+  SIGNAL_UNSPECIFIED = 0;
+  SIGNAL_IDLE = 0;
+  SIGNAL_BUSY = 1;
+  SIGNAL_WORKING = 1;
+  SIGNAL_DONE = 2;
+}
+
+message Job {
+  Signal signal = 1;
+  repeated Signal history = 2;
+}
