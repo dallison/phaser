@@ -189,6 +189,25 @@ std::string ExpectedIntrinsicBytes() {
     AppendString(bytes, "");                         // child label
   }
   AppendIntegral(bytes, static_cast<uint32_t>(0));  // choice unset
+
+  // Repeated ROS intrinsics: a sequence length only when the extent is not
+  // fixed, then sec and nsec per element, exactly as a singular one.
+  AppendIntegral(bytes, static_cast<uint32_t>(2));  // stamps count
+  AppendIntegral(bytes, static_cast<uint32_t>(1));
+  AppendIntegral(bytes, static_cast<uint32_t>(2));
+  AppendIntegral(bytes, static_cast<uint32_t>(3));
+  AppendIntegral(bytes, static_cast<uint32_t>(4));
+  AppendIntegral(bytes, static_cast<uint32_t>(1));  // timeouts count
+  AppendIntegral(bytes, static_cast<int32_t>(-5));
+  AppendIntegral(bytes, static_cast<int32_t>(6));
+  AppendIntegral(bytes, static_cast<uint32_t>(7));  // fixed_stamps[0]
+  AppendIntegral(bytes, static_cast<uint32_t>(8));
+  AppendIntegral(bytes, static_cast<uint32_t>(9));  // fixed_stamps[1]
+  AppendIntegral(bytes, static_cast<uint32_t>(10));
+  AppendIntegral(bytes, static_cast<int32_t>(-11));  // fixed_timeouts[0]
+  AppendIntegral(bytes, static_cast<int32_t>(12));
+  AppendIntegral(bytes, static_cast<int32_t>(13));  // fixed_timeouts[1]
+  AppendIntegral(bytes, static_cast<int32_t>(14));
   return bytes;
 }
 
@@ -359,6 +378,13 @@ TEST(ROSWireConversionTest, ROS1IntrinsicsUseNativeLayoutsAndFlushCaches) {
   message.header->seq = 9;
   message.header->stamp = ::ros::Time(21, 654);
   message.header->frame_id = "map";
+  message.stamps.Add(::ros::Time(1, 2));
+  message.stamps.Add(::ros::Time(3, 4));
+  message.timeouts.Add(::ros::Duration(-5, 6));
+  message.fixed_stamps.Set(0, ::ros::Time(7, 8));
+  message.fixed_stamps.Set(1, ::ros::Time(9, 10));
+  message.fixed_timeouts.Set(0, ::ros::Duration(-11, 12));
+  message.fixed_timeouts.Set(1, ::ros::Duration(13, 14));
   const std::string expected = ExpectedIntrinsicBytes();
 
   ::phaser::ROSBuffer live_output;
@@ -457,6 +483,13 @@ TEST(ROSWireConversionTest, ParsedROSPayloadUsesEitherFrontend) {
   EXPECT_EQ(ros_message.header->stamp.nsec, 654u);
   EXPECT_EQ(ros_message.header->frame_id, "map");
   EXPECT_EQ(ros_message.choice.index(), std::variant_npos);
+  ASSERT_EQ(ros_message.stamps.size(), 2u);
+  EXPECT_EQ(ros_message.stamps.Get(0), ::ros::Time(1, 2));
+  EXPECT_EQ(ros_message.stamps.Get(1), ::ros::Time(3, 4));
+  ASSERT_EQ(ros_message.timeouts.size(), 1u);
+  EXPECT_EQ(ros_message.timeouts.Get(0), ::ros::Duration(-5, 6));
+  EXPECT_EQ(ros_message.fixed_stamps.Get(1), ::ros::Time(9, 10));
+  EXPECT_EQ(ros_message.fixed_timeouts.Get(0), ::ros::Duration(-11, 12));
 
   const size_t native_size = ros_message.Size();
   std::vector<char> native_payload(native_size);
@@ -473,6 +506,15 @@ TEST(ROSWireConversionTest, ParsedROSPayloadUsesEitherFrontend) {
   EXPECT_FALSE(protobuf_view.has_choice_number());
   EXPECT_FALSE(protobuf_view.has_choice_text());
   EXPECT_FALSE(protobuf_view.has_choice_child());
+  // The ROS frontend wrote these as ROS values; the protobuf frontend reads
+  // the same payload back as ordinary repeated Timestamp and Duration.
+  ASSERT_EQ(protobuf_view.stamps_size(), 2);
+  EXPECT_EQ(protobuf_view.stamps(1).seconds(), 3);
+  EXPECT_EQ(protobuf_view.stamps(1).nanos(), 4);
+  ASSERT_EQ(protobuf_view.timeouts_size(), 1);
+  EXPECT_EQ(protobuf_view.timeouts(0).seconds(), -5);
+  EXPECT_EQ(protobuf_view.fixed_stamps(0).seconds(), 7);
+  EXPECT_EQ(protobuf_view.fixed_timeouts(1).nanos(), 14);
 
   ProtobufFrontendIntrinsicMessage parsed_protobuf_frontend;
   ASSERT_TRUE(parsed_protobuf_frontend

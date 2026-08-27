@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package palette;
+
+import "phaser/options.proto";
+
+enum Color {
+  COLOR_RED = 0;
+  COLOR_GREEN = 1;
+  COLOR_BLUE = 2;
+}
+
+message Shade {
+  enum Depth {
+    DEPTH_LIGHT = 0;
+    DEPTH_DARK = 1;
+  }
+
+  Depth depth = 1;
+}
+
+message Palette {
+  Color primary = 1;
+  repeated Color swatches = 2;
+  repeated Color triad = 3 [(phaser.array_size) = 3];
+  Shade.Depth depth = 4;
+}

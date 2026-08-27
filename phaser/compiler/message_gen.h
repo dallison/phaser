@@ -193,6 +193,8 @@ class MessageGenerator {
   uint32_t FieldBinarySize(const google::protobuf::FieldDescriptor* field);
   std::string FieldInfoType(const google::protobuf::FieldDescriptor* field);
   std::string SanitizedIdentifier(const std::string& name) const;
+  std::string GeneratedClassName() const;
+  std::string FieldAccessorName(const std::string& name) const;
   std::string MemberVariableName(const std::string& proto_name) const;
   std::string OneofVariantTypeName(
       const google::protobuf::OneofDescriptor* oneof) const;
@@ -206,6 +208,11 @@ class MessageGenerator {
   bool IsRosIntrinsic(const google::protobuf::FieldDescriptor* field) const;
   std::string RosIntrinsicFieldType(
       const google::protobuf::FieldDescriptor* field);
+  std::string RosIntrinsicVectorFieldType(
+      const google::protobuf::FieldDescriptor* field);
+  std::string RosIntrinsicArrayFieldType(
+      const google::protobuf::FieldDescriptor* field,
+      const std::string& extent);
   std::string RosIntrinsicCType(
       const google::protobuf::FieldDescriptor* field);
   absl::Status ValidateFieldOptions() const;

@@ -29,4 +29,11 @@ message RosIntrinsicMessage {
     string choice_text = 12;
     WireChild choice_child = 13;
   }
+
+  repeated google.protobuf.Timestamp stamps = 14;
+  repeated google.protobuf.Duration timeouts = 15;
+  repeated google.protobuf.Timestamp fixed_stamps = 16
+      [(phaser.array_size) = 2];
+  repeated google.protobuf.Duration fixed_timeouts = 17
+      [(phaser.array_size) = 2];
 }

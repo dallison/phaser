@@ -114,6 +114,55 @@ cc_test(
 )
 
 cc_test(
+    name = "self_named_field_test",
+    srcs = ["self_named_field_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:self_named_field_phaser",
+        "//phaser/testdata:self_named_field_ros_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "aliased_enum_test",
+    srcs = ["aliased_enum_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:aliased_enum_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "cross_package_enum_test",
+    srcs = ["cross_package_enum_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:cross_package_enum_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "cross_package_enum_ros_test",
+    srcs = ["cross_package_enum_ros_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:cross_package_enum_ros_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "ros_native_frontend_compatibility_test",
     srcs = ["ros_native_frontend_compatibility_test.cc"],
     copts = PHASER_COPTS,

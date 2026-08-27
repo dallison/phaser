@@ -24,6 +24,7 @@ TEST(RosMetadataProtobufFrontendTest, MatchesRosMetadata) {
   EXPECT_EQ(Wrapper::RosDefinition(),
             "uint8 READY=1\nexample_msgs/Bool child\nint32[3] samples\n"
             "example_msgs/Status status\nbool ready\ntime stamp\n"
+            "time[] stamps\n"
             "=================================================================="
             "==============\n"
             "MSG: example_msgs/Bool\n"
@@ -37,7 +38,8 @@ TEST(RosMetadataProtobufFrontendTest, MatchesRosMetadata) {
       ::phaser::Md5("uint8 READY=1\n"
                     "8b94c1b53db61fb6aed406028ad6332a child\n"
                     "int32[3] samples\n" +
-                    Status::RosMd5() + " status\nbool ready\ntime stamp"));
+                    Status::RosMd5() +
+                    " status\nbool ready\ntime stamp\ntime[] stamps"));
 }
 
 }  // namespace

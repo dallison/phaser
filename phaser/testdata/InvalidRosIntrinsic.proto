@@ -2,8 +2,8 @@ syntax = "proto3";
 
 package invalid;
 
-import "google/protobuf/timestamp.proto";
+import "phaser/testdata/RosHeader.proto";
 
 message InvalidRosIntrinsic {
-  repeated google.protobuf.Timestamp stamps = 1;
+  repeated std_msgs.Header headers = 1;
 }

@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package selfnamed;
+
+message Point {
+  double x = 1;
+  double y = 2;
+}
+
+// A ROS message is free to give a field the same name as the message itself,
+// which C++ will not accept as a member of the generated class.
+message Polygon {
+  repeated Point Polygon = 1;
+}
+
+message Label {
+  string Label = 1;
+  int32 index = 2;
+}
+
+message Outer {
+  message Inner {
+    int32 Outer_Inner = 1;
+    int32 keep = 2;
+  }
+
+  Inner inner = 1;
+}
+
+// `T` is a plausible .msg field name and also the obvious name for a template
+// parameter on the generated CloneFrom.
+message Horizon {
+  int32 T = 1;
+  repeated double steps = 2;
+}
