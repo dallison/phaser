@@ -45,6 +45,13 @@ def _phaser_action(
     import_paths = {}
     for s in transitive_sources:
         for f in s.to_list():
+            if f.is_source and f.short_path.startswith("../"):
+                # External repository sources have short paths of the form
+                # ../<canonical_repo_name>/<proto_import_path>. Add that
+                # repository's execroot directory so imports retain their
+                # canonical proto paths.
+                repository = f.short_path.split("/", 2)[1]
+                import_paths["-Iexternal/" + repository] = None
             if not f.is_source:
                 index = f.path.find("_virtual_imports")
                 if index != -1:
