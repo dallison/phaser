@@ -88,6 +88,19 @@ phaser_library(
 )
 
 proto_library(
+    name = "service_only_proto",
+    srcs = ["ServiceOnly.proto"],
+    deps = ["@com_google_protobuf//:empty_proto"],
+)
+
+phaser_library(
+    name = "service_only_phaser",
+    add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":service_only_proto"],
+)
+
+proto_library(
     name = "ros_metadata_proto",
     srcs = ["RosMetadata.proto"],
     deps = [
@@ -212,7 +225,8 @@ sh_test(
         "//phaser:options_proto",
         "//phaser/compiler:phaser",
         "@com_google_protobuf//:protoc",
-        "@com_google_protobuf//:well_known_protos",
+        "@com_google_protobuf//:descriptor_proto_srcs",
+        "@com_google_protobuf//:well_known_type_protos",
     ],
 )
 
@@ -232,7 +246,7 @@ sh_test(
         "//phaser:valgrind.supp",
         "//phaser/compiler:phaser",
         "@com_google_protobuf//:protoc",
-        "@com_google_protobuf//:well_known_protos",
+        "@com_google_protobuf//:well_known_type_protos",
     ],
 )
 

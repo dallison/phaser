@@ -98,7 +98,8 @@ TEST(StressTest, AllocFailsAtStart) {
 
 TEST(StressTest, CustomAllocSucceeds) {
   TestMessage msg = TestMessage::CreateDynamicMutable(
-      512, ::phaser::test::AllocUntilLimit(64 * 1024), [](void* p) { free(p); },
+      512, ::phaser::test::AllocUntilLimit(64 * 1024),
+      [](void* p) noexcept { free(p); },
       [](void* p, size_t, size_t new_size) -> absl::StatusOr<void*> {
         void* r = realloc(p, new_size);
         if (r == nullptr) {
@@ -112,7 +113,8 @@ TEST(StressTest, CustomAllocSucceeds) {
 
 TEST(StressTest, TryCreateCustomAllocSucceeds) {
   auto result = TestMessage::TryCreateDynamicMutable(
-      512, ::phaser::test::AllocUntilLimit(64 * 1024), [](void* p) { free(p); },
+      512, ::phaser::test::AllocUntilLimit(64 * 1024),
+      [](void* p) noexcept { free(p); },
       [](void* p, size_t, size_t new_size) -> absl::StatusOr<void*> {
         void* r = realloc(p, new_size);
         if (r == nullptr) {
@@ -128,7 +130,8 @@ TEST(StressTest, TryCreateCustomAllocSucceeds) {
 
 TEST(StressTest, TryCreateReportsInitialAllocationFailure) {
   auto result = TestMessage::TryCreateDynamicMutable(
-      512, ::phaser::test::AllocUntilLimit(0), [](void* p) { free(p); },
+      512, ::phaser::test::AllocUntilLimit(0),
+      [](void* p) noexcept { free(p); },
       ::phaser::test::ReallocAlwaysFails());
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.status().code(), absl::StatusCode::kResourceExhausted);
@@ -139,7 +142,8 @@ TEST(StressTest, ReallocFailureAborts) {
       {
         TestMessage msg = TestMessage::CreateDynamicMutable(
             256, ::phaser::test::AllocUntilLimit(1024 * 1024),
-            [](void* p) { free(p); }, ::phaser::test::ReallocAlwaysFails());
+            [](void* p) noexcept { free(p); },
+            ::phaser::test::ReallocAlwaysFails());
         for (int i = 0; i < 2000; i++) {
           msg.add_vstr(::phaser::test::MakePatternString(256, 'x'));
         }

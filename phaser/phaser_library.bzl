@@ -45,9 +45,6 @@ def _phaser_action(
     import_paths = {}
     for s in transitive_sources:
         for f in s.to_list():
-            if f.short_path.startswith("../"):
-                repository_name = f.short_path.split("/", 2)[1]
-                import_paths["-Iexternal/" + repository_name] = None
             if not f.is_source:
                 index = f.path.find("_virtual_imports")
                 if index != -1:

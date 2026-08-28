@@ -23,6 +23,7 @@ namespace {
 using RosCompileMessage = ::foo::bar::phaser::RosCompileMessage;
 using RosInner = ::foo::bar::phaser::RosInner;
 using RosIntrinsicMessage = ::foo::bar::phaser::RosIntrinsicMessage;
+using RosNarrowScalars = ::foo::bar::phaser::RosNarrowScalars;
 using RosPackedFixedMessage = ::foo::bar::phaser::RosPackedFixedMessage;
 using ProtobufFrontendIntrinsicMessage =
     ::foo::bar::pb::protobuf_phaser::RosIntrinsicMessage;
@@ -125,16 +126,16 @@ void PopulateProtobufMessage(::foo::bar::RosCompileMessage& message) {
 
 std::string ExpectedRosCompileBytes(bool include_oneof = true) {
   std::string bytes;
-  AppendIntegral(bytes, static_cast<int32_t>(-7));
+  AppendIntegral(bytes, int32_t{-7});
   AppendString(bytes, "robot");
   AppendIntegral(bytes, static_cast<uint8_t>(1));
   AppendDouble(bytes, 1.5);
   AppendIntegral(bytes, static_cast<int32_t>(RosColor::ROS_COLOR_RED));
-  AppendIntegral(bytes, static_cast<int32_t>(42));
+  AppendIntegral(bytes, int32_t{42});
 
   AppendIntegral(bytes, static_cast<uint32_t>(2));
-  AppendIntegral(bytes, static_cast<int32_t>(10));
-  AppendIntegral(bytes, static_cast<int32_t>(-20));
+  AppendIntegral(bytes, int32_t{10});
+  AppendIntegral(bytes, int32_t{-20});
   AppendIntegral(bytes, static_cast<uint32_t>(2));
   AppendString(bytes, "a");
   AppendString(bytes, "beta");
@@ -142,20 +143,19 @@ std::string ExpectedRosCompileBytes(bool include_oneof = true) {
   AppendIntegral(bytes, static_cast<int32_t>(RosColor::ROS_COLOR_RED));
   AppendIntegral(bytes, static_cast<int32_t>(RosColor::ROS_COLOR_BLUE));
   AppendIntegral(bytes, static_cast<uint32_t>(2));
-  AppendIntegral(bytes, static_cast<int32_t>(100));
-  AppendIntegral(bytes, static_cast<int32_t>(200));
+  AppendIntegral(bytes, int32_t{100});
+  AppendIntegral(bytes, int32_t{200});
 
   for (int32_t value : {1, 2, 3, 4}) {
     AppendIntegral(bytes, value);
   }
   AppendIntegral(bytes, static_cast<int32_t>(RosColor::ROS_COLOR_RED));
   AppendIntegral(bytes, static_cast<int32_t>(RosColor::ROS_COLOR_BLUE));
-  AppendIntegral(bytes,
-                 static_cast<int32_t>(RosColor::ROS_COLOR_UNSPECIFIED));
+  AppendIntegral(bytes, static_cast<int32_t>(RosColor::ROS_COLOR_UNSPECIFIED));
   AppendString(bytes, "left");
   AppendString(bytes, "right");
-  AppendIntegral(bytes, static_cast<int32_t>(300));
-  AppendIntegral(bytes, static_cast<int32_t>(400));
+  AppendIntegral(bytes, int32_t{300});
+  AppendIntegral(bytes, int32_t{400});
 
   if (include_oneof) {
     AppendIntegral(bytes, static_cast<uint32_t>(17));
@@ -170,22 +170,22 @@ std::string ExpectedIntrinsicBytes() {
   std::string bytes;
   AppendIntegral(bytes, static_cast<uint32_t>(12));
   AppendIntegral(bytes, static_cast<uint32_t>(345));
-  AppendIntegral(bytes, static_cast<int32_t>(-4));
-  AppendIntegral(bytes, static_cast<int32_t>(500));
+  AppendIntegral(bytes, int32_t{-4});
+  AppendIntegral(bytes, int32_t{500});
   AppendIntegral(bytes, static_cast<uint32_t>(9));
   AppendIntegral(bytes, static_cast<uint32_t>(21));
   AppendIntegral(bytes, static_cast<uint32_t>(654));
   AppendString(bytes, "map");
 
-  AppendIntegral(bytes, static_cast<int32_t>(0));  // count
-  AppendString(bytes, "");                         // name
+  AppendIntegral(bytes, int32_t{0});                // count
+  AppendString(bytes, "");                          // name
   AppendIntegral(bytes, static_cast<uint32_t>(0));  // samples
   AppendIntegral(bytes, static_cast<uint32_t>(0));  // tags
   AppendIntegral(bytes, static_cast<uint32_t>(0));  // children
   AppendString(bytes, "");                          // fixed_names[0]
   AppendString(bytes, "");                          // fixed_names[1]
   for (int i = 0; i < 2; ++i) {
-    AppendIntegral(bytes, static_cast<int32_t>(0));  // child id
+    AppendIntegral(bytes, int32_t{0});               // child id
     AppendString(bytes, "");                         // child label
   }
   AppendIntegral(bytes, static_cast<uint32_t>(0));  // choice unset
@@ -198,16 +198,16 @@ std::string ExpectedIntrinsicBytes() {
   AppendIntegral(bytes, static_cast<uint32_t>(3));
   AppendIntegral(bytes, static_cast<uint32_t>(4));
   AppendIntegral(bytes, static_cast<uint32_t>(1));  // timeouts count
-  AppendIntegral(bytes, static_cast<int32_t>(-5));
-  AppendIntegral(bytes, static_cast<int32_t>(6));
+  AppendIntegral(bytes, int32_t{-5});
+  AppendIntegral(bytes, int32_t{6});
   AppendIntegral(bytes, static_cast<uint32_t>(7));  // fixed_stamps[0]
   AppendIntegral(bytes, static_cast<uint32_t>(8));
   AppendIntegral(bytes, static_cast<uint32_t>(9));  // fixed_stamps[1]
   AppendIntegral(bytes, static_cast<uint32_t>(10));
-  AppendIntegral(bytes, static_cast<int32_t>(-11));  // fixed_timeouts[0]
-  AppendIntegral(bytes, static_cast<int32_t>(12));
-  AppendIntegral(bytes, static_cast<int32_t>(13));  // fixed_timeouts[1]
-  AppendIntegral(bytes, static_cast<int32_t>(14));
+  AppendIntegral(bytes, int32_t{-11});  // fixed_timeouts[0]
+  AppendIntegral(bytes, int32_t{12});
+  AppendIntegral(bytes, int32_t{13});  // fixed_timeouts[1]
+  AppendIntegral(bytes, int32_t{14});
   return bytes;
 }
 
@@ -231,12 +231,12 @@ TEST(ROSWireConversionTest, LiveProtobufAndNativePathsMatchKnownBytes) {
   EXPECT_EQ(::phaser::InferMessageWireFormat(protobuf_wire),
             ::phaser::MessageWireFormat::kProtobuf);
   ::phaser::ROSBuffer protobuf_output;
-  ASSERT_TRUE(RosCompileMessage::ProtobufToROS(protobuf_wire, protobuf_output)
-                  .ok());
+  ASSERT_TRUE(
+      RosCompileMessage::ProtobufToROS(protobuf_wire, protobuf_output).ok());
   EXPECT_EQ(protobuf_output.AsString(), expected);
   std::vector<char> exact_output(expected.size());
   ::phaser::ROSBuffer fixed_protobuf_output(exact_output.data(),
-                                             exact_output.size());
+                                            exact_output.size());
   ASSERT_TRUE(
       RosCompileMessage::ProtobufToROS(protobuf_wire, fixed_protobuf_output)
           .ok());
@@ -246,21 +246,18 @@ TEST(ROSWireConversionTest, LiveProtobufAndNativePathsMatchKnownBytes) {
   ::phaser::ROSBuffer native_output;
   const auto* native_data =
       reinterpret_cast<const char*>(phaser_message.Data());
-  const absl::Span<const char> native_bytes(native_data,
-                                            phaser_message.Size());
+  const absl::Span<const char> native_bytes(native_data, phaser_message.Size());
   EXPECT_EQ(::phaser::InferMessageWireFormat(native_bytes),
             ::phaser::MessageWireFormat::kPhaser);
-  ASSERT_TRUE(RosCompileMessage::PhaserToROS(
-                  native_bytes, native_output)
-                  .ok());
+  ASSERT_TRUE(RosCompileMessage::PhaserToROS(native_bytes, native_output).ok());
   EXPECT_EQ(native_output.AsString(), expected);
 
   ::phaser::ROSBuffer inferred_protobuf_output;
-  ASSERT_TRUE(RosCompileMessage::ConvertToROS(
-                  absl::Span<const char>(protobuf_wire.data(),
-                                         protobuf_wire.size()),
-                  inferred_protobuf_output)
-                  .ok());
+  ASSERT_TRUE(
+      RosCompileMessage::ConvertToROS(
+          absl::Span<const char>(protobuf_wire.data(), protobuf_wire.size()),
+          inferred_protobuf_output)
+          .ok());
   EXPECT_EQ(inferred_protobuf_output.AsString(), expected);
 
   ::phaser::ROSBuffer inferred_native_output;
@@ -308,8 +305,8 @@ TEST(ROSWireConversionTest, DirectPackedFixedFieldsUseCompatibleRawLayout) {
   AppendIntegral(expected, uint64_t{0x1122334455667788});
 
   ::phaser::ROSBuffer ros_output;
-  ASSERT_TRUE(RosPackedFixedMessage::ProtobufToROS(
-                  protobuf.SerializeAsString(), ros_output)
+  ASSERT_TRUE(RosPackedFixedMessage::ProtobufToROS(protobuf.SerializeAsString(),
+                                                   ros_output)
                   .ok());
   EXPECT_EQ(ros_output.AsString(), expected);
 
@@ -322,7 +319,7 @@ TEST(ROSWireConversionTest, DirectPackedFixedFieldsUseCompatibleRawLayout) {
                   .ok());
   ::foo::bar::RosPackedFixedMessage reparsed;
   ASSERT_TRUE(reparsed.ParseFromArray(protobuf_storage.data(),
-                                     protobuf_output.Size()));
+                                     int(protobuf_output.Size())));
   EXPECT_EQ(reparsed.SerializeAsString(), protobuf.SerializeAsString());
 }
 
@@ -333,8 +330,7 @@ TEST(ROSWireConversionTest, DirectPackedFixedFieldRejectsPartialElement) {
   malformed.append("\x01\x02\x03", 3);
 
   ::phaser::ROSBuffer output;
-  EXPECT_FALSE(
-      RosPackedFixedMessage::ProtobufToROS(malformed, output).ok());
+  EXPECT_FALSE(RosPackedFixedMessage::ProtobufToROS(malformed, output).ok());
 }
 
 TEST(ROSWireConversionTest, FixedOutputAndErrorsAreReported) {
@@ -356,9 +352,9 @@ TEST(ROSWireConversionTest, FixedOutputAndErrorsAreReported) {
       RosCompileMessage::ProtobufToROS(std::string(1, '\x80'), output).ok());
   EXPECT_TRUE(output.empty());
   EXPECT_FALSE(RosCompileMessage::PhaserToROS({}, output).ok());
-  EXPECT_FALSE(RosCompileMessage::ConvertToROS(
-                   absl::Span<const char>("\0", 1), output)
-                   .ok());
+  EXPECT_FALSE(
+      RosCompileMessage::ConvertToROS(absl::Span<const char>("\0", 1), output)
+          .ok());
 }
 
 TEST(ROSWireConversionTest, OneofWritesFieldNumberDiscriminator) {
@@ -394,16 +390,16 @@ TEST(ROSWireConversionTest, ROS1IntrinsicsUseNativeLayoutsAndFlushCaches) {
 
   ::phaser::ROSBuffer protobuf_output;
   ASSERT_TRUE(RosIntrinsicMessage::ProtobufToROS(message.SerializeAsString(),
-                                                protobuf_output)
+                                                 protobuf_output)
                   .ok());
   EXPECT_EQ(protobuf_output.AsString(), expected);
 
   ::phaser::ROSBuffer native_output;
   const auto* native_data = reinterpret_cast<const char*>(message.Data());
-  ASSERT_TRUE(RosIntrinsicMessage::PhaserToROS(
-                  absl::Span<const char>(native_data, message.Size()),
-                  native_output)
-                  .ok());
+  ASSERT_TRUE(
+      RosIntrinsicMessage::PhaserToROS(
+          absl::Span<const char>(native_data, message.Size()), native_output)
+          .ok());
   EXPECT_EQ(native_output.AsString(), expected);
 
   ::phaser::ROSBuffer protobuf_frontend_native_output;
@@ -414,12 +410,40 @@ TEST(ROSWireConversionTest, ROS1IntrinsicsUseNativeLayoutsAndFlushCaches) {
   EXPECT_EQ(protobuf_frontend_native_output.AsString(), expected);
 }
 
+TEST(ROSWireConversionTest, ROSNarrowScalarsUseDeclaredWireWidths) {
+  RosNarrowScalars message;
+  message.uint8_value = 0xa1;
+  message.int8_value = -2;
+  message.uint16_value = 0xb2c3;
+  message.int16_value = -4;
+
+  std::string expected;
+  AppendIntegral(expected, static_cast<uint8_t>(0xa1));
+  AppendIntegral(expected, static_cast<int8_t>(-2));
+  AppendIntegral(expected, static_cast<uint16_t>(0xb2c3));
+  AppendIntegral(expected, static_cast<int16_t>(-4));
+
+  std::string output;
+  ASSERT_TRUE(message.SerializeToROSString(&output).ok());
+  EXPECT_EQ(output, expected);
+  EXPECT_EQ(message.ROSSerializedSize(), expected.size());
+
+  RosNarrowScalars decoded;
+  ASSERT_TRUE(
+      decoded.ParseFromROS(absl::Span<const char>(output.data(), output.size()))
+          .ok());
+  EXPECT_EQ(decoded.uint8_value.Get(), 0xa1);
+  EXPECT_EQ(decoded.int8_value.Get(), -2);
+  EXPECT_EQ(decoded.uint16_value.Get(), 0xb2c3);
+  EXPECT_EQ(decoded.int16_value.Get(), -4);
+}
+
 TEST(ROSWireConversionTest, ParsesKnownROSBytesIntoNativePayload) {
   RosCompileMessage message;
   const std::string input = ExpectedRosCompileBytes();
-  ASSERT_TRUE(message.ParseFromROS(
-                         absl::Span<const char>(input.data(), input.size()))
-                  .ok());
+  ASSERT_TRUE(
+      message.ParseFromROS(absl::Span<const char>(input.data(), input.size()))
+          .ok());
 
   EXPECT_EQ(message.x.Get(), -7);
   EXPECT_EQ(message.name.Get(), "robot");
@@ -456,23 +480,23 @@ TEST(ROSWireConversionTest, ParsesKnownROSBytesIntoNativePayload) {
 
   std::vector<char> direct_wire(4096);
   ::phaser::ProtoBuffer direct_output(direct_wire.data(), direct_wire.size());
-  ASSERT_TRUE(RosCompileMessage::ROSToProtobuf(
-                  absl::Span<const char>(input.data(), input.size()),
-                  direct_output)
-                  .ok());
+  ASSERT_TRUE(
+      RosCompileMessage::ROSToProtobuf(
+          absl::Span<const char>(input.data(), input.size()), direct_output)
+          .ok());
   ::foo::bar::RosCompileMessage direct_protobuf;
   ASSERT_TRUE(direct_protobuf.ParseFromArray(direct_wire.data(),
-                                             direct_output.Size()));
+                                            int(direct_output.Size())));
   EXPECT_EQ(direct_protobuf.SerializeAsString(), protobuf.SerializeAsString());
 }
 
 TEST(ROSWireConversionTest, ParsedROSPayloadUsesEitherFrontend) {
   RosIntrinsicMessage ros_message;
   const std::string input = ExpectedIntrinsicBytes();
-  ASSERT_TRUE(ros_message
-                  .ParseFromROS(
-                      absl::Span<const char>(input.data(), input.size()))
-                  .ok());
+  ASSERT_TRUE(
+      ros_message
+          .ParseFromROS(absl::Span<const char>(input.data(), input.size()))
+          .ok());
 
   EXPECT_EQ(ros_message.stamp->sec, 12u);
   EXPECT_EQ(ros_message.stamp->nsec, 345u);
@@ -517,10 +541,10 @@ TEST(ROSWireConversionTest, ParsedROSPayloadUsesEitherFrontend) {
   EXPECT_EQ(protobuf_view.fixed_timeouts(1).nanos(), 14);
 
   ProtobufFrontendIntrinsicMessage parsed_protobuf_frontend;
-  ASSERT_TRUE(parsed_protobuf_frontend
-                  .ParseFromROS(
-                      absl::Span<const char>(input.data(), input.size()))
-                  .ok());
+  ASSERT_TRUE(
+      parsed_protobuf_frontend
+          .ParseFromROS(absl::Span<const char>(input.data(), input.size()))
+          .ok());
   EXPECT_EQ(parsed_protobuf_frontend.stamp().seconds(), 12);
   EXPECT_EQ(parsed_protobuf_frontend.timeout().nanos(), 500);
   EXPECT_EQ(parsed_protobuf_frontend.header().stamp().nanos(), 654);
@@ -528,13 +552,13 @@ TEST(ROSWireConversionTest, ParsedROSPayloadUsesEitherFrontend) {
 
   std::vector<char> direct_wire(4096);
   ::phaser::ProtoBuffer direct_output(direct_wire.data(), direct_wire.size());
-  ASSERT_TRUE(RosIntrinsicMessage::ROSToProtobuf(
-                  absl::Span<const char>(input.data(), input.size()),
-                  direct_output)
-                  .ok());
+  ASSERT_TRUE(
+      RosIntrinsicMessage::ROSToProtobuf(
+          absl::Span<const char>(input.data(), input.size()), direct_output)
+          .ok());
   ProtobufFrontendIntrinsicMessage direct_protobuf;
-  ASSERT_TRUE(direct_protobuf.ParseFromArray(direct_wire.data(),
-                                             direct_output.Size()));
+  ASSERT_TRUE(
+      direct_protobuf.ParseFromArray(direct_wire.data(), direct_output.Size()));
   EXPECT_EQ(direct_protobuf.stamp().seconds(), 12);
   EXPECT_EQ(direct_protobuf.timeout().nanos(), 500);
   EXPECT_EQ(direct_protobuf.header().frame_id(), "map");
@@ -544,14 +568,13 @@ TEST(ROSWireConversionTest, ParsesScalarAndMessageOneofArms) {
   std::string scalar_input = ExpectedRosCompileBytes(false);
   scalar_input.resize(scalar_input.size() - sizeof(uint32_t));
   AppendIntegral(scalar_input, static_cast<uint32_t>(15));
-  AppendIntegral(scalar_input, static_cast<int32_t>(123));
+  AppendIntegral(scalar_input, int32_t{123});
 
   RosCompileMessage scalar_message;
-  ASSERT_TRUE(
-      scalar_message
-          .ParseFromROS(
-              absl::Span<const char>(scalar_input.data(), scalar_input.size()))
-          .ok());
+  ASSERT_TRUE(scalar_message
+                  .ParseFromROS(absl::Span<const char>(scalar_input.data(),
+                                                       scalar_input.size()))
+                  .ok());
   using ChoiceCount = RosCompileMessage::ChoiceCountAlternative;
   ASSERT_TRUE(scalar_message.choice.holds_alternative<ChoiceCount>());
   EXPECT_EQ(scalar_message.choice.get<ChoiceCount>(), 123);
@@ -559,14 +582,13 @@ TEST(ROSWireConversionTest, ParsesScalarAndMessageOneofArms) {
   std::string message_input = ExpectedRosCompileBytes(false);
   message_input.resize(message_input.size() - sizeof(uint32_t));
   AppendIntegral(message_input, static_cast<uint32_t>(18));
-  AppendIntegral(message_input, static_cast<int32_t>(456));
+  AppendIntegral(message_input, int32_t{456});
 
   RosCompileMessage message;
-  ASSERT_TRUE(
-      message
-          .ParseFromROS(
-              absl::Span<const char>(message_input.data(), message_input.size()))
-          .ok());
+  ASSERT_TRUE(message
+                  .ParseFromROS(absl::Span<const char>(message_input.data(),
+                                                       message_input.size()))
+                  .ok());
   using ChoiceInner = RosCompileMessage::ChoiceInnerAlternative;
   ASSERT_TRUE(message.choice.holds_alternative<ChoiceInner>());
   EXPECT_EQ(message.choice.get<ChoiceInner>().id.Get(), 456);
@@ -586,11 +608,10 @@ TEST(ROSWireConversionTest, RejectsMalformedROSInput) {
   std::string trailing = valid;
   trailing.push_back('\0');
   RosCompileMessage trailing_message;
-  EXPECT_FALSE(
-      trailing_message
-          .ParseFromROS(
-              absl::Span<const char>(trailing.data(), trailing.size()))
-          .ok());
+  EXPECT_FALSE(trailing_message
+                   .ParseFromROS(
+                       absl::Span<const char>(trailing.data(), trailing.size()))
+                   .ok());
 
   std::string invalid_length = valid;
   invalid_length[4] = static_cast<char>(0xff);
@@ -598,11 +619,10 @@ TEST(ROSWireConversionTest, RejectsMalformedROSInput) {
   invalid_length[6] = static_cast<char>(0xff);
   invalid_length[7] = static_cast<char>(0x7f);
   RosCompileMessage invalid_length_message;
-  EXPECT_FALSE(
-      invalid_length_message
-          .ParseFromROS(absl::Span<const char>(invalid_length.data(),
-                                               invalid_length.size()))
-          .ok());
+  EXPECT_FALSE(invalid_length_message
+                   .ParseFromROS(absl::Span<const char>(invalid_length.data(),
+                                                        invalid_length.size()))
+                   .ok());
 
   std::string invalid_discriminator = valid;
   const size_t discriminator_offset =
@@ -616,19 +636,18 @@ TEST(ROSWireConversionTest, RejectsMalformedROSInput) {
           .ok());
 
   std::string oversized_sequence;
-  AppendIntegral(oversized_sequence, static_cast<int32_t>(0));
+  AppendIntegral(oversized_sequence, int32_t{0});
   AppendString(oversized_sequence, "");
   AppendIntegral(oversized_sequence, static_cast<uint8_t>(0));
   AppendDouble(oversized_sequence, 0);
-  AppendIntegral(oversized_sequence, static_cast<int32_t>(0));
-  AppendIntegral(oversized_sequence, static_cast<int32_t>(0));
+  AppendIntegral(oversized_sequence, int32_t{0});
+  AppendIntegral(oversized_sequence, int32_t{0});
   AppendIntegral(oversized_sequence, static_cast<uint32_t>(100));
   RosCompileMessage oversized_sequence_message;
-  EXPECT_FALSE(
-      oversized_sequence_message
-          .ParseFromROS(absl::Span<const char>(oversized_sequence.data(),
-                                               oversized_sequence.size()))
-          .ok());
+  EXPECT_FALSE(oversized_sequence_message
+                   .ParseFromROS(absl::Span<const char>(
+                       oversized_sequence.data(), oversized_sequence.size()))
+                   .ok());
   EXPECT_TRUE(oversized_sequence_message.xs.empty());
 }
 

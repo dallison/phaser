@@ -13,6 +13,32 @@
 namespace foo::bar::phaser {
 namespace {
 
+TEST(RosCompileTest, PreservesExplicitRosSourceDefinition) {
+  EXPECT_EQ(RosDefinitionMetadata::RosDefinition(),
+            "# Original comment\n\nint32 value\n");
+}
+
+TEST(RosCompileTest, ConstantOnlyRosMessageFieldHasNoWirePayload) {
+  RosConstantOnlyHolder message;
+  message.marker = RosConstantOnly::ROS_CONSTANT_ONLY_UNSPECIFIED;
+  message.value = 42;
+  EXPECT_EQ(message.marker.Get(),
+            RosConstantOnly::ROS_CONSTANT_ONLY_UNSPECIFIED);
+  EXPECT_EQ(message.ROSSerializedSize(), sizeof(uint32_t));
+
+  std::string wire;
+  ASSERT_TRUE(message.SerializeToROSString(&wire).ok());
+  ASSERT_EQ(wire.size(), sizeof(uint32_t));
+
+  RosConstantOnlyHolder decoded;
+  ASSERT_TRUE(
+      decoded.ParseFromROS(absl::Span<const char>(wire.data(), wire.size()))
+          .ok());
+  EXPECT_EQ(decoded.marker.Get(),
+            RosConstantOnly::ROS_CONSTANT_ONLY_UNSPECIFIED);
+  EXPECT_EQ(decoded.value.Get(), 42u);
+}
+
 TEST(RosCompileTest, ScalarConversionAndAssignment) {
   RosCompileMessage msg;
   msg.x = 42;
@@ -90,6 +116,27 @@ TEST(RosCompileTest, StringConversionAndAssignment) {
   msg.name = "hello";
   EXPECT_TRUE(msg.name.IsPresent());
   EXPECT_EQ(std::string_view(msg.name), "hello");
+  EXPECT_EQ(msg.name, "hello");
+  EXPECT_EQ("hello", msg.name);
+  EXPECT_TRUE(msg.name.starts_with("hell"));
+  EXPECT_TRUE(msg.name.ends_with('o'));
+  EXPECT_TRUE(msg.name.contains("ell"));
+  EXPECT_EQ(msg.name.find('e'), 1u);
+  EXPECT_EQ(msg.name.rfind("hell", 0), 0u);
+  EXPECT_EQ(msg.name.rfind("world", 0), std::string_view::npos);
+  EXPECT_EQ(msg.name.substr(1, 3), "ell");
+
+  msg.name.append(" world");
+  msg.name += '!';
+  EXPECT_EQ(msg.name, "hello world!");
+  msg.name.erase(5, 6);
+  msg.name.insert(5, ",");
+  msg.name.replace(6, 1, "?");
+  EXPECT_EQ(msg.name, "hello,?");
+  msg.name.pop_back();
+  msg.name.resize(8, '.');
+  EXPECT_EQ(msg.name, "hello,..");
+  EXPECT_EQ(std::string(msg.name.rbegin(), msg.name.rend()), "..,olleh");
 
   msg.name = std::string("world");
   EXPECT_EQ(msg.name.Get(), "world");
@@ -128,8 +175,7 @@ TEST(RosCompileTest, IndirectMessageAccess) {
 
 TEST(RosCompileTest, PrimitiveVectorSyntax) {
   RosCompileMessage msg;
-  msg.xs.push_back(1);
-  msg.xs.push_back(2);
+  msg.xs = {1, 2};
   msg.xs.reserve(8);
   EXPECT_EQ(msg.xs.size(), 2u);
   EXPECT_EQ(msg.xs[0], 1);
@@ -152,24 +198,44 @@ TEST(RosCompileTest, PrimitiveVectorSyntax) {
   EXPECT_EQ(seen[0], 10);
   EXPECT_EQ(seen[3], 40);
 
+  EXPECT_EQ(msg.xs.at(0), 10);
+  msg.xs.emplace_back(50);
+  EXPECT_EQ(msg.xs.back(), 50);
+  msg.xs.pop_back();
+  auto inserted = msg.xs.insert(msg.xs.begin() + 1, 30);
+  EXPECT_EQ(*inserted, 30);
+  msg.xs.erase(inserted);
+  msg.xs.resize(6, 60);
+  EXPECT_EQ(msg.xs, std::vector<int32_t>({10, 2, 0, 40, 60, 60}));
+  EXPECT_EQ(*msg.xs.rbegin(), 60);
+  msg.xs.assign(2, 7);
+  EXPECT_EQ(std::vector<int32_t>({7, 7}), msg.xs);
+
   msg.xs.clear();
   EXPECT_TRUE(msg.xs.empty());
 }
 
 TEST(RosCompileTest, EnumVectorSyntax) {
   RosCompileMessage msg;
-  msg.colors.push_back(RosColor::ROS_COLOR_RED);
-  msg.colors.push_back(RosColor::ROS_COLOR_BLUE);
+  msg.colors = {RosColor::ROS_COLOR_RED, RosColor::ROS_COLOR_BLUE};
   EXPECT_EQ(msg.colors.size(), 2u);
   EXPECT_EQ(msg.colors[0], RosColor::ROS_COLOR_RED);
   msg.colors[1] = RosColor::ROS_COLOR_UNSPECIFIED;
   EXPECT_EQ(msg.colors[1], RosColor::ROS_COLOR_UNSPECIFIED);
+  msg.colors.emplace_back(RosColor::ROS_COLOR_BLUE);
+  msg.colors.pop_back();
+  auto inserted =
+      msg.colors.insert(msg.colors.begin() + 1, RosColor::ROS_COLOR_BLUE);
+  EXPECT_EQ(*inserted, RosColor::ROS_COLOR_BLUE);
+  msg.colors.erase(inserted);
+  EXPECT_EQ(msg.colors,
+            std::vector<RosColor>(
+                {RosColor::ROS_COLOR_RED, RosColor::ROS_COLOR_UNSPECIFIED}));
 }
 
 TEST(RosCompileTest, StringVectorSyntax) {
   RosCompileMessage msg;
-  msg.names.push_back("a");
-  msg.names.push_back("b");
+  msg.names = {"a", "b"};
   EXPECT_EQ(msg.names.size(), 2u);
   EXPECT_EQ(std::string_view(msg.names[0]), "a");
 
@@ -178,18 +244,38 @@ TEST(RosCompileTest, StringVectorSyntax) {
 
   msg.names[0] = msg.names[1];
   EXPECT_EQ(msg.names[0].Get(), "beta");
+  EXPECT_TRUE(msg.names[0].starts_with("be"));
+  msg.names[0].append("!");
+  EXPECT_EQ(msg.names[0], "beta!");
+
+  msg.names.emplace_back("gamma");
+  msg.names.emplace_back() = "delta";
+  msg.names.pop_back();
+  msg.names.resize(4, "fill");
+  EXPECT_EQ(msg.names,
+            std::vector<std::string>({"beta!", "beta", "gamma", "fill"}));
+  msg.names.resize(5);
+  msg.names[4] = "late";
+  EXPECT_EQ(*msg.names.rbegin(), "late");
+  auto insert_pos = msg.names.begin();
+  ++insert_pos;
+  auto inserted = msg.names.insert(insert_pos, "inserted");
+  EXPECT_EQ(*inserted, "inserted");
+  msg.names.erase(inserted);
 
   size_t count = 0;
   for (std::string_view s : msg.names) {
     EXPECT_FALSE(s.empty());
     ++count;
   }
-  EXPECT_EQ(count, 2u);
+  EXPECT_EQ(count, msg.names.size());
+  msg.names.clear();
+  EXPECT_TRUE(msg.names.empty());
 }
 
 TEST(RosCompileTest, MessageVectorSyntax) {
   RosCompileMessage msg;
-  auto a = msg.inners.Add();
+  auto a = msg.inners.emplace_back();
   a->id = 1;
   auto b = msg.inners.Add();
   b->id = 2;
@@ -200,12 +286,38 @@ TEST(RosCompileTest, MessageVectorSyntax) {
   msg.inners[0]->id = 11;
   EXPECT_EQ(msg.inners.front()->id.Get(), 11);
 
+  msg.inners.resize(4);
+  msg.inners[2]->id = 12;
+  msg.inners.at(3)->id = 13;
+  msg.inners.pop_back();
+  EXPECT_EQ(msg.inners.size(), 3u);
+
+  RosInner source;
+  source.id = 14;
+  msg.inners.push_back(source);
+  source.id = 15;
+  EXPECT_EQ(msg.inners.back()->id.Get(), 14);
+  EXPECT_EQ((*msg.inners.rbegin())->id.Get(), 14);
+  auto insert_pos = msg.inners.begin();
+  ++insert_pos;
+  auto inserted = msg.inners.insert(insert_pos, source);
+  EXPECT_EQ((*inserted)->id.Get(), 15);
+  msg.inners.erase(inserted);
+
   size_t count = 0;
   for (auto elem : msg.inners) {
     EXPECT_TRUE(elem->id.IsPresent());
     ++count;
   }
-  EXPECT_EQ(count, 2u);
+  EXPECT_EQ(count, msg.inners.size());
+  msg.inners.clear();
+  EXPECT_TRUE(msg.inners.empty());
+
+  std::vector<RosInner> allocated = msg.inners.Allocate(2);
+  allocated[0].id = 21;
+  allocated[1].id = 22;
+  EXPECT_EQ(msg.inners[0]->id.Get(), 21);
+  EXPECT_EQ(msg.inners[1]->id.Get(), 22);
 }
 
 TEST(RosCompileTest, ProxyAssignmentDoesNotRebind) {
@@ -274,11 +386,12 @@ TEST(RosCompileTest, MessageCopyAssignUsesCloneFrom) {
   EXPECT_EQ(dst.x.Get(), 11);
 }
 
-TEST(RosCompileTest, MessageMoveAssignUsesCloneFrom) {
+TEST(RosCompileTest, MessageMoveAssignTransfersStorage) {
   RosCompileMessage src;
   src.x = 21;
   src.name = "moved";
   src.xs.push_back(9);
+  const auto* source_runtime = src.runtime.get();
 
   RosCompileMessage dst;
   dst = std::move(src);
@@ -287,9 +400,20 @@ TEST(RosCompileTest, MessageMoveAssignUsesCloneFrom) {
   EXPECT_EQ(dst.name.Get(), "moved");
   ASSERT_EQ(dst.xs.size(), 1u);
   EXPECT_EQ(dst.xs[0], 9);
-  EXPECT_FALSE(src.x.IsPresent());
-  EXPECT_FALSE(src.name.IsPresent());
-  EXPECT_TRUE(src.xs.empty());
+  EXPECT_EQ(dst.runtime.get(), source_runtime);
+  EXPECT_FALSE(src.IsBound());
+}
+
+TEST(RosCompileTest, MessageMoveAssignRebindsMovedFromDestination) {
+  RosCompileMessage accumulator;
+  accumulator.x = 21;
+  RosCompileMessage published(std::move(accumulator));
+
+  accumulator = RosCompileMessage::CreateDynamicMutable(8192);
+  accumulator.x = 22;
+
+  EXPECT_EQ(published.x.Get(), 21);
+  EXPECT_EQ(accumulator.x.Get(), 22);
 }
 
 TEST(RosCompileTest, MessageCopyCtorDeepCopies) {

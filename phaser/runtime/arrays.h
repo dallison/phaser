@@ -35,8 +35,9 @@ inline bool HasMutablePayload(
 
 template <typename Field, typename Value>
 struct FixedArrayConstIterator {
-  FixedArrayConstIterator(const Field* f, size_t idx, bool reverse = false)
-      : field(f), index(idx), reverse(reverse) {}
+  FixedArrayConstIterator(const Field* f, size_t idx,
+                          bool reverse_iteration = false)
+      : field(f), index(idx), reverse(reverse_iteration) {}
 
   FixedArrayConstIterator& operator++() {
     if (reverse) {

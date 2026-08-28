@@ -47,7 +47,7 @@ inline bool ConsumeWireVarint(absl::Span<const char> data, size_t* offset,
       return false;
     }
     const uint8_t byte =
-        static_cast<uint8_t>(static_cast<unsigned char>(data[(*offset)++]));
+        static_cast<unsigned char>(data[(*offset)++]);
     if (i + 1 == max_bytes &&
         ((byte & 0x80U) != 0 || (byte & 0x7fU) > max_last_byte)) {
       return false;
@@ -102,7 +102,7 @@ inline bool ConsumeProtobufFields(absl::Span<const char> data, size_t* offset,
             value > data.size() - *offset) {
           return false;
         }
-        *offset += static_cast<size_t>(value);
+        *offset += value;
         break;
       case 3:
         if (!ConsumeProtobufFields(data, offset, field_number, depth + 1)) {

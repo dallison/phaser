@@ -11,6 +11,11 @@ message RosMessageMetadata {
 
   // Canonical constant declarations used by the ROS MD5 algorithm.
   repeated string constants = 2;
+
+  // Canonical local ROS source text when comments, blank lines, or declaration
+  // ordering cannot be reconstructed from the protobuf descriptor alone.
+  // Definitions for nested message types are appended automatically.
+  string source_definition = 3;
 }
 
 message RosFieldMetadata {
@@ -28,6 +33,11 @@ message RosFieldMetadata {
 
   // Datatype for the non-protobuf nested ROS message.
   string nested_data_type = 4;
+
+  // Full ROS source definition for a nested type that is not represented as a
+  // protobuf message. Omit when it is identical to nested_md5_text plus a
+  // trailing newline.
+  string nested_source_definition = 5;
 }
 
 message RosEnumMetadata {

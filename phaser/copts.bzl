@@ -76,7 +76,6 @@ _PHASER_GCC_COPTS = [
     "-Winit-self",
     "-Wlogical-op",
     "-Wmissing-declarations",
-    "-Wmissing-include-dirs",
     "-Wnoexcept",
     "-Wnon-virtual-dtor",
     "-Wnull-dereference",
@@ -101,9 +100,44 @@ _PHASER_GCC_COPTS = [
     # shared headers, which GCC reports as unknown pragmas.
     "-Wno-invalid-offsetof",
     "-Wno-unknown-pragmas",
+
+    # Bazel emits speculative external and generated include paths that need
+    # not exist for every compile action. -Wmissing-include-dirs reports those
+    # toolchain-managed paths rather than problems in Phaser source.
+    "-Wno-missing-include-dirs",
 ]
 
 PHASER_COPTS = select({
     "//phaser:is_clang": _PHASER_CLANG_COPTS,
     "//conditions:default": _PHASER_GCC_COPTS,
+})
+
+# protoc and Abseil expose template-heavy public headers that trigger several
+# aggressive GCC diagnostics at instantiation sites in the Phaser compiler.
+# Keep the full warning set elsewhere, and scope these upstream-header
+# exemptions to targets that directly consume the protoc compiler API.
+PHASER_PROTOC_COPTS = PHASER_COPTS + select({
+    "//phaser:is_clang": [],
+    "//conditions:default": [
+        "-Wno-conversion",
+        "-Wno-ctor-dtor-privacy",
+        "-Wno-deprecated-declarations",
+        "-Wno-duplicated-branches",
+        "-Wno-extra-semi",
+        "-Wno-redundant-decls",
+        "-Wno-sign-conversion",
+        "-Wno-sign-promo",
+        "-Wno-useless-cast",
+        "-Wno-zero-as-null-pointer-constant",
+    ],
+})
+
+# Protobuf-generated headers are compiled as part of consumer translation
+# units, so GCC attributes their implementation details to the consumer.
+PHASER_PROTOBUF_GENERATED_COPTS = select({
+    "//phaser:is_clang": [],
+    "//conditions:default": [
+        "-Wno-conversion",
+        "-Wno-useless-cast",
+    ],
 })

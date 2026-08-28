@@ -9,8 +9,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <initializer_list>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -29,7 +32,7 @@ class ProtoBuffer;
 #define DECLARE_ZERO_COPY_VECTOR_BITS(vtype, itype, ctype, utype)              \
   using value_type = vtype;                                                    \
   using reference = value_type&;                                               \
-  using const_reference = value_type&;                                         \
+  using const_reference = const value_type&;                                   \
   using pointer = value_type*;                                                 \
   using const_pointer = const value_type*;                                     \
   using size_type = size_t;                                                    \
@@ -37,8 +40,8 @@ class ProtoBuffer;
                                                                                \
   using iterator = itype;                                                      \
   using const_iterator = ctype;                                                \
-  using reverse_iterator = itype;                                              \
-  using const_reverse_iterator = ctype;                                        \
+  using reverse_iterator = std::reverse_iterator<iterator>;                    \
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;        \
                                                                                \
   iterator begin() { return iterator(this, BaseOffset()); }                    \
   iterator end() {                                                             \
@@ -59,35 +62,19 @@ class ProtoBuffer;
                                  NumElements() * sizeof(value_type)));         \
   }                                                                            \
                                                                                \
-  reverse_iterator rbegin() {                                                  \
-    return reverse_iterator(this, BaseOffset(), true);                         \
-  }                                                                            \
-  reverse_iterator rend() {                                                    \
-    return reverse_iterator(                                                   \
-        this,                                                                  \
-        BaseOffset() + static_cast<::toolbelt::BufferOffset>(                  \
-                           NumElements() * sizeof(value_type)),                \
-        true);                                                                 \
-  }                                                                            \
+  reverse_iterator rbegin() { return reverse_iterator(end()); }                \
+  reverse_iterator rend() { return reverse_iterator(begin()); }                \
   const_reverse_iterator rbegin() const {                                      \
-    return const_reverse_iterator(this, BaseOffset(), true);                   \
+    return const_reverse_iterator(end());                                      \
   }                                                                            \
   const_reverse_iterator rend() const {                                        \
-    return const_reverse_iterator(                                             \
-        this,                                                                  \
-        BaseOffset() + static_cast<::toolbelt::BufferOffset>(                  \
-                           NumElements() * sizeof(value_type)),                \
-        true);                                                                 \
+    return const_reverse_iterator(begin());                                    \
   }                                                                            \
   const_reverse_iterator crbegin() const {                                     \
-    return const_reverse_iterator(this, BaseOffset(), true);                   \
+    return const_reverse_iterator(cend());                                     \
   }                                                                            \
   const_reverse_iterator crend() const {                                       \
-    return const_reverse_iterator(                                             \
-        this,                                                                  \
-        BaseOffset() + static_cast<::toolbelt::BufferOffset>(                  \
-                           NumElements() * sizeof(value_type)),                \
-        true);                                                                 \
+    return const_reverse_iterator(cbegin());                                   \
   }
 
 // vtype: value type
@@ -155,9 +142,22 @@ class PrimitiveVectorField : public Field {
     return base[index];
   }
 
-  T front() { return (*this)[0]; }
+  T& at(size_t index) {
+    if (index >= size()) {
+      throw std::out_of_range("PrimitiveVectorField::at");
+    }
+    return (*this)[static_cast<int>(index)];
+  }
+  T at(size_t index) const {
+    if (index >= size()) {
+      throw std::out_of_range("PrimitiveVectorField::at");
+    }
+    return (*this)[static_cast<int>(index)];
+  }
+
+  T& front() { return (*this)[0]; }
   const T front() const { return (*this)[0]; }
-  T back() { return (*this)[size() - 1]; }
+  T& back() { return (*this)[static_cast<int>(size() - 1)]; }
   const T back() const { return (*this)[size() - 1]; }
 
   T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
@@ -174,7 +174,7 @@ class PrimitiveVectorField : public Field {
     std::vector<T> v;
     size_t n = size();
     for (size_t i = 0; i < n; i++) {
-      v.push_back((*this)[i]);
+      v.push_back((*this)[static_cast<int>(i)]);
     }
     return v;
   }
@@ -192,6 +192,18 @@ class PrimitiveVectorField : public Field {
         GetBufferAddr(), Header(relative_binary_offset_), v);
   }
 
+  template <typename... Args>
+  T& emplace_back(Args&&... args) {
+    push_back(T(std::forward<Args>(args)...));
+    return (*this)[static_cast<int>(size() - 1)];
+  }
+
+  void pop_back() {
+    if (!empty()) {
+      resize(size() - 1);
+    }
+  }
+
   void reserve(size_t n) {
     ::toolbelt::PayloadBuffer::VectorReserve<T>(
         GetBufferAddr(), Header(relative_binary_offset_), n);
@@ -200,6 +212,70 @@ class PrimitiveVectorField : public Field {
   void resize(size_t n) {
     ::toolbelt::PayloadBuffer::VectorResize<T>(
         GetBufferAddr(), Header(relative_binary_offset_), n);
+  }
+  void resize(size_t n, const T& value) {
+    const T value_copy = value;
+    const size_t old_size = size();
+    resize(n);
+    for (size_t i = old_size; i < n; ++i) {
+      Set(i, value_copy);
+    }
+  }
+
+  void assign(size_t count, const T& value) {
+    const T value_copy = value;
+    Clear();
+    resize(count, value_copy);
+  }
+  template <typename InputIterator,
+            std::enable_if_t<!std::is_integral_v<InputIterator>, int> = 0>
+  void assign(InputIterator first, InputIterator last) {
+    Clear();
+    for (; first != last; ++first) {
+      push_back(*first);
+    }
+  }
+  void assign(std::initializer_list<T> values) {
+    assign(values.begin(), values.end());
+  }
+
+  template <typename Iterator>
+  iterator insert(Iterator pos, const T& value) {
+    const size_t index = static_cast<size_t>((pos.offset - BaseOffset()) /
+                                             static_cast<ptrdiff_t>(sizeof(T)));
+    std::vector<T> values = Get();
+    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
+    assign(values.begin(), values.end());
+    return begin() + index;
+  }
+  template <typename Iterator, typename... Args>
+  iterator emplace(Iterator pos, Args&&... args) {
+    return insert(pos, T(std::forward<Args>(args)...));
+  }
+  template <typename Iterator>
+  iterator erase(Iterator pos) {
+    return erase(pos, pos + 1);
+  }
+  template <typename Iterator>
+  iterator erase(Iterator first, Iterator last) {
+    const size_t first_index = static_cast<size_t>(
+        (first.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
+    const size_t last_index = static_cast<size_t>(
+        (last.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
+    std::vector<T> values = Get();
+    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
+                 values.begin() + static_cast<ptrdiff_t>(last_index));
+    assign(values.begin(), values.end());
+    return begin() + first_index;
+  }
+  void swap(PrimitiveVectorField& other) {
+    if (this == &other) {
+      return;
+    }
+    const std::vector<T> mine = Get();
+    const std::vector<T> theirs = other.Get();
+    *this = theirs;
+    other = mine;
   }
 
   void Clear() {
@@ -215,13 +291,22 @@ class PrimitiveVectorField : public Field {
     Clear();
     reserve(other.size());
     for (size_t i = 0; i < other.size(); i++) {
-      push_back(other[i]);
+      push_back(other[static_cast<int>(i)]);
     }
     ResetFieldCache();
     return *this;
   }
   PrimitiveVectorField& operator=(PrimitiveVectorField&& other) noexcept {
     return operator=(static_cast<const PrimitiveVectorField&>(other));
+  }
+  PrimitiveVectorField& operator=(std::initializer_list<T> values) {
+    assign(values);
+    return *this;
+  }
+  template <typename Allocator>
+  PrimitiveVectorField& operator=(const std::vector<T, Allocator>& values) {
+    assign(values.begin(), values.end());
+    return *this;
   }
 
   size_t size() const { return NumElements(); }
@@ -278,9 +363,11 @@ class PrimitiveVectorField : public Field {
     return relative_binary_offset_;
   }
 
-  bool operator==(
-      const PrimitiveVectorField<T, FixedSize, Packed, Signed>& other) const {
-    size_t n = size();
+  bool operator==(const PrimitiveVectorField& other) const {
+    const size_t n = size();
+    if (n != other.size()) {
+      return false;
+    }
     for (size_t i = 0; i < n; i++) {
       if ((*this)[i] != other[i]) {
         return false;
@@ -288,9 +375,26 @@ class PrimitiveVectorField : public Field {
     }
     return true;
   }
-  bool operator!=(
-      const PrimitiveVectorField<T, FixedSize, Packed, Signed>& other) const {
+  bool operator!=(const PrimitiveVectorField& other) const {
     return !(*this == other);
+  }
+  template <typename Allocator>
+  bool operator==(const std::vector<T, Allocator>& other) const {
+    return size() == other.size() && std::equal(begin(), end(), other.begin());
+  }
+  template <typename Allocator>
+  bool operator!=(const std::vector<T, Allocator>& other) const {
+    return !(*this == other);
+  }
+  template <typename Allocator>
+  friend bool operator==(const std::vector<T, Allocator>& lhs,
+                         const PrimitiveVectorField& rhs) {
+    return rhs == lhs;
+  }
+  template <typename Allocator>
+  friend bool operator!=(const std::vector<T, Allocator>& lhs,
+                         const PrimitiveVectorField& rhs) {
+    return !(rhs == lhs);
   }
 
   size_t SerializedSize() const {
@@ -518,16 +622,30 @@ class EnumVectorField : public Field {
     return *reinterpret_cast<const Enum*>(&base[index]);
   }
 
-  Enum front() { return (*this)[0]; }
-  const Enum front() const { return (*this)[0]; }
-  Enum back() { return (*this)[size() - 1]; }
-  const Enum back() const { return (*this)[size() - 1]; }
+  Enum& at(size_t index) {
+    if (index >= size()) {
+      throw std::out_of_range("EnumVectorField::at");
+    }
+    return (*this)[static_cast<int>(index)];
+  }
+  Enum at(size_t index) const {
+    if (index >= size()) {
+      throw std::out_of_range("EnumVectorField::at");
+    }
+    return (*this)[static_cast<int>(index)];
+  }
 
-  const std::vector<Enum> Get() const {
-    size_t n = size();
+  Enum& front() { return (*this)[0]; }
+  const Enum front() const { return (*this)[0]; }
+  Enum& back() { return (*this)[static_cast<int>(size() - 1)]; }
+  const Enum back() const { return (*this)[static_cast<int>(size() - 1)]; }
+
+  std::vector<Enum> Get() const {
+    const size_t n = size();
     std::vector<Enum> r;
+    r.reserve(n);
     for (size_t i = 0; i < n; i++) {
-      r[i] = (*this)[i];
+      r.push_back((*this)[static_cast<int>(i)]);
     }
     return r;
   }
@@ -576,6 +694,18 @@ class EnumVectorField : public Field {
         GetBufferAddr(), Header(relative_binary_offset_), static_cast<T>(v));
   }
 
+  template <typename... Args>
+  Enum& emplace_back(Args&&... args) {
+    push_back(Enum(std::forward<Args>(args)...));
+    return (*this)[static_cast<int>(size() - 1)];
+  }
+
+  void pop_back() {
+    if (!empty()) {
+      resize(size() - 1);
+    }
+  }
+
   void reserve(size_t n) {
     ::toolbelt::PayloadBuffer::VectorReserve<T>(
         GetBufferAddr(), Header(relative_binary_offset_), n);
@@ -585,8 +715,70 @@ class EnumVectorField : public Field {
     ::toolbelt::PayloadBuffer::VectorResize<T>(
         GetBufferAddr(), Header(relative_binary_offset_), n);
   }
+  void resize(size_t n, Enum value) {
+    const size_t old_size = size();
+    resize(n);
+    for (size_t i = old_size; i < n; ++i) {
+      Set(i, value);
+    }
+  }
 
   void Add(Enum v) { push_back(v); }
+
+  void assign(size_t count, Enum value) {
+    Clear();
+    resize(count, value);
+  }
+  template <typename InputIterator,
+            std::enable_if_t<!std::is_integral_v<InputIterator>, int> = 0>
+  void assign(InputIterator first, InputIterator last) {
+    Clear();
+    for (; first != last; ++first) {
+      push_back(*first);
+    }
+  }
+  void assign(std::initializer_list<Enum> values) {
+    assign(values.begin(), values.end());
+  }
+
+  template <typename Iterator>
+  iterator insert(Iterator pos, Enum value) {
+    const size_t index = static_cast<size_t>((pos.offset - BaseOffset()) /
+                                             static_cast<ptrdiff_t>(sizeof(T)));
+    std::vector<Enum> values = Get();
+    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
+    assign(values.begin(), values.end());
+    return begin() + index;
+  }
+  template <typename Iterator, typename... Args>
+  iterator emplace(Iterator pos, Args&&... args) {
+    return insert(pos, Enum(std::forward<Args>(args)...));
+  }
+  template <typename Iterator>
+  iterator erase(Iterator pos) {
+    return erase(pos, pos + 1);
+  }
+  template <typename Iterator>
+  iterator erase(Iterator first, Iterator last) {
+    const size_t first_index = static_cast<size_t>(
+        (first.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
+    const size_t last_index = static_cast<size_t>(
+        (last.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
+    std::vector<Enum> values = Get();
+    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
+                 values.begin() + static_cast<ptrdiff_t>(last_index));
+    assign(values.begin(), values.end());
+    return begin() + first_index;
+  }
+  void swap(EnumVectorField& other) {
+    if (this == &other) {
+      return;
+    }
+    const std::vector<Enum> mine = Get();
+    const std::vector<Enum> theirs = other.Get();
+    *this = theirs;
+    other = mine;
+  }
 
   void Clear() {
     ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
@@ -608,6 +800,15 @@ class EnumVectorField : public Field {
   }
   EnumVectorField& operator=(EnumVectorField&& other) noexcept {
     return operator=(static_cast<const EnumVectorField&>(other));
+  }
+  EnumVectorField& operator=(std::initializer_list<Enum> values) {
+    assign(values);
+    return *this;
+  }
+  template <typename Allocator>
+  EnumVectorField& operator=(const std::vector<Enum, Allocator>& values) {
+    assign(values.begin(), values.end());
+    return *this;
   }
 
   size_t size() const { return NumElements(); }
@@ -638,7 +839,10 @@ class EnumVectorField : public Field {
 
   bool operator==(
       const EnumVectorField<Enum, Stringizer, Parser, Packed>& other) const {
-    size_t n = size();
+    const size_t n = size();
+    if (n != other.size()) {
+      return false;
+    }
     for (size_t i = 0; i < n; i++) {
       if ((*this)[i] != other[i]) {
         return false;
@@ -649,6 +853,24 @@ class EnumVectorField : public Field {
   bool operator!=(
       const EnumVectorField<Enum, Stringizer, Parser, Packed>& other) const {
     return !(*this == other);
+  }
+  template <typename Allocator>
+  bool operator==(const std::vector<Enum, Allocator>& other) const {
+    return size() == other.size() && std::equal(begin(), end(), other.begin());
+  }
+  template <typename Allocator>
+  bool operator!=(const std::vector<Enum, Allocator>& other) const {
+    return !(*this == other);
+  }
+  template <typename Allocator>
+  friend bool operator==(const std::vector<Enum, Allocator>& lhs,
+                         const EnumVectorField& rhs) {
+    return rhs == lhs;
+  }
+  template <typename Allocator>
+  friend bool operator!=(const std::vector<Enum, Allocator>& lhs,
+                         const EnumVectorField& rhs) {
+    return !(rhs == lhs);
   }
 
   size_t SerializedSize() const {
@@ -831,7 +1053,23 @@ class MessageVectorField : public Field {
   }
 
   T operator[](int index) {
+    if (GetRuntime() != nullptr && GetRuntime()->IsMutable()) {
+      return Mutable(static_cast<size_t>(index));
+    }
     return static_cast<const MessageVectorField*>(this)->operator[](index);
+  }
+
+  T at(size_t index) {
+    if (index >= size()) {
+      throw std::out_of_range("MessageVectorField::at");
+    }
+    return (*this)[static_cast<int>(index)];
+  }
+  T at(size_t index) const {
+    if (index >= size()) {
+      throw std::out_of_range("MessageVectorField::at");
+    }
+    return (*this)[static_cast<int>(index)];
   }
 
   T front() { return (*this)[0]; }
@@ -882,6 +1120,7 @@ class MessageVectorField : public Field {
     bool operator!=(const const_iterator& other) const {
       return !(*this == other);
     }
+    size_t Index() const { return index_; }
 
    private:
     const MessageVectorField* field_ = nullptr;
@@ -895,42 +1134,24 @@ class MessageVectorField : public Field {
   iterator end() { return iterator(this, size()); }
   reverse_iterator rbegin() { return reverse_iterator(end()); }
   reverse_iterator rend() { return reverse_iterator(begin()); }
-  const_iterator begin() const {
-    return const_iterator(this, 0);
-  }
-  const_iterator end() const {
-    return const_iterator(this, size());
-  }
-  const_iterator cbegin() const {
-    return begin();
-  }
-  const_iterator cend() const {
-    return end();
-  }
+  const_iterator begin() const { return const_iterator(this, 0); }
+  const_iterator end() const { return const_iterator(this, size()); }
+  const_iterator cbegin() const { return begin(); }
+  const_iterator cend() const { return end(); }
   const_reverse_iterator rbegin() const {
     return const_reverse_iterator(end());
   }
   const_reverse_iterator rend() const {
     return const_reverse_iterator(begin());
   }
-  const_reverse_iterator crbegin() const {
-    return rbegin();
-  }
-  const_reverse_iterator crend() const {
-    return rend();
-  }
+  const_reverse_iterator crbegin() const { return rbegin(); }
+  const_reverse_iterator crend() const { return rend(); }
 
-  void push_back(const T& v) {
-    ::toolbelt::BufferOffset offset = v.absolute_binary_offset;
-    ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), Header(), offset);
-  }
+  void push_back(const T& v) { (void)Add().CloneFrom(v); }
 
-  void push_back(T&& v) {
-    ::toolbelt::BufferOffset offset = v.absolute_binary_offset;
-    ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), Header(), offset);
-  }
+  void push_back(T&& v) { (void)Add().CloneFrom(v); }
+
+  T emplace_back() { return Add(); }
 
   T Add() {
     // Allocate a new message.
@@ -993,7 +1214,9 @@ class MessageVectorField : public Field {
   std::vector<T> Allocate(size_t n) {
     std::vector<T> result;
     result.reserve(n);
-    this->resize(n);
+    Clear();
+    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+        GetBufferAddr(), Header(), n);
     // Allocate memory for n messages in the payload buffer.
     std::vector<void*> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
         GetBufferAddr(), T::BinarySize(), static_cast<uint32_t>(n), true);
@@ -1030,9 +1253,90 @@ class MessageVectorField : public Field {
   }
 
   void resize(size_t n) {
-    // Resize the vector data in the binary.  This contains BufferOffets.
+    const size_t old_size = size();
+    if (n < old_size) {
+      for (size_t i = n; i < old_size; ++i) {
+        auto hdr = Header();
+        auto data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+            hdr->data);
+        const ::toolbelt::BufferOffset offset = data[i];
+        if (offset != 0) {
+          T(GetRuntime(), offset).Clear();
+          GetBuffer()->Free(GetRuntime()->ToAddress(offset));
+        }
+      }
+    }
     ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), n);
+    for (size_t i = old_size; i < n; ++i) {
+      (void)Mutable(i);
+    }
+  }
+  void resize(size_t n, const T& value) {
+    const size_t old_size = size();
+    resize(n);
+    for (size_t i = old_size; i < n; ++i) {
+      (void)Mutable(i).CloneFrom(value);
+    }
+  }
+
+  void pop_back() {
+    if (!empty()) {
+      resize(size() - 1);
+    }
+  }
+
+  void assign(size_t count, const T& value) {
+    Clear();
+    for (size_t i = 0; i < count; ++i) {
+      push_back(value);
+    }
+  }
+  template <typename InputIterator>
+  void assign(InputIterator first, InputIterator last) {
+    Clear();
+    for (; first != last; ++first) {
+      push_back(*first);
+    }
+  }
+  void assign(std::initializer_list<T> values) {
+    assign(values.begin(), values.end());
+  }
+
+  iterator insert(const_iterator pos, const T& value) {
+    const size_t index = pos.Index();
+    std::vector<T> values = CopyValues();
+    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
+    assign(values.begin(), values.end());
+    return iterator(this, index);
+  }
+  template <typename... Args>
+  iterator emplace(const_iterator pos, Args&&... args) {
+    return insert(pos, T(std::forward<Args>(args)...));
+  }
+  iterator erase(const_iterator pos) {
+    const size_t index = pos.Index();
+    std::vector<T> values = CopyValues();
+    values.erase(values.begin() + static_cast<ptrdiff_t>(index));
+    assign(values.begin(), values.end());
+    return iterator(this, index);
+  }
+  iterator erase(const_iterator first, const_iterator last) {
+    const size_t first_index = first.Index();
+    std::vector<T> values = CopyValues();
+    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
+                 values.begin() + static_cast<ptrdiff_t>(last.Index()));
+    assign(values.begin(), values.end());
+    return iterator(this, first_index);
+  }
+  void swap(MessageVectorField& other) {
+    if (this == &other) {
+      return;
+    }
+    const std::vector<T> mine = CopyValues();
+    const std::vector<T> theirs = other.CopyValues();
+    *this = theirs;
+    other = mine;
   }
 
   void Clear() {
@@ -1049,6 +1353,7 @@ class MessageVectorField : public Field {
     ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header());
   }
+  void clear() { Clear(); }
 
   size_t size() const { return NumElements(); }
   bool empty() const { return size() == 0; }
@@ -1072,6 +1377,15 @@ class MessageVectorField : public Field {
   MessageVectorField& operator=(MessageVectorField&& other) noexcept {
     return operator=(static_cast<const MessageVectorField&>(other));
   }
+  MessageVectorField& operator=(std::initializer_list<T> values) {
+    assign(values);
+    return *this;
+  }
+  template <typename Allocator>
+  MessageVectorField& operator=(const std::vector<T, Allocator>& values) {
+    assign(values.begin(), values.end());
+    return *this;
+  }
 
   ::toolbelt::BufferOffset BinaryEndOffset() const {
     return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
@@ -1093,6 +1407,32 @@ class MessageVectorField : public Field {
   }
   bool operator!=(const MessageVectorField<T>& other) const {
     return !operator==(other);
+  }
+  template <typename Allocator>
+  bool operator==(const std::vector<T, Allocator>& other) const {
+    if (size() != other.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < size(); ++i) {
+      if (Get(i) != other[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  template <typename Allocator>
+  bool operator!=(const std::vector<T, Allocator>& other) const {
+    return !(*this == other);
+  }
+  template <typename Allocator>
+  friend bool operator==(const std::vector<T, Allocator>& lhs,
+                         const MessageVectorField& rhs) {
+    return rhs == lhs;
+  }
+  template <typename Allocator>
+  friend bool operator!=(const std::vector<T, Allocator>& lhs,
+                         const MessageVectorField& rhs) {
+    return !(rhs == lhs);
   }
 
   std::vector<T> Get() const {
@@ -1156,6 +1496,17 @@ class MessageVectorField : public Field {
   }
 
  private:
+  std::vector<T> CopyValues() const {
+    std::vector<T> result;
+    result.reserve(size());
+    for (size_t i = 0; i < size(); ++i) {
+      T copy;
+      (void)copy.CloneFrom(Get(i));
+      result.push_back(std::move(copy));
+    }
+    return result;
+  }
+
   friend FieldIterator<MessageVectorField, T>;
   friend FieldIterator<MessageVectorField, const T>;
   toolbelt::VectorHeader* Header(
@@ -1261,8 +1612,31 @@ class StringVectorField : public Field {
     }
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (data[index] == 0) {
+      void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
+          GetBufferAddr(), sizeof(toolbelt::StringHeader));
+      const ::toolbelt::BufferOffset string_offset =
+          GetRuntime()->ToOffset(str_hdr);
+      hdr = Header();
+      data =
+          GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+      data[index] = string_offset;
+    }
     return NonEmbeddedStringField(Message::GetMessage(this, source_offset_),
                                   data[index]);
+  }
+
+  NonEmbeddedStringField at(size_t index) {
+    if (index >= size()) {
+      throw std::out_of_range("StringVectorField::at");
+    }
+    return (*this)[static_cast<int>(index)];
+  }
+  std::string_view at(size_t index) const {
+    if (index >= size()) {
+      throw std::out_of_range("StringVectorField::at");
+    }
+    return Get(index);
   }
 
   using value_type = std::string_view;
@@ -1308,6 +1682,7 @@ class StringVectorField : public Field {
     bool operator!=(const const_iterator& other) const {
       return !(*this == other);
     }
+    size_t Index() const { return index_; }
 
    private:
     const StringVectorField* field_ = nullptr;
@@ -1321,30 +1696,18 @@ class StringVectorField : public Field {
   iterator end() { return iterator(this, size()); }
   reverse_iterator rbegin() { return reverse_iterator(end()); }
   reverse_iterator rend() { return reverse_iterator(begin()); }
-  const_iterator begin() const {
-    return const_iterator(this, 0);
-  }
-  const_iterator end() const {
-    return const_iterator(this, size());
-  }
-  const_iterator cbegin() const {
-    return begin();
-  }
-  const_iterator cend() const {
-    return end();
-  }
+  const_iterator begin() const { return const_iterator(this, 0); }
+  const_iterator end() const { return const_iterator(this, size()); }
+  const_iterator cbegin() const { return begin(); }
+  const_iterator cend() const { return end(); }
   const_reverse_iterator rbegin() const {
     return const_reverse_iterator(end());
   }
   const_reverse_iterator rend() const {
     return const_reverse_iterator(begin());
   }
-  const_reverse_iterator crbegin() const {
-    return rbegin();
-  }
-  const_reverse_iterator crend() const {
-    return rend();
-  }
+  const_reverse_iterator crbegin() const { return rbegin(); }
+  const_reverse_iterator crend() const { return rend(); }
 
   size_t size() const { return NumElements(); }
   NonEmbeddedStringField* data() = delete;
@@ -1354,7 +1717,9 @@ class StringVectorField : public Field {
 
   NonEmbeddedStringField front() { return (*this)[0]; }
   std::string_view front() const { return Get(0); }
-  NonEmbeddedStringField back() { return (*this)[static_cast<int>(size() - 1)]; }
+  NonEmbeddedStringField back() {
+    return (*this)[static_cast<int>(size() - 1)];
+  }
   std::string_view back() const { return Get(size() - 1); }
 
   StringVectorField& operator=(const StringVectorField& other) {
@@ -1385,12 +1750,19 @@ class StringVectorField : public Field {
     // Add an offset for the new string to the binary.
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), hdr_offset);
-
   }
 
-  void Add(const char* s, size_t len) {
-    push_back(std::string_view(s, len));
+  template <typename Str>
+  NonEmbeddedStringField emplace_back(Str s) {
+    push_back(s);
+    return back();
   }
+  NonEmbeddedStringField emplace_back() {
+    push_back(std::string_view());
+    return back();
+  }
+
+  void Add(const char* s, size_t len) { push_back(std::string_view(s, len)); }
   template <typename Str>
   void Add(Str s) {
     push_back(s);
@@ -1444,22 +1816,121 @@ class StringVectorField : public Field {
   }
 
   void resize(size_t n) {
-    // Resize the vector data in the binary.  This contains BufferOffets.
+    const size_t old_size = size();
+    if (n < old_size) {
+      for (size_t i = n; i < old_size; ++i) {
+        auto hdr = Header();
+        auto data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+            hdr->data);
+        const ::toolbelt::BufferOffset offset = data[i];
+        if (offset != 0) {
+          NonEmbeddedStringField(Message::GetMessage(this, source_offset_),
+                                 offset)
+              .Clear();
+        }
+      }
+    }
     ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header(), n);
   }
+  void resize(size_t n, std::string_view value) {
+    const std::string value_copy(value);
+    const size_t old_size = size();
+    resize(n);
+    for (size_t i = old_size; i < n; ++i) {
+      Set(i, value_copy);
+    }
+  }
+
+  void pop_back() {
+    if (!empty()) {
+      resize(size() - 1);
+    }
+  }
+
+  void assign(size_t count, std::string_view value) {
+    const std::string value_copy(value);
+    Clear();
+    reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+      push_back(value_copy);
+    }
+  }
+  template <typename InputIterator>
+  void assign(InputIterator first, InputIterator last) {
+    Clear();
+    for (; first != last; ++first) {
+      push_back(*first);
+    }
+  }
+  void assign(std::initializer_list<std::string_view> values) {
+    assign(values.begin(), values.end());
+  }
+
+  iterator insert(const_iterator pos, std::string_view value) {
+    const size_t index = pos.Index();
+    std::vector<std::string> values = CopyValues();
+    values.insert(values.begin() + static_cast<ptrdiff_t>(index),
+                  std::string(value));
+    assign(values.begin(), values.end());
+    return iterator(this, index);
+  }
+  template <typename... Args>
+  iterator emplace(const_iterator pos, Args&&... args) {
+    return insert(pos, std::string(std::forward<Args>(args)...));
+  }
+  iterator erase(const_iterator pos) {
+    const size_t index = pos.Index();
+    std::vector<std::string> values = CopyValues();
+    values.erase(values.begin() + static_cast<ptrdiff_t>(index));
+    assign(values.begin(), values.end());
+    return iterator(this, index);
+  }
+  iterator erase(const_iterator first, const_iterator last) {
+    const size_t first_index = first.Index();
+    std::vector<std::string> values = CopyValues();
+    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
+                 values.begin() + static_cast<ptrdiff_t>(last.Index()));
+    assign(values.begin(), values.end());
+    return iterator(this, first_index);
+  }
+  void swap(StringVectorField& other) {
+    if (this == &other) {
+      return;
+    }
+    const std::vector<std::string> mine = CopyValues();
+    const std::vector<std::string> theirs = other.CopyValues();
+    *this = theirs;
+    other = mine;
+  }
 
   void Clear() {
-    const size_t count = size();
-    for (size_t i = 0; i < count; ++i) {
-      NonEmbeddedStringField field = (*this)[static_cast<int>(i)];
-      field.Clear();
+    auto hdr = Header();
+    auto data =
+        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    for (size_t i = 0; i < hdr->num_elements; ++i) {
+      const ::toolbelt::BufferOffset offset = data[i];
+      if (offset == 0) {
+        continue;
+      }
+      NonEmbeddedStringField(Message::GetMessage(this, source_offset_), offset)
+          .Clear();
     }
     ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
         GetBufferAddr(), Header());
   }
 
   void clear() { Clear(); }  // STL compatibility.
+
+  StringVectorField& operator=(std::initializer_list<std::string_view> values) {
+    assign(values);
+    return *this;
+  }
+  template <typename String, typename Allocator>
+  StringVectorField& operator=(const std::vector<String, Allocator>& values) {
+    assign(values.begin(), values.end());
+    return *this;
+  }
 
   ::toolbelt::BufferOffset BinaryEndOffset() const {
     return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
@@ -1481,6 +1952,32 @@ class StringVectorField : public Field {
   }
   bool operator!=(const StringVectorField& other) const {
     return !(*this == other);
+  }
+  template <typename String, typename Allocator>
+  bool operator==(const std::vector<String, Allocator>& other) const {
+    if (size() != other.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < size(); ++i) {
+      if (Get(i) != std::string_view(other[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  template <typename String, typename Allocator>
+  bool operator!=(const std::vector<String, Allocator>& other) const {
+    return !(*this == other);
+  }
+  template <typename String, typename Allocator>
+  friend bool operator==(const std::vector<String, Allocator>& lhs,
+                         const StringVectorField& rhs) {
+    return rhs == lhs;
+  }
+  template <typename String, typename Allocator>
+  friend bool operator!=(const std::vector<String, Allocator>& lhs,
+                         const StringVectorField& rhs) {
+    return !(rhs == lhs);
   }
 
   void Populate() const {}
@@ -1530,6 +2027,15 @@ class StringVectorField : public Field {
   }
 
  private:
+  std::vector<std::string> CopyValues() const {
+    std::vector<std::string> result;
+    result.reserve(size());
+    for (size_t i = 0; i < size(); ++i) {
+      result.emplace_back(Get(i));
+    }
+    return result;
+  }
+
   toolbelt::VectorHeader* Header(
       ::toolbelt::BufferOffset relative_offset = 0) const {
     if (relative_offset == 0) {

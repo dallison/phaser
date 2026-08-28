@@ -69,7 +69,7 @@ TEST(ROSWireformatTest, RejectsInvalidRawWrite) {
 TEST(ROSWireformatTest, ReadsCanonicalLittleEndianBytes) {
   ROSBuffer buffer;
   ASSERT_TRUE(buffer.Write(static_cast<int16_t>(-2)).ok());
-  ASSERT_TRUE(buffer.Write(static_cast<uint32_t>(0xf2345678)).ok());
+  ASSERT_TRUE(buffer.Write(0xf2345678U).ok());
   ASSERT_TRUE(buffer.Write(true).ok());
   ASSERT_TRUE(buffer.Write(1.5F).ok());
   ASSERT_TRUE(buffer.Write(-2.25).ok());
