@@ -278,6 +278,28 @@ TEST(PhaserTest, HostilePayloadIsBounded) {
       sum += msg.vi32(i);
     }
     (void)sum;
+    // capacity() must not underflow-read before a hostile data offset.
+    ASSERT_GE(msg.vi32().capacity(), 0u);
+  }
+
+  // 4) Presence bits / has_* and nested-message access must stay in-bounds
+  //    even with inflated full_size (already set above).
+  {
+    auto msg = foo::bar::phaser::TestMessage::CreateReadonly(recv.data(),
+                                                             recv.size());
+    (void)msg.has_x();
+    (void)msg.has_s();
+    (void)msg.has_m();
+    (void)msg.m().str();
+    // String size()/data() used by Serialize must be size-aware.
+    ASSERT_LE(msg.s().size(), recv.size());
+    const char* sdata = msg.s().data();
+    if (sdata != nullptr) {
+      ASSERT_GE(static_cast<const void*>(sdata),
+                static_cast<const void*>(recv.data()));
+      ASSERT_LT(static_cast<const void*>(sdata),
+                static_cast<const void*>(recv.data() + recv.size()));
+    }
   }
 }
 

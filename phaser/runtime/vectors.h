@@ -272,17 +272,7 @@ class PrimitiveVectorField : public Field {
   bool empty() const { return size() == 0; }
 
   size_t capacity() const {
-    ::toolbelt::BufferOffset offset = BaseOffset();
-    if (offset == 0) {
-      return 0;
-    }
-    ::toolbelt::BufferOffset* addr =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(offset);
-    if (addr == nullptr) {
-      return 0;
-    }
-    // Word before memory is size of memory in bytes.
-    return addr[-1] / sizeof(value_type);
+    return GetRuntime()->AllocatedCapacity(BaseOffset(), sizeof(value_type));
   }
 
   ::toolbelt::BufferOffset BinaryEndOffset() const {
@@ -470,7 +460,11 @@ class PrimitiveVectorField : public Field {
     if (offset < 0) {
       return 0;
     }
-    return Header(static_cast<uint32_t>(offset))->data;
+    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr) {
+      return 0;
+    }
+    return hdr->data;
   }
 
   size_t NumElements() const {
@@ -646,13 +640,10 @@ class EnumVectorField : public Field {
 
   size_t capacity() const {
     toolbelt::VectorHeader* hdr = Header();
-    ::toolbelt::BufferOffset* addr =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    if (addr == nullptr) {
+    if (hdr == nullptr) {
       return 0;
     }
-    // Word before memory is size of memory in bytes.
-    return addr[-1] / sizeof(T);
+    return GetRuntime()->AllocatedCapacity(hdr->data, sizeof(T));
   }
 
   ::toolbelt::BufferOffset BinaryEndOffset() const {
@@ -794,7 +785,11 @@ class EnumVectorField : public Field {
     if (offset < 0) {
       return 0;
     }
-    return Header(static_cast<uint32_t>(offset))->data;
+    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr) {
+      return 0;
+    }
+    return hdr->data;
   }
 
   size_t NumElements() const {
@@ -1047,15 +1042,8 @@ class MessageVectorField : public Field {
   }
 
   size_t capacity() const {
-    ::toolbelt::BufferOffset* base =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
-            BaseOffset());
-
-    if (base == nullptr) {
-      return 0;
-    }
-    // Word before memory is size of memory in bytes.
-    return base[-1] / sizeof(::toolbelt::BufferOffset);
+    return GetRuntime()->AllocatedCapacity(BaseOffset(),
+                                           sizeof(::toolbelt::BufferOffset));
   }
 
   void reserve(size_t n) {
@@ -1206,7 +1194,11 @@ class MessageVectorField : public Field {
     if (offset < 0) {
       return 0;
     }
-    return Header(static_cast<uint32_t>(offset))->data;
+    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr) {
+      return 0;
+    }
+    return hdr->data;
   }
 
   size_t NumElements() const {
@@ -1475,15 +1467,8 @@ class StringVectorField : public Field {
   }
 
   size_t capacity() const {
-    ::toolbelt::BufferOffset* base =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
-            BaseOffset());
-
-    if (base == nullptr) {
-      return 0;
-    }
-    // Word before memory is size of memory in bytes.
-    return base[-1] / sizeof(::toolbelt::BufferOffset);
+    return GetRuntime()->AllocatedCapacity(BaseOffset(),
+                                           sizeof(::toolbelt::BufferOffset));
   }
 
   void reserve(size_t n) {
@@ -1596,7 +1581,11 @@ class StringVectorField : public Field {
     if (offset < 0) {
       return 0;
     }
-    return Header(static_cast<uint32_t>(offset))->data;
+    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr) {
+      return 0;
+    }
+    return hdr->data;
   }
 
   size_t NumElements() const {

@@ -50,12 +50,13 @@ class Field {
     buffer->ClearPresenceBit(static_cast<uint32_t>(id_), binary_offset);
   }
 
-  bool IsPresent(uint32_t field_id, ::toolbelt::PayloadBuffer* buffer,
+  bool IsPresent(uint32_t field_id, const void* field, uint32_t source_offset,
                  uint32_t binary_offset) const {
     if (field_id == static_cast<uint32_t>(-1)) {
       return false;
     }
-    return buffer->IsPresent(field_id, binary_offset);
+    return Message::GetRuntime(field, source_offset)
+        ->IsPresent(field_id, binary_offset);
   }
 
   int Id() const { return id_; }
@@ -167,8 +168,8 @@ class Field {
     type GetForPrinting() const { return Get(); }                             \
     bool IsPresent() const {                                                  \
       return Field::IsPresent(                                                \
-          static_cast<uint32_t>(FindFieldId(source_offset_)), GetBuffer(),    \
-          GetPresenceMaskStart());                                            \
+          static_cast<uint32_t>(FindFieldId(source_offset_)), this,            \
+          source_offset_, GetPresenceMaskStart());                            \
     }                                                                         \
                                                                               \
     void Set(type v) {                                                        \
@@ -294,7 +295,7 @@ class EnumField : public Field {
 
   bool IsPresent() const {
     return Field::IsPresent(static_cast<uint32_t>(FindFieldId(source_offset_)),
-                            GetBuffer(), GetPresenceMaskStart());
+                            this, source_offset_, GetPresenceMaskStart());
   }
 
   std::string ToString() const { return Stringizer()(Get()); }
@@ -476,7 +477,7 @@ class StringField : public Field {
     if (offset < 0) {
       return 0;
     }
-    return GetBuffer()->StringSize(
+    return GetRuntime()->StringSize(
         GetMessageBinaryStart() +
         static_cast<::toolbelt::BufferOffset>(offset));
   }
@@ -486,7 +487,7 @@ class StringField : public Field {
     if (offset < 0) {
       return nullptr;
     }
-    return GetBuffer()->StringData(
+    return GetRuntime()->StringData(
         GetMessageBinaryStart() +
         static_cast<::toolbelt::BufferOffset>(offset));
   }
@@ -640,14 +641,14 @@ class NonEmbeddedStringField {
     if (IsPlaceholder()) {
       return 0;
     }
-    return GetBuffer()->StringSize(absolute_binary_offset_);
+    return msg_->runtime->StringSize(absolute_binary_offset_);
   }
 
   const char* data() const {
     if (IsPlaceholder()) {
       return "";
     }
-    return GetBuffer()->StringData(absolute_binary_offset_);
+    return msg_->runtime->StringData(absolute_binary_offset_);
   }
   bool empty() const { return size() == 0; }
 
@@ -736,7 +737,7 @@ class IndirectMessageField : public Field {
     }
     ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
-    if (*addr == 0) {
+    if (addr == nullptr || *addr == 0) {
       return DefaultMessage();
     }
     // Load up the message if it's already been allocated.
@@ -752,13 +753,13 @@ class IndirectMessageField : public Field {
     }
     ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
-    return *addr != 0;
+    return addr != nullptr && *addr != 0;
   }
 
   MessageType* Mutable() {
     ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
-    if (*addr != 0) {
+    if (addr != nullptr && *addr != 0) {
       // Already allocated.
       msg_.runtime = GetRuntime();
       msg_.absolute_binary_offset = *addr;
@@ -784,6 +785,9 @@ class IndirectMessageField : public Field {
   void SetOffset(toolbelt::BufferOffset offset) {
     ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
+    if (addr == nullptr) {
+      return;
+    }
     if (*addr != 0) {
       // Already set, clear the exising message
       Clear();
@@ -796,7 +800,7 @@ class IndirectMessageField : public Field {
   void Clear() {
     ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
-    if (*addr == 0) {
+    if (addr == nullptr || *addr == 0) {
       return;
     }
     const ::toolbelt::BufferOffset old_offset = *addr;
@@ -808,7 +812,9 @@ class IndirectMessageField : public Field {
     GetBuffer()->Free(GetRuntime()->ToAddress(old_offset));
     // Zero out the offset to the message.
     addr = GetIndirectAddress(relative_binary_offset_);
-    *addr = 0;
+    if (addr != nullptr) {
+      *addr = 0;
+    }
   }
 
   bool operator==(const IndirectMessageField<MessageType>& other) const {
@@ -825,7 +831,7 @@ class IndirectMessageField : public Field {
     }
     ::toolbelt::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
-    if (*addr != 0) {
+    if (addr != nullptr && *addr != 0) {
       // Load up the message if it's already been allocated.
       msg_.runtime = GetRuntime();
       msg_.absolute_binary_offset = *addr;
@@ -903,7 +909,7 @@ class IndirectMessageField : public Field {
   }
 
   ::toolbelt::BufferOffset* GetIndirectAddress(uint32_t abs_offset) const {
-    return GetBuffer()->template ToAddress<::toolbelt::BufferOffset>(
+    return GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
         GetMessageBinaryStart() + abs_offset);
   }
 

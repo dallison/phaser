@@ -259,12 +259,12 @@ class UnionStringField : public UnionMemberField {
 
   size_t size(const std::shared_ptr<MessageRuntime>& runtime,
               uint32_t abs_offset) const {
-    return GetBuffer(runtime)->StringSize(abs_offset);
+    return runtime->StringSize(abs_offset);
   }
 
   const char* data(const std::shared_ptr<MessageRuntime>& runtime,
                    uint32_t abs_offset) const {
-    return GetBuffer(runtime)->StringData(abs_offset);
+    return runtime->StringData(abs_offset);
   }
   void Clear(const std::shared_ptr<MessageRuntime>& runtime,
              uint32_t abs_offset) {
@@ -631,7 +631,8 @@ class UnionField : public Field {
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() +
         static_cast<::toolbelt::BufferOffset>(relative_offset));
-    if (*discrim != static_cast<int32_t>(field_numbers_[Id])) {
+    if (discrim == nullptr ||
+        *discrim != static_cast<int32_t>(field_numbers_[Id])) {
       return;
     }
     std::get<Id>(value_).Print(
@@ -709,6 +710,9 @@ class UnionField : public Field {
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() +
         static_cast<::toolbelt::BufferOffset>(relative_offset));
+    if (discrim == nullptr) {
+      return 0;
+    }
     return *discrim;
   }
 
@@ -716,6 +720,9 @@ class UnionField : public Field {
   void Clear() {
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
+    if (discrim == nullptr) {
+      return;
+    }
     int32_t field_number = static_cast<int32_t>(field_numbers_[Id]);
     if (*discrim != field_number) {
       return;
@@ -811,7 +818,8 @@ class UnionField : public Field {
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() +
         static_cast<::toolbelt::BufferOffset>(relative_offset));
-    return *discrim == static_cast<int32_t>(field_numbers_[Id]);
+    return discrim != nullptr &&
+           *discrim == static_cast<int32_t>(field_numbers_[Id]);
   }
 
   template <int Id>

@@ -417,6 +417,36 @@ struct MessageRuntime {
     return pb->GetStringView(header_offset, buffer_size);
   }
 
+  size_t StringSize(toolbelt::BufferOffset header_offset) const {
+    if (pb == nullptr) {
+      return 0;
+    }
+    return pb->StringSize(header_offset, buffer_size);
+  }
+
+  const char* StringData(toolbelt::BufferOffset header_offset) const {
+    if (pb == nullptr) {
+      return nullptr;
+    }
+    return pb->StringData(header_offset, buffer_size);
+  }
+
+  // Size-aware presence-bit read.  A hostile field id or inflated full_size
+  // must not cause an out-of-bounds load of the presence mask.
+  bool IsPresent(uint32_t bit, uint32_t presence_mask_offset) const {
+    if (pb == nullptr || bit == static_cast<uint32_t>(-1)) {
+      return false;
+    }
+    const uint32_t word = bit / 32;
+    bit %= 32;
+    const uint32_t* p = ToAddress<const uint32_t>(
+        presence_mask_offset + word * static_cast<uint32_t>(sizeof(uint32_t)));
+    if (p == nullptr) {
+      return false;
+    }
+    return (*p & (1U << bit)) != 0;
+  }
+
   // Clamps an attacker-influenced element count to the number of 'elem_size'
   // elements that actually fit in the buffer starting at 'data_offset'.
   size_t ClampElementCount(toolbelt::BufferOffset data_offset, size_t claimed,
@@ -430,6 +460,26 @@ struct MessageRuntime {
     }
     const size_t available = (limit - data_offset) / elem_size;
     return claimed < available ? claimed : available;
+  }
+
+  // Returns the capacity of a PayloadBuffer vector allocation whose data
+  // starts at 'data_offset'.  The size word lives immediately before the
+  // data; a hostile data_offset near the start of the buffer must not cause
+  // an underflow read.
+  size_t AllocatedCapacity(toolbelt::BufferOffset data_offset,
+                           size_t elem_size) const {
+    if (elem_size == 0 ||
+        data_offset < sizeof(toolbelt::BufferOffset)) {
+      return 0;
+    }
+    const toolbelt::BufferOffset size_offset =
+        data_offset -
+        static_cast<toolbelt::BufferOffset>(sizeof(toolbelt::BufferOffset));
+    const auto* size_word = ToAddress<const toolbelt::BufferOffset>(size_offset);
+    if (size_word == nullptr) {
+      return 0;
+    }
+    return *size_word / elem_size;
   }
 
   template <typename T = void>

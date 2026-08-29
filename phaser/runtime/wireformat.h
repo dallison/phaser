@@ -168,6 +168,7 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
   }
   if (free_list != 0 &&
       (free_list < minimum_header ||
+       free_list > data.size() - sizeof(::toolbelt::FreeBlockHeader) ||
        free_list > full_size - sizeof(::toolbelt::FreeBlockHeader))) {
     return false;
   }
