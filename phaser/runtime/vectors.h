@@ -546,8 +546,9 @@ class EnumVectorField : public Field {
   const std::vector<Enum> Get() const {
     size_t n = size();
     std::vector<Enum> r;
+    r.reserve(n);
     for (size_t i = 0; i < n; i++) {
-      r[i] = (*this)[i];
+      r.push_back((*this)[i]);
     }
     return r;
   }
@@ -569,26 +570,34 @@ class EnumVectorField : public Field {
 
   absl::Span<Enum> AsMutableSpan() {
     toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+    if (hdr == nullptr) {
+      return absl::Span<Enum>();
+    }
     Enum* base = GetRuntime()->template ToAddress<Enum>(hdr->data);
     if (base == nullptr) {
       return absl::Span<Enum>();
     }
-
-    return absl::Span<Enum>(base, hdr->num_elements);
+    const size_t n = GetRuntime()->ClampElementCount(
+        hdr->data, hdr->num_elements, sizeof(T));
+    return absl::Span<Enum>(base, n);
   }
 
   absl::Span<const Enum> AsSpan() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
-      return absl::Span<Enum>();
+      return absl::Span<const Enum>();
     }
     toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr) {
+      return absl::Span<const Enum>();
+    }
     const Enum* base = GetRuntime()->template ToAddress<const Enum>(hdr->data);
     if (base == nullptr) {
       return absl::Span<const Enum>();
     }
-
-    return absl::Span<const Enum>(base, hdr->num_elements);
+    const size_t n = GetRuntime()->ClampElementCount(
+        hdr->data, hdr->num_elements, sizeof(T));
+    return absl::Span<const Enum>(base, n);
   }
 
   void push_back(const Enum& v) {

@@ -30,8 +30,14 @@ std::vector<char> ValidPayload() {
   msg.add_vi32(2);
   msg.add_vstr("a");
   msg.mutable_m()->set_str("inner");
+  msg.mutable_m()->add_ev(foo::bar::phaser::FOO);
   // Exercise oneof / union value slots in the seed corpus.
   msg.set_u3a(0x1122334455667788LL);
+  {
+    auto entry = msg.add_values();
+    entry.set_key("k");
+    entry.set_value(7);
+  }
   const char* data = static_cast<const char*>(msg.Data());
   return std::vector<char>(data, data + msg.Size());
 }

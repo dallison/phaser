@@ -33,6 +33,8 @@ std::vector<char> MakeValidSeed() {
   msg.set_s("hello world");
   msg.mutable_m()->set_str("inner");
   msg.mutable_m()->set_f(0x1111);
+  msg.mutable_m()->add_ev(foo::bar::phaser::BAR);
+  msg.mutable_m()->add_ev(foo::bar::phaser::FOO);
   msg.add_vi32(0x11111111);
   msg.add_vi32(0x22222222);
   msg.add_vi32(0x33333333);
@@ -47,6 +49,11 @@ std::vector<char> MakeValidSeed() {
   msg.set_e(foo::bar::phaser::FOO);
   msg.set_fl(1.5f);
   msg.set_db(2.5);
+  {
+    auto entry = msg.add_values();
+    entry.set_key("map key");
+    entry.set_value(99);
+  }
   const char* data = static_cast<const char*>(msg.Data());
   return std::vector<char>(data, data + msg.Size());
 }
@@ -66,6 +73,21 @@ void TouchInner(const foo::bar::phaser::InnerMessage& m) {
   const int n = m.ev_size();
   for (int i = 0; i < n; ++i) {
     (void)m.ev(i);
+  }
+  // Aggregate getter and range iteration exercise the whole-vector code path,
+  // which is distinct from the per-index accessor above.
+  for (auto v : m.ev()) {
+    (void)v;
+  }
+  {
+    auto all = m.ev().Get();
+    (void)all.size();
+  }
+  {
+    absl::Span<const foo::bar::phaser::EnumTest> span = m.ev().AsSpan();
+    for (auto v : span) {
+      (void)v;
+    }
   }
   (void)m.has_uva();
   (void)m.uva();
@@ -95,16 +117,29 @@ void TouchMessage(const foo::bar::phaser::TestMessage& msg) {
     (void)v;
   }
   (void)msg.vi32().capacity();
+  {
+    auto all = msg.vi32().Get();
+    (void)all.size();
+  }
 
   const int vs = msg.vstr_size();
   for (int i = 0; i < vs; ++i) {
     std::string_view s = msg.vstr(i);
     (void)s.size();
   }
+  for (std::string_view s : msg.vstr()) {
+    (void)s.size();
+  }
 
   const int vm = msg.vm_size();
   for (int i = 0; i < vm; ++i) {
     TouchInner(msg.vm(i));
+  }
+  {
+    auto all = msg.vm().Get();
+    for (const auto& inner : all) {
+      TouchInner(inner);
+    }
   }
 
   (void)msg.has_u1a();
@@ -134,6 +169,21 @@ void TouchMessage(const foo::bar::phaser::TestMessage& msg) {
   (void)msg.fl();
   (void)msg.has_db();
   (void)msg.db();
+
+  // map<string,int32> is compiled to a repeated ValuesEntry message.
+  const int nvals = msg.values_size();
+  for (int i = 0; i < nvals; ++i) {
+    auto entry = msg.values(i);
+    (void)entry.has_key();
+    std::string_view k = entry.key();
+    (void)k.size();
+    (void)entry.has_value();
+    (void)entry.value();
+  }
+  for (auto entry : msg.values()) {
+    (void)entry.key().size();
+    (void)entry.value();
+  }
 
   (void)msg.has_any();
   (void)msg.any().has_type_url();
