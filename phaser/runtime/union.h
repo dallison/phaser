@@ -218,7 +218,7 @@ class UnionStringField : public UnionMemberField {
     if (runtime == nullptr) {
       return "";
     }
-    return GetBuffer(runtime)->GetStringView(abs_offset);
+    return runtime->GetStringView(abs_offset);
   }
 
   void Print(std::ostream& os, int /*indent*/,
@@ -231,7 +231,7 @@ class UnionStringField : public UnionMemberField {
                  uint32_t abs_offset) const {
     const ::toolbelt::BufferOffset* addr =
         runtime->ToAddress<const ::toolbelt::BufferOffset>(abs_offset);
-    return *addr != 0;
+    return addr != nullptr && *addr != 0;
   }
 
   void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,

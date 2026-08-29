@@ -154,9 +154,15 @@ class Field {
       if (offset < 0) {                                                       \
         return type();                                                        \
       }                                                                       \
-      return GetBuffer()->template Get<type>(                                 \
-          GetMessageBinaryStart() +                                           \
-          static_cast<::toolbelt::BufferOffset>(offset));                     \
+      const type* _phaser_addr =                                              \
+          Message::GetRuntime(this, source_offset_)                          \
+              ->template ToAddress<const type>(                              \
+                  GetMessageBinaryStart() +                                  \
+                  static_cast<::toolbelt::BufferOffset>(offset));            \
+      if (_phaser_addr == nullptr) {                                          \
+        return type();                                                        \
+      }                                                                       \
+      return *_phaser_addr;                                                   \
     }                                                                         \
     type GetForPrinting() const { return Get(); }                             \
     bool IsPresent() const {                                                  \
@@ -282,16 +288,7 @@ class EnumField : public Field {
     return *this;
   }
 
-  Enum Get() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      return static_cast<Enum>(0);
-    }
-    return static_cast<Enum>(
-        GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-            GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(offset)));
-  }
+  Enum Get() const { return static_cast<Enum>(GetUnderlying()); }
 
   std::string GetForPrinting() const { return ToString(); }
 
@@ -309,9 +306,15 @@ class EnumField : public Field {
     if (offset < 0) {
       return 0;
     }
-    return GetBuffer()->template Get<typename std::underlying_type<Enum>::type>(
-        GetMessageBinaryStart() +
-        static_cast<::toolbelt::BufferOffset>(offset));
+    const T* addr =
+        Message::GetRuntime(this, source_offset_)
+            ->template ToAddress<const T>(
+                GetMessageBinaryStart() +
+                static_cast<::toolbelt::BufferOffset>(offset));
+    if (addr == nullptr) {
+      return 0;
+    }
+    return *addr;
   }
 
   void Set(Enum e) {
@@ -414,7 +417,7 @@ class StringField : public Field {
     if (offset < 0) {
       return std::string_view();
     }
-    return GetBuffer()->GetStringView(
+    return GetRuntime()->GetStringView(
         GetMessageBinaryStart() +
         static_cast<::toolbelt::BufferOffset>(offset));
   }
@@ -428,7 +431,7 @@ class StringField : public Field {
         GetRuntime()->ToAddress<const ::toolbelt::BufferOffset>(
             GetMessageBinaryStart() +
             static_cast<::toolbelt::BufferOffset>(offset));
-    return *addr != 0;
+    return addr != nullptr && *addr != 0;
   }
 
   template <typename Str>
@@ -606,7 +609,7 @@ class NonEmbeddedStringField {
     if (IsPlaceholder()) {
       return {};
     }
-    return GetBuffer()->GetStringView(absolute_binary_offset_);
+    return msg_->runtime->GetStringView(absolute_binary_offset_);
   }
 
   template <typename Str>
