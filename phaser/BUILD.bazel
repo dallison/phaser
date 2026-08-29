@@ -1,6 +1,6 @@
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("//phaser:copts.bzl", "PHASER_COPTS")
 
 package(default_visibility = ["//visibility:public"])
@@ -255,5 +255,88 @@ cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
         "@cpp_toolbelt//toolbelt",
+    ],
+)
+
+# Shared fuzz driver used by the libFuzzer binary and the corpus regression test.
+cc_library(
+    name = "receive_fuzz_lib",
+    srcs = ["receive_fuzz.cc"],
+    hdrs = ["receive_fuzz.h"],
+    copts = PHASER_COPTS + [
+        # libFuzzer provides LLVMFuzzerTestOneInput; keep a weak stub for the
+        # non-fuzz regression test binary that links this library alone.
+        "-Wno-missing-prototypes",
+    ],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:test_message_phaser",
+    ],
+)
+
+cc_binary(
+    name = "receive_fuzz_seed_gen",
+    srcs = ["receive_fuzz_seed_gen.cc"],
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:test_message_phaser",
+        "@cpp_toolbelt//toolbelt",
+    ],
+)
+
+genrule(
+    name = "receive_fuzz_corpus",
+    outs = [
+        "corpus_empty",
+        "corpus_tiny",
+        "corpus_magic_only",
+        "corpus_valid_raw",
+        "corpus_mode1_empty",
+        "corpus_mode1_xor",
+        "corpus_valid_inflated_full_size",
+    ],
+    cmd = """
+      set -e
+      $(location :receive_fuzz_seed_gen) $(@D)
+      mv $(@D)/empty $(location corpus_empty)
+      mv $(@D)/tiny $(location corpus_tiny)
+      mv $(@D)/magic_only $(location corpus_magic_only)
+      mv $(@D)/valid_raw $(location corpus_valid_raw)
+      mv $(@D)/mode1_empty $(location corpus_mode1_empty)
+      mv $(@D)/mode1_xor $(location corpus_mode1_xor)
+      mv $(@D)/valid_inflated_full_size $(location corpus_valid_inflated_full_size)
+    """,
+    tools = [":receive_fuzz_seed_gen"],
+)
+
+# Always-on CI regression: run seed corpus + deterministic mutations.
+cc_test(
+    name = "receive_fuzz_test",
+    srcs = ["receive_fuzz_test.cc"],
+    copts = PHASER_COPTS,
+    data = [
+        ":receive_fuzz_corpus",
+        "//phaser/testdata:fuzz_crash_union_int64",
+        "//phaser/testdata:fuzz_crash_bounded_string",
+    ],
+    env = {
+        "TEST_CORPUS": "phaser",
+    },
+    deps = [
+        ":receive_fuzz_lib",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+# Long-running libFuzzer binary. Build/run with --config=fuzz (Linux/clang):
+#   bazel run --config=fuzz //phaser:receive_fuzz -- -max_total_time=60
+cc_binary(
+    name = "receive_fuzz",
+    srcs = ["receive_fuzz_main.cc"],
+    copts = PHASER_COPTS,
+    tags = ["manual"],
+    deps = [
+        ":receive_fuzz_lib",
     ],
 )

@@ -48,7 +48,15 @@ class UnionMemberField {
       if (runtime == nullptr) {                                                \
         return type();                                                         \
       }                                                                        \
-      return GetBuffer(runtime)->template Get<type>(abs_offset);               \
+      /* Use MessageRuntime::ToAddress so CreateReadonly's trusted size       \
+       * clamps hostile offsets; PayloadBuffer::Get trusts inflated           \
+       * full_size and can SEGV on receive. */                                 \
+      const type* addr =                                                       \
+          runtime->template ToAddress<const type>(abs_offset);                 \
+      if (addr == nullptr) {                                                   \
+        return type();                                                         \
+      }                                                                        \
+      return *addr;                                                            \
     }                                                                          \
     void Print(std::ostream& os, int /*indent*/,                               \
                const std::shared_ptr<MessageRuntime>& runtime,                 \
@@ -136,13 +144,7 @@ class UnionEnumField : public UnionMemberField {
 
   Enum Get(const std::shared_ptr<MessageRuntime>& runtime,
            uint32_t abs_offset) const {
-    if (runtime == nullptr) {
-      return static_cast<Enum>(0);
-    }
-    return static_cast<Enum>(
-        GetBuffer(runtime)
-            ->template Get<typename std::underlying_type<Enum>::type>(
-                abs_offset));
+    return static_cast<Enum>(GetUnderlying(runtime, abs_offset));
   }
 
   void Print(std::ostream& os, int /*indent*/,
@@ -153,8 +155,14 @@ class UnionEnumField : public UnionMemberField {
 
   T GetUnderlying(const std::shared_ptr<MessageRuntime>& runtime,
                   uint32_t abs_offset) const {
-    return GetBuffer(runtime)
-        ->template Get<typename std::underlying_type<Enum>::type>(abs_offset);
+    if (runtime == nullptr) {
+      return T();
+    }
+    const T* addr = runtime->template ToAddress<const T>(abs_offset);
+    if (addr == nullptr) {
+      return T();
+    }
+    return *addr;
   }
 
   void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,
