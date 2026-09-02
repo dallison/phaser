@@ -24,22 +24,28 @@ TEST(RosMetadataProtobufFrontendTest, MatchesRosMetadata) {
   EXPECT_EQ(Wrapper::RosDefinition(),
             "uint8 READY=1\nexample_msgs/Bool child\nint32[3] samples\n"
             "example_msgs/Status status\nbool ready\ntime stamp\n"
-            "time[] stamps\n"
+            "time[] stamps\n\n"
             "=================================================================="
             "==============\n"
             "MSG: example_msgs/Bool\n"
-            "bool data\n"
+            "bool data\n\n"
             "=================================================================="
             "==============\n"
             "MSG: example_msgs/Status\n"
             "int32 OK=0\nint32 BAD=1\nint32 value\n");
-  EXPECT_EQ(
-      Wrapper::RosMd5(),
-      ::phaser::Md5("uint8 READY=1\n"
-                    "8b94c1b53db61fb6aed406028ad6332a child\n"
-                    "int32[3] samples\n" +
-                    Status::RosMd5() +
-                    " status\nbool ready\ntime stamp\ntime[] stamps"));
+  EXPECT_EQ(Wrapper::RosMd5(),
+            ::phaser::Md5("uint8 READY=1\n"
+                          "8b94c1b53db61fb6aed406028ad6332a child\n"
+                          "int32[3] samples\n" +
+                          Status::RosMd5() +
+                          " status\nbool ready\ntime stamp\ntime[] stamps"));
+
+  EXPECT_EQ(LegacyStatusWrapper::RosDefinition(),
+            "example_msgs/LegacyStatus status\n\n"
+            "=================================================================="
+            "==============\n"
+            "MSG: example_msgs/LegacyStatus\n"
+            "# Legacy status.\nuint8 OK = 0\n");
 }
 
 }  // namespace

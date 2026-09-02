@@ -188,7 +188,7 @@ class MessageGenerator {
   std::string FieldRepeatedVectorCType(
       const google::protobuf::FieldDescriptor* field);
   std::string FieldRepeatedArrayCType(
-      const google::protobuf::FieldDescriptor* field, int array_size);
+      const google::protobuf::FieldDescriptor* field, int fixed_array_size);
   std::string FieldUnionCType(const google::protobuf::FieldDescriptor* field);
   uint32_t FieldBinarySize(const google::protobuf::FieldDescriptor* field);
   std::string FieldInfoType(const google::protobuf::FieldDescriptor* field);

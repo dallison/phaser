@@ -10,8 +10,31 @@ enum RosColor {
   ROS_COLOR_BLUE = 2;
 }
 
+enum RosConstantOnly {
+  ROS_CONSTANT_ONLY_UNSPECIFIED = 0;
+  ROS_CONSTANT_ONLY_FIRST = 1;
+  ROS_CONSTANT_ONLY_SECOND = 2;
+}
+
+message RosConstantOnlyHolder {
+  RosConstantOnly marker = 1 [(phaser.ros_field) = {
+    type: "example_msgs/Marker"
+    nested_data_type: "example_msgs/Marker"
+    nested_md5_text: "uint8 FIRST=1\nuint8 SECOND=2"
+  }];
+  uint32 value = 2;
+}
+
 message RosInner {
   int32 id = 1;
+}
+
+message RosDefinitionMetadata {
+  option (phaser.ros_message) = {
+    data_type: "example_msgs/RosDefinitionMetadata"
+    source_definition: "# Original comment\n\nint32 value\n"
+  };
+  int32 value = 1;
 }
 
 message RosCompileMessage {
@@ -47,6 +70,13 @@ message RosPackedFixedMessage {
   repeated sfixed64 sfixed64_values = 5;
   repeated double double_values = 6;
   repeated fixed64 fixed_array = 7 [(phaser.array_size) = 3];
+}
+
+message RosNarrowScalars {
+  uint32 uint8_value = 1 [(phaser.ros_field) = { type: "uint8" }];
+  int32 int8_value = 2 [(phaser.ros_field) = { type: "int8" }];
+  uint32 uint16_value = 3 [(phaser.ros_field) = { type: "uint16" }];
+  int32 int16_value = 4 [(phaser.ros_field) = { type: "int16" }];
 }
 
 // These names have all been used by generated method parameters or local

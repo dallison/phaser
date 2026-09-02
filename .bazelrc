@@ -50,6 +50,10 @@ build --enable_platform_specific_config
 # warning set used for our own code (see phaser/copts.bzl) does not flood the
 # build with diagnostics from abseil/protobuf/googletest/toolbelt.
 build --features=external_include_paths
+# Dependency sources are outside Phaser's control. Keep clean builds focused on
+# diagnostics actionable in this repository for both target and tool builds.
+build --per_file_copt=^external/.*@-w
+build --host_per_file_copt=^external/.*@-w
 
 # For all builds, use C++17
 build --cxxopt="-std=c++17"

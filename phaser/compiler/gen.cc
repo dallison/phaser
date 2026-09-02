@@ -152,14 +152,31 @@ bool CodeGenerator::Generate(
       generate_ros_metadata_ &&
       file->package().rfind("google.protobuf", 0) != 0;
 
-  // Custom option schemas and other message-free protos need no C++ output.
-  // descriptor.proto is imported for extensions but must not be emitted as a
-  // Phaser message graph (it is huge and not a runtime payload type here).
-  if (file->message_type_count() == 0 && file->enum_type_count() == 0) {
-    return true;
-  }
-  if (file->name() == std::string("google/protobuf/descriptor.proto") ||
+  // Custom option schemas, service-only files, and descriptor.proto need no
+  // generated declarations. Still create their declared outputs so build rules
+  // can safely include them in larger transitive proto graphs.
+  if ((file->message_type_count() == 0 && file->enum_type_count() == 0) ||
+      file->name() == std::string("google/protobuf/descriptor.proto") ||
       file->name() == std::string("phaser/options.proto")) {
+    std::string filename = GeneratedFilename(
+        package_name_, target_name_, std::string(file->name()));
+    std::filesystem::path hp(filename);
+    hp.replace_extension(".phaser.h");
+    std::filesystem::path cp(filename);
+    cp.replace_extension(".phaser.cc");
+    auto header_output = std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream>(
+        generator_context->Open(hp.string()));
+    auto source_output = std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream>(
+        generator_context->Open(cp.string()));
+    if (header_output == nullptr || source_output == nullptr) {
+      *error = absl::StrFormat("Failed to create empty outputs for %s",
+                               file->name());
+      return false;
+    }
+    WriteToZeroCopyStream("// No Phaser declarations in this schema.\n",
+                          header_output.get());
+    WriteToZeroCopyStream("// No Phaser definitions in this schema.\n",
+                          source_output.get());
     return true;
   }
 

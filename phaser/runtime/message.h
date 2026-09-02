@@ -33,8 +33,10 @@ namespace phaser {
 
 // FieldData is a structure that contains the field numbers and offsets for a
 // message. It is stored in the payload buffer.
+#if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wc99-extensions"
+#endif
 struct FieldData {
   uint32_t num;
   struct {
@@ -43,7 +45,9 @@ struct FieldData {
     uint32_t id : 8;       // Field id for presence bit mask.
   } fields[];  // Flexible array member; data lives in the payload buffer.
 };
+#if defined(__clang__)
 #pragma clang diagnostic pop
+#endif
 
 // Hybrid field metadata stores a compact direct-indexed range followed by
 // sorted sparse entries. The arrays immediately following HybridFieldData are:

@@ -9,8 +9,12 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <algorithm>
 #include <cstring>
+#include <initializer_list>
+#include <iterator>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -117,6 +121,244 @@ class Field {
   mutable int32_t cached_field_id_ = -1;
   mutable bool field_cache_resolved_ = false;
   mutable int indent_ = 0;
+};
+
+// Common std::string-like API for payload-backed string fields. Read operations
+// remain zero-copy. Operations that can change the string length construct the
+// new value outside the payload first so aliases into a relocating payload stay
+// valid until the mutation is ready to commit.
+template <typename Derived>
+class StringFieldFacade {
+ public:
+  using value_type = char;
+  using size_type = size_t;
+  using difference_type = ptrdiff_t;
+  using const_reference = const char&;
+  using const_pointer = const char*;
+  using const_iterator = std::string_view::const_iterator;
+  using const_reverse_iterator = std::string_view::const_reverse_iterator;
+
+  static constexpr size_type npos = std::string_view::npos;
+
+  bool empty() const { return View().empty(); }
+  size_type length() const { return View().length(); }
+  size_type max_size() const { return std::string{}.max_size(); }
+  size_type capacity() const { return View().size(); }
+
+  char operator[](size_type pos) const { return View()[pos]; }
+  char at(size_type pos) const { return View().at(pos); }
+  char front() const { return View().front(); }
+  char back() const { return View().back(); }
+
+  const_iterator begin() const { return View().begin(); }
+  const_iterator end() const { return View().end(); }
+  const_iterator cbegin() const { return View().cbegin(); }
+  const_iterator cend() const { return View().cend(); }
+  const_reverse_iterator rbegin() const { return View().rbegin(); }
+  const_reverse_iterator rend() const { return View().rend(); }
+  const_reverse_iterator crbegin() const { return View().crbegin(); }
+  const_reverse_iterator crend() const { return View().crend(); }
+
+  int compare(std::string_view other) const { return View().compare(other); }
+  int compare(size_type pos, size_type count, std::string_view other) const {
+    return View().compare(pos, count, other);
+  }
+  int compare(size_type pos, size_type count, std::string_view other,
+              size_type other_pos, size_type other_count = npos) const {
+    return View()
+        .substr(pos, count)
+        .compare(other.substr(other_pos, other_count));
+  }
+
+  bool starts_with(std::string_view prefix) const {
+    const std::string_view value = View();
+    return value.size() >= prefix.size() &&
+           value.substr(0, prefix.size()) == prefix;
+  }
+  bool starts_with(char prefix) const {
+    const std::string_view value = View();
+    return !value.empty() && value.front() == prefix;
+  }
+  bool ends_with(std::string_view suffix) const {
+    const std::string_view value = View();
+    return value.size() >= suffix.size() &&
+           value.substr(value.size() - suffix.size()) == suffix;
+  }
+  bool ends_with(char suffix) const {
+    const std::string_view value = View();
+    return !value.empty() && value.back() == suffix;
+  }
+  bool contains(std::string_view value) const { return find(value) != npos; }
+  bool contains(char value) const { return find(value) != npos; }
+
+  size_type find(std::string_view value, size_type pos = 0) const {
+    return View().find(value, pos);
+  }
+  size_type find(char value, size_type pos = 0) const {
+    return View().find(value, pos);
+  }
+  size_type find(const char* value, size_type pos, size_type count) const {
+    return View().find(std::string_view(value, count), pos);
+  }
+  size_type rfind(std::string_view value, size_type pos = npos) const {
+    return View().rfind(value, pos);
+  }
+  size_type rfind(char value, size_type pos = npos) const {
+    return View().rfind(value, pos);
+  }
+  size_type rfind(const char* value, size_type pos, size_type count) const {
+    return View().rfind(std::string_view(value, count), pos);
+  }
+  size_type find_first_of(std::string_view value, size_type pos = 0) const {
+    return View().find_first_of(value, pos);
+  }
+  size_type find_first_of(char value, size_type pos = 0) const {
+    return View().find_first_of(value, pos);
+  }
+  size_type find_last_of(std::string_view value, size_type pos = npos) const {
+    return View().find_last_of(value, pos);
+  }
+  size_type find_last_of(char value, size_type pos = npos) const {
+    return View().find_last_of(value, pos);
+  }
+  size_type find_first_not_of(std::string_view value, size_type pos = 0) const {
+    return View().find_first_not_of(value, pos);
+  }
+  size_type find_first_not_of(char value, size_type pos = 0) const {
+    return View().find_first_not_of(value, pos);
+  }
+  size_type find_last_not_of(std::string_view value,
+                             size_type pos = npos) const {
+    return View().find_last_not_of(value, pos);
+  }
+  size_type find_last_not_of(char value, size_type pos = npos) const {
+    return View().find_last_not_of(value, pos);
+  }
+
+  std::string substr(size_type pos = 0, size_type count = npos) const {
+    return std::string(View().substr(pos, count));
+  }
+  size_type copy(char* destination, size_type count, size_type pos = 0) const {
+    return View().copy(destination, count, pos);
+  }
+
+  Derived& assign(std::string_view value) {
+    const std::string value_copy(value);
+    Mutable().Set(value_copy);
+    return Mutable();
+  }
+  Derived& assign(const char* value, size_type count) {
+    return assign(std::string_view(value, count));
+  }
+  Derived& assign(size_type count, char value) {
+    Mutable().Set(std::string(count, value));
+    return Mutable();
+  }
+  Derived& append(std::string_view value) {
+    return Mutate([value](std::string& current) { current.append(value); });
+  }
+  Derived& append(const char* value, size_type count) {
+    return append(std::string_view(value, count));
+  }
+  Derived& append(size_type count, char value) {
+    return Mutate(
+        [count, value](std::string& current) { current.append(count, value); });
+  }
+  Derived& operator+=(std::string_view value) { return append(value); }
+  Derived& operator+=(const char* value) { return append(value); }
+  Derived& operator+=(char value) {
+    push_back(value);
+    return Mutable();
+  }
+  void push_back(char value) {
+    Mutate([value](std::string& current) { current.push_back(value); });
+  }
+  void pop_back() {
+    Mutate([](std::string& current) { current.pop_back(); });
+  }
+  void resize(size_type count, char value = char()) {
+    Mutate(
+        [count, value](std::string& current) { current.resize(count, value); });
+  }
+  Derived& erase(size_type pos = 0, size_type count = npos) {
+    return Mutate(
+        [pos, count](std::string& current) { current.erase(pos, count); });
+  }
+  Derived& insert(size_type pos, std::string_view value) {
+    return Mutate(
+        [pos, value](std::string& current) { current.insert(pos, value); });
+  }
+  Derived& insert(size_type pos, size_type count, char value) {
+    return Mutate([pos, count, value](std::string& current) {
+      current.insert(pos, count, value);
+    });
+  }
+  Derived& replace(size_type pos, size_type count, std::string_view value) {
+    return Mutate([pos, count, value](std::string& current) {
+      current.replace(pos, count, value);
+    });
+  }
+  void clear() { Mutable().Clear(); }
+  void swap(Derived& other) {
+    if (&Mutable() == &other) {
+      return;
+    }
+    const std::string mine(View());
+    const std::string theirs(other.Get());
+    Mutable().Set(theirs);
+    other.Set(mine);
+  }
+
+  bool operator==(const Derived& other) const { return View() == other.Get(); }
+  bool operator!=(const Derived& other) const { return View() != other.Get(); }
+  bool operator==(std::string_view other) const { return View() == other; }
+  bool operator!=(std::string_view other) const { return View() != other; }
+  bool operator<(std::string_view other) const { return View() < other; }
+  bool operator<=(std::string_view other) const { return View() <= other; }
+  bool operator>(std::string_view other) const { return View() > other; }
+  bool operator>=(std::string_view other) const { return View() >= other; }
+
+  friend bool operator==(std::string_view lhs, const StringFieldFacade& rhs) {
+    return lhs == rhs.View();
+  }
+  friend bool operator!=(std::string_view lhs, const StringFieldFacade& rhs) {
+    return lhs != rhs.View();
+  }
+  friend bool operator<(std::string_view lhs, const StringFieldFacade& rhs) {
+    return lhs < rhs.View();
+  }
+  friend bool operator<=(std::string_view lhs, const StringFieldFacade& rhs) {
+    return lhs <= rhs.View();
+  }
+  friend bool operator>(std::string_view lhs, const StringFieldFacade& rhs) {
+    return lhs > rhs.View();
+  }
+  friend bool operator>=(std::string_view lhs, const StringFieldFacade& rhs) {
+    return lhs >= rhs.View();
+  }
+  friend std::string operator+(const StringFieldFacade& lhs,
+                               std::string_view rhs) {
+    std::string result(lhs.View());
+    result.append(rhs);
+    return result;
+  }
+  friend std::string operator+(std::string lhs, const StringFieldFacade& rhs) {
+    lhs.append(rhs.View());
+    return lhs;
+  }
+
+ private:
+  const Derived& Const() const { return static_cast<const Derived&>(*this); }
+  Derived& Mutable() { return static_cast<Derived&>(*this); }
+  std::string_view View() const { return Const().Get(); }
+
+  template <typename Mutator>
+  Derived& Mutate(Mutator mutator) {
+    std::string value(View());
+    mutator(value);
+    Mutable().Set(value);
+    return Mutable();
+  }
 };
 
 #define DEFINE_PRIMITIVE_FIELD(cname, type)                                   \
@@ -372,7 +614,7 @@ class EnumField : public Field {
 };
 
 // String field with an offset inline in the message.
-class StringField : public Field {
+class StringField : public Field, public StringFieldFacade<StringField> {
  public:
   StringField() = default;
   explicit StringField(uint32_t source_offset, uint32_t relative_binary_offset,
@@ -467,11 +709,6 @@ class StringField : public Field {
         GetMessageBinaryStart() + relative_binary_offset_, clear);
   }
 
-  bool operator==(const StringField& other) const {
-    return Get() == other.Get();
-  }
-  bool operator!=(const StringField& other) const { return !(*this == other); }
-
   size_t size() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
@@ -538,7 +775,8 @@ class StringField : public Field {
 // This is a string field that is not embedded inside a message. They
 // store the std::shared_ptr to the phaser::Runtime pointer instead of
 // an offset to the start of the message.
-class NonEmbeddedStringField {
+class NonEmbeddedStringField
+    : public StringFieldFacade<NonEmbeddedStringField> {
  public:
   NonEmbeddedStringField() = default;
   explicit NonEmbeddedStringField(const Message* msg,
@@ -600,9 +838,9 @@ class NonEmbeddedStringField {
     return *this;
   }
   NonEmbeddedStringField& operator=(const char* s) {
-    ::toolbelt::PayloadBuffer::SetString(
-        GetBufferAddr(), std::string_view(s, std::strlen(s)),
-        absolute_binary_offset_);
+    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(),
+                                         std::string_view(s, std::strlen(s)),
+                                         absolute_binary_offset_);
     return *this;
   }
 
@@ -630,13 +868,6 @@ class NonEmbeddedStringField {
                                            absolute_binary_offset_);
   }
 
-  bool operator==(const NonEmbeddedStringField& other) const {
-    return Get() == other.Get();
-  }
-  bool operator!=(const NonEmbeddedStringField& other) const {
-    return !(*this == other);
-  }
-
   size_t size() const {
     if (IsPlaceholder()) {
       return 0;
@@ -650,8 +881,6 @@ class NonEmbeddedStringField {
     }
     return msg_->runtime->StringData(absolute_binary_offset_);
   }
-  bool empty() const { return size() == 0; }
-
   bool IsPlaceholder() const { return msg_ == nullptr; }
 
   // Number of bytes the raw string occupies on the wire (not including any
@@ -671,10 +900,10 @@ class NonEmbeddedStringField {
   }
 
   const Message* msg_ = nullptr;
-  ::toolbelt::BufferOffset
-      absolute_binary_offset_ = 0;  // Offset into
-                                // ::toolbelt::PayloadBuffer of
-                                // toolbelt::StringHeader
+  ::toolbelt::BufferOffset absolute_binary_offset_ =
+      0;  // Offset into
+          // ::toolbelt::PayloadBuffer of
+          // toolbelt::StringHeader
 };
 
 // This is a buffer offset containing the absolute offset of a message in the

@@ -1,5 +1,9 @@
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
-load("//phaser:copts.bzl", "PHASER_COPTS")
+load(
+    "//phaser:copts.bzl",
+    "PHASER_COPTS",
+    "PHASER_PROTOBUF_GENERATED_COPTS",
+)
 
 package(default_visibility = ["//visibility:public"])
 
@@ -53,7 +57,7 @@ cc_test(
     srcs = [
         "message_test.cc",
     ],
-    copts = PHASER_COPTS,
+    copts = PHASER_COPTS + PHASER_PROTOBUF_GENERATED_COPTS,
     data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",

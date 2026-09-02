@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -23,6 +24,12 @@ namespace phaser {
 
 template <typename Field, typename T>
 struct FieldIterator {
+  using iterator_category = std::bidirectional_iterator_tag;
+  using value_type = std::remove_const_t<T>;
+  using difference_type = ptrdiff_t;
+  using pointer = T*;
+  using reference = T&;
+
   FieldIterator(const Field* f, ::toolbelt::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
@@ -42,17 +49,31 @@ struct FieldIterator {
     }
     return *this;
   }
-  FieldIterator operator+(size_t i) {
-    if (reverse) {
-      return FieldIterator(field, field->BaseOffset() - i * sizeof(T), true);
-    }
-    return FieldIterator(field, field->BaseOffset() + i * sizeof(T));
+  FieldIterator operator++(int) {
+    FieldIterator result = *this;
+    ++*this;
+    return result;
   }
-  FieldIterator operator-(size_t i) {
+  FieldIterator operator--(int) {
+    FieldIterator result = *this;
+    --*this;
+    return result;
+  }
+  FieldIterator operator+(size_t i) const {
+    const auto byte_offset =
+        static_cast<::toolbelt::BufferOffset>(i * sizeof(T));
     if (reverse) {
-      return FieldIterator(field, field->BaseOffset() + i * sizeof(T), true);
+      return FieldIterator(field, offset - byte_offset, true);
     }
-    return FieldIterator(field, field->BaseOffset() - i * sizeof(T));
+    return FieldIterator(field, offset + byte_offset);
+  }
+  FieldIterator operator-(size_t i) const {
+    const auto byte_offset =
+        static_cast<::toolbelt::BufferOffset>(i * sizeof(T));
+    if (reverse) {
+      return FieldIterator(field, offset + byte_offset, true);
+    }
+    return FieldIterator(field, offset - byte_offset);
   }
   T& operator*() const {
     // remove_const so the sentinel stays assignable when T is const
@@ -78,6 +99,12 @@ struct FieldIterator {
 
 template <typename Field>
 struct StringFieldIterator {
+  using iterator_category = std::bidirectional_iterator_tag;
+  using value_type = std::string_view;
+  using difference_type = ptrdiff_t;
+  using pointer = void;
+  using reference = std::string_view;
+
   StringFieldIterator(const Field* f, ::toolbelt::BufferOffset o,
                       bool r = false)
       : field(f), offset(o), reverse(r) {}
@@ -98,23 +125,31 @@ struct StringFieldIterator {
     }
     return *this;
   }
-  StringFieldIterator operator+(size_t i) {
-    if (reverse) {
-      return StringFieldIterator(
-          field, field->BaseOffset() - i * sizeof(::toolbelt::BufferOffset),
-          true);
-    }
-    return StringFieldIterator(
-        field, field->BaseOffset() + i * sizeof(::toolbelt::BufferOffset));
+  StringFieldIterator operator++(int) {
+    StringFieldIterator result = *this;
+    ++*this;
+    return result;
   }
-  StringFieldIterator operator-(size_t i) {
+  StringFieldIterator operator--(int) {
+    StringFieldIterator result = *this;
+    --*this;
+    return result;
+  }
+  StringFieldIterator operator+(size_t i) const {
     if (reverse) {
       return StringFieldIterator(
-          field, field->BaseOffset() + i * sizeof(::toolbelt::BufferOffset),
-          true);
+          field, offset - i * sizeof(::toolbelt::BufferOffset), true);
     }
-    return StringFieldIterator(
-        field, field->BaseOffset() - i * sizeof(::toolbelt::BufferOffset));
+    return StringFieldIterator(field,
+                               offset + i * sizeof(::toolbelt::BufferOffset));
+  }
+  StringFieldIterator operator-(size_t i) const {
+    if (reverse) {
+      return StringFieldIterator(
+          field, offset + i * sizeof(::toolbelt::BufferOffset), true);
+    }
+    return StringFieldIterator(field,
+                               offset - i * sizeof(::toolbelt::BufferOffset));
   }
   std::string_view operator*() const {
     return field->GetRuntime()->GetStringView(field->BaseOffset() + offset);
@@ -134,6 +169,12 @@ struct StringFieldIterator {
 
 template <typename Field, typename T>
 struct EnumFieldIterator {
+  using iterator_category = std::bidirectional_iterator_tag;
+  using value_type = std::remove_const_t<T>;
+  using difference_type = ptrdiff_t;
+  using pointer = T*;
+  using reference = T&;
+
   EnumFieldIterator(const Field* f, ::toolbelt::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
@@ -153,33 +194,42 @@ struct EnumFieldIterator {
     }
     return *this;
   }
-  EnumFieldIterator operator+(size_t i) {
-    if (reverse) {
-      return EnumFieldIterator(
-          field,
-          field->BaseOffset() - i * sizeof(std::underlying_type<T>::type),
-          true);
-    }
-    return EnumFieldIterator(
-        field, field->BaseOffset() + i * sizeof(std::underlying_type<T>::type));
+  EnumFieldIterator operator++(int) {
+    EnumFieldIterator result = *this;
+    ++*this;
+    return result;
   }
-  EnumFieldIterator operator-(size_t i) {
+  EnumFieldIterator operator--(int) {
+    EnumFieldIterator result = *this;
+    --*this;
+    return result;
+  }
+  EnumFieldIterator operator+(size_t i) const {
+    using Value = std::remove_const_t<T>;
+    const auto byte_offset = static_cast<::toolbelt::BufferOffset>(
+        i * sizeof(typename std::underlying_type<Value>::type));
     if (reverse) {
-      return EnumFieldIterator(
-          field,
-          field->BaseOffset() + i * sizeof(std::underlying_type<T>::type),
-          true);
+      return EnumFieldIterator(field, offset - byte_offset, true);
     }
-    return EnumFieldIterator(
-        field, field->BaseOffset() - i * sizeof(std::underlying_type<T>::type));
+    return EnumFieldIterator(field, offset + byte_offset);
+  }
+  EnumFieldIterator operator-(size_t i) const {
+    using Value = std::remove_const_t<T>;
+    const auto byte_offset = static_cast<::toolbelt::BufferOffset>(
+        i * sizeof(typename std::underlying_type<Value>::type));
+    if (reverse) {
+      return EnumFieldIterator(field, offset + byte_offset, true);
+    }
+    return EnumFieldIterator(field, offset - byte_offset);
   }
 
   T& operator*() const {
-    using U = typename std::underlying_type<T>::type;
+    using Value = std::remove_const_t<T>;
+    using U = typename std::underlying_type<Value>::type;
     // remove_const so the sentinel stays assignable when T is const
     // (const iterators instantiate this with T = const value type).
-    static std::remove_const_t<T> empty;
-    empty = static_cast<std::remove_const_t<T>>(0);
+    static Value empty;
+    empty = static_cast<Value>(0);
     U* addr = field->GetRuntime()->template ToAddress<U>(offset);
     if (addr == nullptr) {
       return empty;

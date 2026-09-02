@@ -39,3 +39,20 @@ message Wrapper {
   google.protobuf.Timestamp stamp = 5;
   repeated google.protobuf.Timestamp stamps = 6;
 }
+
+enum LegacyStatus {
+  option (phaser.ros_enum) = {
+    type: "uint8"
+  };
+
+  LEGACY_STATUS_OK = 0 [(phaser.ros_enum_value) = { name: "OK" }];
+}
+
+message LegacyStatusWrapper {
+  LegacyStatus status = 1 [(phaser.ros_field) = {
+    type: "example_msgs/LegacyStatus"
+    nested_data_type: "example_msgs/LegacyStatus"
+    nested_md5_text: "uint8 OK=0"
+    nested_source_definition: "# Legacy status.\nuint8 OK = 0\n"
+  }];
+}

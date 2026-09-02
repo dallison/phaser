@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package phaser.testdata;
+
+import "google/protobuf/empty.proto";
+
+service ServiceOnly {
+  rpc Ping(google.protobuf.Empty) returns (google.protobuf.Empty);
+}
