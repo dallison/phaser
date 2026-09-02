@@ -317,6 +317,7 @@ cc_test(
     copts = PHASER_COPTS,
     data = [
         ":receive_fuzz_corpus",
+        "valgrind.supp",
         "//phaser/testdata:fuzz_crash_union_int64",
         "//phaser/testdata:fuzz_crash_bounded_string",
     ],
