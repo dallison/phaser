@@ -3148,7 +3148,9 @@ void MessageGenerator::GenerateDirectProtobufField(
           "!status.ok()) return status;\n";
   }
 
-  os << indent << "  size_t ros_emitted = 0;\n";
+  if (fixed_extent > 0) {
+    os << indent << "  size_t ros_emitted = 0;\n";
+  }
   os << indent << "  ::phaser::ProtoBuffer ros_scan(protobuf);\n";
   os << indent << "  while (!ros_scan.Eof()) {\n";
   os << indent
@@ -3174,7 +3176,9 @@ void MessageGenerator::GenerateDirectProtobufField(
       os << emit_indent << "}\n";
     }
     GenerateDirectROSWriteValue(os, field, "ros_value", emit_indent);
-    os << emit_indent << "++ros_emitted;\n";
+    if (fixed_extent > 0) {
+      os << emit_indent << "++ros_emitted;\n";
+    }
   };
   if (field->is_packable()) {
     os << indent
@@ -3192,9 +3196,9 @@ void MessageGenerator::GenerateDirectProtobufField(
          << "          return absl::InvalidArgumentError("
             "\"packed fixed-width field has a partial element\");\n";
       os << indent << "        }\n";
-      os << indent << "        const size_t ros_packed_count = "
-         << "ros_packed->size() / sizeof(" << type << ");\n";
       if (fixed_extent > 0) {
+        os << indent << "        const size_t ros_packed_count = "
+           << "ros_packed->size() / sizeof(" << type << ");\n";
         os << indent << "        if (ros_packed_count > " << fixed_extent
            << " - ros_emitted) {\n";
         os << indent
@@ -3206,7 +3210,9 @@ void MessageGenerator::GenerateDirectProtobufField(
          << "        if (absl::Status status = output.WriteRaw("
             "ros_packed->data(), ros_packed->size()); !status.ok()) "
             "return status;\n";
-      os << indent << "        ros_emitted += ros_packed_count;\n";
+      if (fixed_extent > 0) {
+        os << indent << "        ros_emitted += ros_packed_count;\n";
+      }
     } else {
       os << indent
          << "        ::phaser::ProtoBuffer ros_values(*ros_packed);\n";
