@@ -2022,6 +2022,19 @@ TEST(MessageTest, Dynamic) {
   ASSERT_EQ("Hello, world!", s);
 }
 
+TEST(MessageTest, EnumVectorGetReturnsAllElements) {
+  TestMessage msg;
+  InnerMessage* inner = msg.m_.Mutable();
+  inner->ev_.Add(EnumTest::FOO);
+  inner->ev_.Add(EnumTest::BAR);
+  ASSERT_EQ(2u, inner->ev_.size());
+
+  const std::vector<EnumTest> got = inner->ev_.Get();
+  ASSERT_EQ(2u, got.size());
+  EXPECT_EQ(EnumTest::FOO, got[0]);
+  EXPECT_EQ(EnumTest::BAR, got[1]);
+}
+
 TEST(MessageTest, Print) {
   TestMessage msg;
   msg.x_.Set(1234);

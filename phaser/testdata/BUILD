@@ -6,6 +6,22 @@ load("//phaser:phaser_library.bzl", "phaser_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# libFuzzer regression inputs from CreateReadonly ASan crashes.
+exports_files([
+    "fuzz_crash_union_int64.bin",
+    "fuzz_crash_bounded_string.bin",
+])
+
+filegroup(
+    name = "fuzz_crash_union_int64",
+    srcs = ["fuzz_crash_union_int64.bin"],
+)
+
+filegroup(
+    name = "fuzz_crash_bounded_string",
+    srcs = ["fuzz_crash_bounded_string.bin"],
+)
+
 proto_library(
     name = "foo_proto",
     srcs = [

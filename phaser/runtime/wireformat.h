@@ -168,6 +168,7 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
   }
   if (free_list != 0 &&
       (free_list < minimum_header ||
+       free_list > data.size() - sizeof(::toolbelt::FreeBlockHeader) ||
        free_list > full_size - sizeof(::toolbelt::FreeBlockHeader))) {
     return false;
   }
@@ -632,8 +633,13 @@ class ProtoBuffer {
   }
 
   absl::Status Check(size_t n) {
-    char* next = addr_ + n;
-    if (next <= end_) {
+    // Compare against the remaining byte count instead of forming 'addr_ + n',
+    // which overflows (undefined behavior, and can wrap to appear in-bounds)
+    // when 'n' comes from a hostile length on the wire.
+    if (addr_ > end_) {
+      return absl::InternalError("End of buffer");
+    }
+    if (n <= static_cast<size_t>(end_ - addr_)) {
       return absl::OkStatus();
     }
     return absl::InternalError("End of buffer");

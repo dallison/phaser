@@ -452,7 +452,8 @@ class PrimitiveArrayField : public Field {
     if (hdr == nullptr) {
       return 0;
     }
-    return hdr->num_elements;
+    return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
+                                           sizeof(T));
   }
 
   void SetActiveCount(size_t count) {
@@ -800,7 +801,8 @@ class EnumArrayField : public Field {
     if (hdr == nullptr) {
       return 0;
     }
-    return hdr->num_elements;
+    return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
+                                           sizeof(T));
   }
 
   void SetActiveCount(size_t count) {
@@ -1369,7 +1371,8 @@ class StringArrayField : public Field {
     if (hdr == nullptr) {
       return 0;
     }
-    return hdr->num_elements;
+    return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
+                                           sizeof(::toolbelt::BufferOffset));
   }
 
   void SetActiveCount(size_t count) {
@@ -1437,7 +1440,8 @@ class StringArrayField : public Field {
     if (hdr == nullptr || hdr->data == 0) {
       return empty_;
     }
-    const size_t count = hdr->num_elements;
+    const size_t count = GetRuntime()->ClampElementCount(
+        hdr->data, hdr->num_elements, sizeof(::toolbelt::BufferOffset));
     if (index >= count) {
       return empty_;
     }
@@ -1446,7 +1450,7 @@ class StringArrayField : public Field {
     }
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    if (data[index] == 0) {
+    if (data == nullptr || data[index] == 0) {
       return empty_;
     }
     auto* self = const_cast<StringArrayField*>(this);
@@ -1479,8 +1483,19 @@ class StringArrayField : public Field {
     if (hdr == nullptr || hdr->data == 0) {
       return;
     }
+    const size_t count = GetRuntime()->ClampElementCount(
+        hdr->data, hdr->num_elements, sizeof(::toolbelt::BufferOffset));
+    if (start >= count) {
+      return;
+    }
+    if (end > count) {
+      end = count;
+    }
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return;
+    }
     auto* self = const_cast<StringArrayField*>(this);
     for (size_t i = start; i < end; i++) {
       if (data[i] == 0) {
