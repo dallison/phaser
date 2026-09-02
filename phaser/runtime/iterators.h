@@ -76,7 +76,14 @@ struct FieldIterator {
     return FieldIterator(field, offset - byte_offset);
   }
   T& operator*() const {
-    T* addr = field->GetBuffer()->template ToAddress<T>(offset);
+    // remove_const so the sentinel stays assignable when T is const
+    // (const iterators instantiate this with T = const value type).
+    static std::remove_const_t<T> empty;
+    empty = std::remove_const_t<T>();
+    T* addr = field->GetRuntime()->template ToAddress<T>(offset);
+    if (addr == nullptr) {
+      return empty;
+    }
     return *addr;
   }
 
@@ -145,7 +152,7 @@ struct StringFieldIterator {
                                offset - i * sizeof(::toolbelt::BufferOffset));
   }
   std::string_view operator*() const {
-    return field->GetBuffer()->GetStringView(field->BaseOffset() + offset);
+    return field->GetRuntime()->GetStringView(field->BaseOffset() + offset);
   }
 
   bool operator==(const StringFieldIterator& it) const {
@@ -217,8 +224,16 @@ struct EnumFieldIterator {
   }
 
   T& operator*() const {
-    using U = typename std::underlying_type<std::remove_const_t<T>>::type;
-    U* addr = field->GetBuffer()->template ToAddress<U>(offset);
+    using Value = std::remove_const_t<T>;
+    using U = typename std::underlying_type<Value>::type;
+    // remove_const so the sentinel stays assignable when T is const
+    // (const iterators instantiate this with T = const value type).
+    static Value empty;
+    empty = static_cast<Value>(0);
+    U* addr = field->GetRuntime()->template ToAddress<U>(offset);
+    if (addr == nullptr) {
+      return empty;
+    }
     // An enum and its fixed underlying type share representation; route the
     // cast through void* so it is not flagged as a dereference of an unrelated
     // reinterpret_cast.

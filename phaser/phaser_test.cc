@@ -5,7 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <cstring>
 #include <sstream>
+#include <vector>
 
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
@@ -165,6 +168,139 @@ TEST(PhaserTest, NewFieldsRepeatedBasic) {
   ASSERT_EQ(msg2.vstr(0), msg.vstr(0));
   ASSERT_EQ(msg2.vstr(1), msg.vstr(1));
   ASSERT_EQ(msg2.vstr(2), msg.vstr(2));
+}
+
+// A malicious sender can build a structurally valid payload but corrupt the
+// in-buffer offsets/lengths/counts it contains. Attaching to such a buffer with
+// CreateReadonly and reading fields must never read outside the received bytes.
+// Run under AddressSanitizer (--config=asan) to catch any out-of-bounds access.
+TEST(PhaserTest, HostilePayloadIsBounded) {
+  foo::bar::phaser::TestMessage src;
+  src.set_x(1234);
+  src.set_s("hello world");
+  src.add_vi32(0x11111111);
+  src.add_vi32(0x22222222);
+  src.add_vi32(0x33333333);
+  src.mutable_m()->set_str("inner");
+
+  // Copy exactly the shipped bytes so we can corrupt them like a hostile peer.
+  const size_t n = src.Size();
+  const char* base = static_cast<const char*>(src.Data());
+  std::vector<char> recv(base, base + n);
+
+  auto find_u32 = [](const std::vector<char>& b, uint32_t v,
+                     size_t start) -> long {
+    for (size_t i = start; i + sizeof(uint32_t) <= b.size(); ++i) {
+      uint32_t w;
+      std::memcpy(&w, b.data() + i, sizeof(w));
+      if (w == v) {
+        return static_cast<long>(i);
+      }
+    }
+    return -1;
+  };
+
+  // Baseline: the copied buffer parses and reads back correctly.
+  {
+    auto msg = foo::bar::phaser::TestMessage::CreateReadonly(recv.data(),
+                                                             recv.size());
+    ASSERT_EQ(1234, msg.x());
+    ASSERT_EQ("hello world", msg.s());
+    ASSERT_EQ(3, msg.vi32_size());
+    ASSERT_EQ("inner", msg.m().str());
+  }
+
+  // 1) Inflating full_size (header offset 12) must not let accessors read past
+  //    the received size. Keep it inflated for the remaining corruptions too.
+  {
+    uint32_t huge = 0xffffffffu;
+    std::memcpy(recv.data() + 12, &huge, sizeof(huge));
+  }
+  {
+    auto msg = foo::bar::phaser::TestMessage::CreateReadonly(recv.data(),
+                                                             recv.size());
+    ASSERT_EQ(1234, msg.x());
+    ASSERT_EQ("hello world", msg.s());
+    ASSERT_EQ(3, msg.vi32_size());
+  }
+
+  // 2) A hostile string length must be clamped to the buffer, not trusted.
+  long s_pos = -1;
+  for (size_t i = 0; i + 11 <= recv.size(); ++i) {
+    if (std::memcmp(recv.data() + i, "hello world", 11) == 0) {
+      s_pos = static_cast<long>(i);
+      break;
+    }
+  }
+  ASSERT_GE(s_pos, 4);
+  {
+    uint32_t huge = 0xffffffffu;
+    std::memcpy(recv.data() + s_pos - 4, &huge, sizeof(huge));
+  }
+  {
+    auto msg = foo::bar::phaser::TestMessage::CreateReadonly(recv.data(),
+                                                             recv.size());
+    std::string_view s = msg.s();
+    ASSERT_LE(s.size(), recv.size());
+    ASSERT_EQ(0, s.compare(0, 11, "hello world"));
+  }
+
+  // 3) A hostile repeated-field element count must be clamped. Locate the vi32
+  //    data, then the VectorHeader { num_elements=3, data_offset } pointing at
+  //    it, and blow up the count.
+  const long data_pos = find_u32(recv, 0x11111111u, 0);
+  ASSERT_GE(data_pos, 0);
+  const uint32_t data_off = static_cast<uint32_t>(data_pos);
+  long hdr_pos = -1;
+  for (size_t i = 0; i + 2 * sizeof(uint32_t) <= recv.size(); ++i) {
+    uint32_t num, off;
+    std::memcpy(&num, recv.data() + i, sizeof(num));
+    std::memcpy(&off, recv.data() + i + sizeof(uint32_t), sizeof(off));
+    if (num == 3 && off == data_off) {
+      hdr_pos = static_cast<long>(i);
+      break;
+    }
+  }
+  ASSERT_GE(hdr_pos, 0);
+  {
+    uint32_t huge = 0xffffffffu;
+    std::memcpy(recv.data() + hdr_pos, &huge, sizeof(huge));
+  }
+  {
+    auto msg = foo::bar::phaser::TestMessage::CreateReadonly(recv.data(),
+                                                             recv.size());
+    const int count = msg.vi32_size();
+    ASSERT_LE(static_cast<size_t>(count),
+              (recv.size() - data_off) / sizeof(int32_t));
+    // Iterating the clamped range must stay in-bounds (ASan verifies this).
+    long long sum = 0;
+    for (int i = 0; i < count; ++i) {
+      sum += msg.vi32(i);
+    }
+    (void)sum;
+    // capacity() must not underflow-read before a hostile data offset.
+    ASSERT_GE(msg.vi32().capacity(), 0u);
+  }
+
+  // 4) Presence bits / has_* and nested-message access must stay in-bounds
+  //    even with inflated full_size (already set above).
+  {
+    auto msg = foo::bar::phaser::TestMessage::CreateReadonly(recv.data(),
+                                                             recv.size());
+    (void)msg.has_x();
+    (void)msg.has_s();
+    (void)msg.has_m();
+    (void)msg.m().str();
+    // String size()/data() used by Serialize must be size-aware.
+    ASSERT_LE(msg.s().size(), recv.size());
+    const char* sdata = msg.s().data();
+    if (sdata != nullptr) {
+      ASSERT_GE(static_cast<const void*>(sdata),
+                static_cast<const void*>(recv.data()));
+      ASSERT_LT(static_cast<const void*>(sdata),
+                static_cast<const void*>(recv.data() + recv.size()));
+    }
+  }
 }
 
 TEST(PhaserTest, DeletedFieldsBasic) {

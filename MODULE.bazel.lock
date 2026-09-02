@@ -79,8 +79,6 @@
     "https://bcr.bazel.build/modules/buildozer/8.5.1/source.json": "e3386e6ff4529f2442800dee47ad28d3e6487f36a1f75ae39ae56c70f0cd2fbd",
     "https://bcr.bazel.build/modules/coroutines/3.3.2/MODULE.bazel": "ad1395ae9758ee5d113acab755b4d972c368c4dab66513bfe31423136f3ee608",
     "https://bcr.bazel.build/modules/coroutines/3.3.2/source.json": "fb47a4c3e13d730a1a58ed6a34add8f6aaeef655a47d0f179427f71bf58ba150",
-    "https://bcr.bazel.build/modules/cpp_toolbelt/2.1.2/MODULE.bazel": "9db22ab8e1bf493e7e449d14255dbc8f2bad5bb9b8bb2635ae53a5211cd6fcb3",
-    "https://bcr.bazel.build/modules/cpp_toolbelt/2.1.2/source.json": "2922fb5eb35a57a8bc599120f68843acfc23df85eb85325e50b99a8a64453f33",
     "https://bcr.bazel.build/modules/gawk/5.3.2.bcr.1/MODULE.bazel": "cdf8cbe5ee750db04b78878c9633cc76e80dcf4416cbe982ac3a9222f80713c8",
     "https://bcr.bazel.build/modules/gawk/5.3.2.bcr.1/source.json": "fa7b512dfcb5eafd90ce3959cf42a2a6fe96144ebbb4b3b3928054895f2afac2",
     "https://bcr.bazel.build/modules/gazelle/0.45.0/MODULE.bazel": "ecd19ebe9f8e024e1ccffb6d997cc893a974bcc581f1ae08f386bdd448b10687",
@@ -276,6 +274,83 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "@@protobuf+//python/dist:system_python.bzl%system_python_extension": {
+      "general": {
+        "bzlTransitiveDigest": "qh0n9IrXU/xS94wxKQrG1J63zrLkA1Wy2Y3BQxptPcI=",
+        "usagesDigest": "AF5a9lHFrJtHw1GTt3jJOs7ZYl1+N2bkn1LbPFLoguA=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "system_python": {
+            "repoRuleId": "@@protobuf+//python/dist:system_python.bzl%system_python",
+            "attributes": {
+              "minimum_python_version": "3.9"
+            }
+          }
+        }
+      }
+    },
+    "@@pybind11_bazel+//:internal_configure.bzl%internal_configure_extension": {
+      "general": {
+        "bzlTransitiveDigest": "Ilz4hu4VWEbx3OM4ZIpgYmYXuPq6ewOVgzv5F0ziWS8=",
+        "usagesDigest": "tVQNvLoXMWAbiK39am3yovKGpwINdftfn7RpDyN+JZc=",
+        "recordedInputs": [
+          "REPO_MAPPING:pybind11_bazel+,bazel_tools bazel_tools"
+        ],
+        "generatedRepoSpecs": {
+          "pybind11": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "build_file": "@@pybind11_bazel+//:pybind11-BUILD.bazel",
+              "strip_prefix": "pybind11-2.13.6",
+              "url": "https://github.com/pybind/pybind11/archive/refs/tags/v2.13.6.tar.gz",
+              "integrity": "sha256-4Iy4f0dz2pf6e18DXeh2OrxlbYfVdz5i9toFh9Hw7CA="
+            }
+          }
+        }
+      }
+    },
+    "@@rules_android+//bzlmod_extensions:apksig.bzl%apksig_extension": {
+      "general": {
+        "bzlTransitiveDigest": "O/gCjP4/VVnaP+zTRGN3DFrkkxLE5GMbE4M1HG3noGQ=",
+        "usagesDigest": "S8lLnnZxdeYUYq3kIGhVMk0wQ9Fd6elmCskvn+SL6iw=",
+        "recordedInputs": [
+          "REPO_MAPPING:rules_android+,bazel_tools bazel_tools"
+        ],
+        "generatedRepoSpecs": {
+          "apksig": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "urls": [
+                "https://mirror.bazel.build/android.googlesource.com/platform/tools/apksig/+archive/24e3075e68ebe17c0b529bb24bfda819db5e2f3b.tar.gz"
+              ],
+              "sha256": "12e44fdbd219c5e1cc62099c2a01d775957603d2d4f693f8285f9d95d9a04e77",
+              "build_file": "@@rules_android+//bzlmod_extensions:apksig.BUILD"
+            }
+          }
+        }
+      }
+    },
+    "@@rules_android+//bzlmod_extensions:com_android_dex.bzl%com_android_dex_extension": {
+      "general": {
+        "bzlTransitiveDigest": "fVTI/3B6KjJ93jRf+pOa6ExSALb1hgRndpTPBrJKoZQ=",
+        "usagesDigest": "0hluQmaWiWak6sVMP5L4wXhNyIwv9fw0y5JJ8lnPb1c=",
+        "recordedInputs": [
+          "REPO_MAPPING:rules_android+,bazel_tools bazel_tools"
+        ],
+        "generatedRepoSpecs": {
+          "com_android_dex": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "urls": [
+                "https://mirror.bazel.build/android.googlesource.com/platform/dalvik/+archive/5a81c499a569731e2395f7c8d13c0e0d4e17a2b6.tar.gz"
+              ],
+              "build_file": "@@rules_android+//bzlmod_extensions:com_android_dex.BUILD",
+              "sha256": "86b4848c038bf687fadc812239cb01fb8d1d15cef3125b480a0448360992b95d"
+            }
+          }
+        }
+      }
+    },
     "@@rules_android+//rules/android_sdk_repository:rule.bzl%android_sdk_repository_extension": {
       "general": {
         "bzlTransitiveDigest": "qHbR00gVzVzkxX+PRtv4UGcUFMtBz7TK9CNYUWH8nIE=",

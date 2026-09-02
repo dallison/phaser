@@ -146,6 +146,53 @@ inline FieldLocation FindHybridField(const HybridFieldData* field_data,
   return {};
 }
 
+// Overflow-safe check that a table of 'count' elements of 'elem_size' bytes
+// starting at 'offset' lies entirely within a buffer of 'limit' bytes.
+inline bool MetadataRangeFits(uint32_t offset, size_t count, size_t elem_size,
+                              size_t limit) {
+  if (offset > limit) {
+    return false;
+  }
+  const size_t remaining = limit - offset;
+  if (elem_size != 0 && count > remaining / elem_size) {
+    return false;
+  }
+  return true;
+}
+
+// Validates that the hybrid metadata header and its dense/sparse tables fit
+// within a buffer of 'limit' bytes before any entry is dereferenced.
+inline bool HybridTableFits(uint32_t metadata_offset,
+                            const HybridFieldData* field_data, size_t limit) {
+  if (!MetadataRangeFits(metadata_offset, 1, sizeof(HybridFieldData), limit)) {
+    return false;
+  }
+  const uint32_t dense_offset =
+      metadata_offset + static_cast<uint32_t>(sizeof(HybridFieldData));
+  if (!MetadataRangeFits(dense_offset, field_data->dense_span,
+                         sizeof(FieldValue), limit)) {
+    return false;
+  }
+  const uint32_t sparse_offset =
+      dense_offset +
+      static_cast<uint32_t>(field_data->dense_span * sizeof(FieldValue));
+  return MetadataRangeFits(sparse_offset, field_data->sparse_count,
+                           sizeof(SparseFieldData), limit);
+}
+
+// Validates that the legacy metadata header and its field table fit within a
+// buffer of 'limit' bytes before any entry is dereferenced.
+inline bool LegacyTableFits(uint32_t metadata_offset,
+                            const FieldData* field_data, size_t limit) {
+  if (!MetadataRangeFits(metadata_offset, 1, sizeof(uint32_t), limit)) {
+    return false;
+  }
+  const uint32_t entries_offset =
+      metadata_offset + static_cast<uint32_t>(sizeof(uint32_t));
+  return MetadataRangeFits(entries_offset, field_data->num,
+                           sizeof(field_data->fields[0]), limit);
+}
+
 }  // namespace internal
 
 enum class FieldType {
@@ -353,6 +400,90 @@ struct MessageRuntime {
   template <typename T = void>
   const T* ToAddress(toolbelt::BufferOffset offset) const {
     return pb->ToAddress<T>(offset, buffer_size);
+  }
+
+  // Number of bytes that are trusted to be available in the buffer.  On the
+  // readonly receive path this is the size passed to CreateReadonly; otherwise
+  // the buffer is one we own and full_size is authoritative.
+  size_t TrustedSize() const {
+    if (buffer_size != 0) {
+      return buffer_size;
+    }
+    return pb != nullptr ? size_t(pb->full_size) : 0;
+  }
+
+  // Size-aware string reader.  Uses the trusted buffer size so a hostile length
+  // word in received data cannot cause an out-of-bounds read.
+  std::string_view GetStringView(toolbelt::BufferOffset header_offset) const {
+    if (pb == nullptr) {
+      return {};
+    }
+    return pb->GetStringView(header_offset, buffer_size);
+  }
+
+  size_t StringSize(toolbelt::BufferOffset header_offset) const {
+    if (pb == nullptr) {
+      return 0;
+    }
+    return pb->StringSize(header_offset, buffer_size);
+  }
+
+  const char* StringData(toolbelt::BufferOffset header_offset) const {
+    if (pb == nullptr) {
+      return nullptr;
+    }
+    return pb->StringData(header_offset, buffer_size);
+  }
+
+  // Size-aware presence-bit read.  A hostile field id or inflated full_size
+  // must not cause an out-of-bounds load of the presence mask.
+  bool IsPresent(uint32_t bit, uint32_t presence_mask_offset) const {
+    if (pb == nullptr || bit == static_cast<uint32_t>(-1)) {
+      return false;
+    }
+    const uint32_t word = bit / 32;
+    bit %= 32;
+    const uint32_t* p = ToAddress<const uint32_t>(
+        presence_mask_offset + word * static_cast<uint32_t>(sizeof(uint32_t)));
+    if (p == nullptr) {
+      return false;
+    }
+    return (*p & (1U << bit)) != 0;
+  }
+
+  // Clamps an attacker-influenced element count to the number of 'elem_size'
+  // elements that actually fit in the buffer starting at 'data_offset'.
+  size_t ClampElementCount(toolbelt::BufferOffset data_offset, size_t claimed,
+                           size_t elem_size) const {
+    if (data_offset == 0 || elem_size == 0) {
+      return 0;
+    }
+    const size_t limit = TrustedSize();
+    if (data_offset >= limit) {
+      return 0;
+    }
+    const size_t available = (limit - data_offset) / elem_size;
+    return claimed < available ? claimed : available;
+  }
+
+  // Returns the capacity of a PayloadBuffer vector allocation whose data
+  // starts at 'data_offset'.  The size word lives immediately before the
+  // data; a hostile data_offset near the start of the buffer must not cause
+  // an underflow read.
+  size_t AllocatedCapacity(toolbelt::BufferOffset data_offset,
+                           size_t elem_size) const {
+    if (elem_size == 0 ||
+        data_offset < sizeof(toolbelt::BufferOffset)) {
+      return 0;
+    }
+    const toolbelt::BufferOffset size_offset =
+        data_offset -
+        static_cast<toolbelt::BufferOffset>(sizeof(toolbelt::BufferOffset));
+    const auto* size_word = ToAddress<const toolbelt::BufferOffset>(size_offset);
+    if (size_word == nullptr) {
+      return 0;
+    }
+    return *size_word / elem_size;
   }
 
   template <typename T = void>
@@ -628,18 +759,33 @@ struct Message {
     if (field_data == nullptr) {
       return {};
     }
-    const void* metadata = runtime->ToAddress<void>(*field_data);
+    const ::toolbelt::BufferOffset metadata_offset = *field_data;
+    const void* metadata = runtime->ToAddress<void>(metadata_offset);
     if (metadata == nullptr) {
       return {};
     }
 
+    // The metadata tables are indexed using counts stored in the buffer, so we
+    // must confirm those tables lie within the trusted buffer bounds before
+    // dereferencing any entry (received data cannot be trusted).
+    const size_t limit = runtime->TrustedSize();
+    if (!internal::MetadataRangeFits(metadata_offset, 1, sizeof(uint32_t),
+                                     limit)) {
+      return {};
+    }
     const uint32_t first_word = *static_cast<const uint32_t*>(metadata);
     if (first_word == kHybridFieldDataMagic) {
-      return internal::FindHybridField(
-          static_cast<const HybridFieldData*>(metadata), field_number);
+      const auto* hybrid = static_cast<const HybridFieldData*>(metadata);
+      if (!internal::HybridTableFits(metadata_offset, hybrid, limit)) {
+        return {};
+      }
+      return internal::FindHybridField(hybrid, field_number);
     }
-    return internal::FindLegacyField(static_cast<const FieldData*>(metadata),
-                                     field_number);
+    const auto* legacy = static_cast<const FieldData*>(metadata);
+    if (!internal::LegacyTableFits(metadata_offset, legacy, limit)) {
+      return {};
+    }
+    return internal::FindLegacyField(legacy, field_number);
   }
 
   void* BinaryData() const {

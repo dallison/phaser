@@ -8,8 +8,24 @@ build:asan --copt=-fsanitize=address
 build:asan --copt=-fno-omit-frame-pointer
 build:asan --linkopt=-fsanitize=address
 
-test:asan --test_output=errors
-test:asan --test_env=ASAN_OPTIONS=abort_on_error=1:symbolize=1:fast_unwind_on_malloc=0
+# AddressSanitizer + libFuzzer for long receive-path fuzz runs.
+# Requires clang (GCC does not support -fsanitize=fuzzer). Linux recommended:
+#   bazel run --config=fuzz //phaser:receive_fuzz -- -max_total_time=120 \
+#     -artifact_prefix=/tmp/phaser_fuzz/ /path/to/corpus
+build:fuzz --strip=never
+build:fuzz -c dbg
+build:fuzz --repo_env=CC=clang
+build:fuzz --repo_env=CXX=clang++
+build:fuzz --action_env=CC=clang
+build:fuzz --action_env=CXX=clang++
+build:fuzz --action_env=BAZEL_COMPILER=clang
+build:fuzz --copt=-fsanitize=fuzzer,address
+build:fuzz --copt=-fno-omit-frame-pointer
+build:fuzz --linkopt=-fsanitize=fuzzer,address
+build:fuzz --copt=-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+
+test:fuzz --test_output=errors
+test:fuzz --test_env=ASAN_OPTIONS=abort_on_error=1:symbolize=1:detect_leaks=0
 
 # Valgrind (memcheck): bazel test //phaser/... --config=valgrind
 # Build with debug symbols (and no optimization) so valgrind reports useful
