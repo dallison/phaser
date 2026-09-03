@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "phaser/runtime/message.h"
+#include "phaser/runtime/wireformat.h"
 #include "phaser/testdata/TestMessage.phaser.h"
 #include "test_helpers.h"
 
@@ -64,13 +65,46 @@ TEST(StressTest, DynamicExplicitBufferExpansion) {
 
 TEST(StressTest, FinalizeSetsPayloadSize) {
   TestMessage msg(512);
+  msg.set_x(42);
   msg.set_s("finalize-me");
   auto* payload = reinterpret_cast<::toolbelt::PayloadBuffer*>(msg.Data());
-  payload->full_size = 0;
 
   msg.Finalize();
 
   EXPECT_EQ(payload->full_size, payload->hwm);
+  EXPECT_EQ(payload->free_list, 0u);
+  EXPECT_EQ(payload->metadata, 0u);
+
+  const auto wire = absl::Span<const char>(
+      reinterpret_cast<const char*>(msg.Data()), msg.Size());
+  EXPECT_EQ(::phaser::InferMessageWireFormat(wire),
+            ::phaser::MessageWireFormat::kPhaser);
+
+  const TestMessage readonly =
+      TestMessage::CreateReadonly(msg.Data(), msg.Size());
+  EXPECT_EQ(readonly.x(), 42);
+  EXPECT_EQ(readonly.s(), "finalize-me");
+}
+
+TEST(StressTest, FinalizePreservesUserMetadata) {
+  TestMessage msg(512);
+  auto* user_metadata = static_cast<uint32_t*>(msg.Allocate(sizeof(uint32_t)));
+  ASSERT_NE(user_metadata, nullptr);
+  *user_metadata = 0x12345678;
+  ASSERT_TRUE(msg.SetUserMetadata(msg.ToOffset(user_metadata)).ok());
+
+  msg.Finalize();
+
+  const auto wire = absl::Span<const char>(
+      reinterpret_cast<const char*>(msg.Data()), msg.Size());
+  EXPECT_EQ(::phaser::InferMessageWireFormat(wire),
+            ::phaser::MessageWireFormat::kPhaser);
+
+  auto readonly = TestMessage::CreateReadonly(msg.Data(), msg.Size());
+  const auto* readonly_metadata =
+      static_cast<const uint32_t*>(readonly.GetUserMetadata());
+  ASSERT_NE(readonly_metadata, nullptr);
+  EXPECT_EQ(*readonly_metadata, 0x12345678u);
 }
 
 TEST(StressTest, MoveAssignmentReplacesMessageStorage) {

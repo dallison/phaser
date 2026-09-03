@@ -1879,8 +1879,16 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
 
 void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
   os << "  void Finalize() const {\n"
+        "    const auto* _phaser_runtime_control = "
+        "runtime->GetRuntimeControl();\n"
+        "    const ::toolbelt::BufferOffset _phaser_user_metadata =\n"
+        "        _phaser_runtime_control != nullptr\n"
+        "            ? _phaser_runtime_control->user_metadata\n"
+        "            : runtime->pb->metadata;\n"
         "    const size_t _phaser_size = Size();\n"
         "    runtime->pb->full_size = static_cast<uint32_t>(_phaser_size);\n"
+        "    runtime->pb->free_list = 0;\n"
+        "    runtime->pb->metadata = _phaser_user_metadata;\n"
         "  }\n";
   os << "  static constexpr size_t BinarySize() { return HeaderSize() + "
      << binary_size_ << "; }\n";
