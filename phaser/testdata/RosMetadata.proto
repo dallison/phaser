@@ -12,7 +12,7 @@ message Status {
     };
 
     CONSTANTS_OK = 0;
-    CONSTANTS_BAD = 1;
+    CONSTANTS_LEGACY_BAD = 1 [(phaser.ros_enum_value) = { name: "BAD" }];
   }
 
   int32 value = 1;
