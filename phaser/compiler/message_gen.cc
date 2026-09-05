@@ -1726,6 +1726,8 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream& os,
 
 void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
   if (decl) {
+    os << "  using ExternalBufferAllocator = "
+          "::phaser::ExternalBufferAllocator;\n";
     os << "  static " << MessageName(message_)
        << " CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning = "
           "::phaser::Tuning::kPerformance);\n";
@@ -1734,6 +1736,10 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
     os << "  static " << MessageName(message_)
        << " CreateDynamicMutable(size_t initial_size, ::phaser::Tuning tuning "
           "= ::phaser::Tuning::kPerformance);\n";
+    os << "  static absl::StatusOr<" << MessageName(message_)
+       << "> TryCreateExternalMutable(size_t initial_size, "
+          "::phaser::ExternalBufferAllocator *allocator, "
+          "::phaser::Tuning tuning = ::phaser::Tuning::kPerformance);\n";
     os << "  void InitDynamicMutable(size_t initial_size = 8192, "
           "::phaser::Tuning tuning = ::phaser::Tuning::kPerformance);\n";
     os << "  static absl::StatusOr<" << MessageName(message_)
@@ -1800,6 +1806,38 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
      << MessageName(message_)
      << "(BorrowRuntime(runtime), pb->message);\n"
         "}\n\n";
+  os << "// Create a growable mutable message using caller-owned allocation "
+        "state.\n";
+  os << "absl::StatusOr<" << MessageName(message_) << "> "
+     << MessageName(message_)
+     << "::TryCreateExternalMutable(size_t initial_size, "
+        "::phaser::ExternalBufferAllocator *allocator, "
+        "::phaser::Tuning tuning) {\n"
+        "  if (allocator == nullptr) {\n"
+        "    return absl::InvalidArgumentError(\"allocator must not be "
+        "null\");\n"
+        "  }\n"
+        "  absl::StatusOr<::toolbelt::PayloadBuffer *> pbs = "
+        "allocator->NewBuffer(initial_size, tuning);\n"
+        "  if (!pbs.ok()) return pbs.status();\n"
+        "  ::toolbelt::PayloadBuffer *pb = *pbs;\n"
+        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+     << MessageName(message_)
+     << "::BinarySize());\n"
+        "  ::phaser::InitializeRuntimeControl(&pb, "
+     << MessageName(message_)
+     << "::MetadataTypeCount());\n"
+        "  ::phaser::MessageRuntime runtime(pb, true);\n"
+        "  runtime.mode_ = ::phaser::RuntimeHandleMode::kExternalMutable;\n"
+        "  auto msg = "
+     << MessageName(message_)
+     << "(BorrowRuntime(runtime), pb->message);\n"
+        "  msg.InstallMetadata<"
+     << MessageName(message_)
+     << ">();\n"
+        "  return msg;\n"
+        "}\n\n";
+
   os << "// Create a message in a dynamically resized buffer allocated from "
         "the heap.\n";
   os << "absl::StatusOr<" << MessageName(message_) << "> "
@@ -1889,6 +1927,10 @@ void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
         "    runtime->pb->full_size = static_cast<uint32_t>(_phaser_size);\n"
         "    runtime->pb->free_list = 0;\n"
         "    runtime->pb->metadata = _phaser_user_metadata;\n"
+        "    if (runtime->Mode() == "
+        "::phaser::RuntimeHandleMode::kExternalMutable) {\n"
+        "      runtime->pb->RemoveBorrowedResizer();\n"
+        "    }\n"
         "  }\n";
   os << "  static constexpr size_t BinarySize() { return HeaderSize() + "
      << binary_size_ << "; }\n";

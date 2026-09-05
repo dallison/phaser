@@ -301,6 +301,7 @@ inline RuntimeControlBlock* InitializeRuntimeControl(
 enum class RuntimeHandleMode {
   kBorrowedReadonly,
   kFixedMutable,
+  kExternalMutable,
   kOwnedDynamic,
 };
 
@@ -534,6 +535,42 @@ struct InternalDefault {};
 enum class Tuning {
   kPerformance,  // Use a bitmap allocator for small blocks
   kSize,         // Use a simple allocator for small blocks
+};
+
+// Caller-owned allocation state for mutable messages backed by an external
+// buffer. Moving the state automatically rebinds its payload; Rebind supports
+// callers that move the payload separately. This avoids the shared runtime and
+// heap-owned std::function objects used by CreateDynamicMutable.
+class ExternalBufferAllocator {
+ public:
+  using AllocateFunction =
+      absl::StatusOr<void*> (*)(void* context, size_t size);
+  using ReallocateFunction = absl::StatusOr<void*> (*)(
+      void* context, void* buffer, size_t old_size, size_t new_size);
+
+  ExternalBufferAllocator();
+  ExternalBufferAllocator(void* context, AllocateFunction allocate,
+                          ReallocateFunction reallocate);
+  ExternalBufferAllocator(const ExternalBufferAllocator&) = delete;
+  ExternalBufferAllocator& operator=(const ExternalBufferAllocator&) = delete;
+  ExternalBufferAllocator(ExternalBufferAllocator&& other) noexcept;
+  ExternalBufferAllocator& operator=(ExternalBufferAllocator&& other) noexcept;
+
+  void Reset(void* context, AllocateFunction allocate,
+             ReallocateFunction reallocate);
+  absl::StatusOr<::toolbelt::PayloadBuffer*> NewBuffer(size_t initial_size,
+                                                       Tuning tuning);
+  void Rebind(::toolbelt::PayloadBuffer* buffer);
+
+ private:
+  static void Resize(void* context, ::toolbelt::PayloadBuffer** buffer,
+                     size_t old_size, size_t new_size);
+
+  void* context_ = nullptr;
+  AllocateFunction allocate_ = nullptr;
+  ReallocateFunction reallocate_ = nullptr;
+  ::toolbelt::BorrowedResizer borrowed_resizer_;
+  ::toolbelt::PayloadBuffer* buffer_ = nullptr;
 };
 
 // Payload buffers can move. All messages in a message tree must all use the

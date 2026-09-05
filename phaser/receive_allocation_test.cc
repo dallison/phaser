@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "gtest/gtest.h"
 
 namespace {
@@ -47,6 +48,31 @@ struct ExerciseResult {
   bool protobuf_serialized = true;
   bool ros_serialized = true;
 };
+
+struct alignas(std::max_align_t) ExternalBuffers {
+  std::array<std::byte, 8192> initial{};
+  std::array<std::byte, 131072> expanded{};
+};
+
+absl::StatusOr<void*> AllocateExternalBuffer(void* opaque, size_t size) {
+  auto* buffers = static_cast<ExternalBuffers*>(opaque);
+  if (size > buffers->initial.size()) {
+    return absl::ResourceExhaustedError("initial buffer is too small");
+  }
+  return buffers->initial.data();
+}
+
+absl::StatusOr<void*> ReallocateExternalBuffer(
+    void* opaque, void* buffer, size_t old_size, size_t new_size) {
+  auto* buffers = static_cast<ExternalBuffers*>(opaque);
+  if (new_size > buffers->expanded.size()) {
+    return absl::ResourceExhaustedError("expanded buffer is too small");
+  }
+  if (buffer != buffers->expanded.data()) {
+    std::memcpy(buffers->expanded.data(), buffer, old_size);
+  }
+  return buffers->expanded.data();
+}
 
 template <typename Message>
 std::vector<char> CopyPayload(const Message& message) {
@@ -198,6 +224,42 @@ ExerciseResult ExerciseFixedOutput() {
   result.protobuf_serialized &=
       any.SerializeToArray(protobuf_output.data(), protobuf_output.size());
 
+  return result;
+}
+
+ExerciseResult ExerciseExternalOutput() {
+  ExerciseResult result;
+  ExternalBuffers buffers;
+  phaser::ExternalBufferAllocator allocator(
+      &buffers, AllocateExternalBuffer, ReallocateExternalBuffer);
+  auto message_or = foo::bar::phaser::TestMessage::TryCreateExternalMutable(
+      buffers.initial.size(), &allocator);
+  if (!message_or.ok()) {
+    result.values_match = false;
+    return result;
+  }
+  auto message = std::move(*message_or);
+
+  // Atlas moves its output storage onto the publish strand. Moving the
+  // caller-owned allocator must rebind the in-payload callback.
+  phaser::ExternalBufferAllocator moved_allocator(std::move(allocator));
+  result.values_match &= message.Allocate(32768) != nullptr;
+  phaser::ExternalBufferAllocator assigned_allocator;
+  assigned_allocator = std::move(moved_allocator);
+  result.values_match &= message.Allocate(32768) != nullptr;
+  message.set_x(42);
+  message.set_s("external-output");
+  result.values_match &= message.x() == 42;
+  result.values_match &= message.s() == "external-output";
+  result.values_match &= message.Data() == buffers.expanded.data();
+
+  std::array<char, 65536> protobuf_output{};
+  result.protobuf_serialized &=
+      message.SerializeToArray(protobuf_output.data(), protobuf_output.size());
+  message.Finalize();
+  result.values_match &=
+      message.runtime->pb->magic ==
+      (toolbelt::kFixedBufferMagic | toolbelt::kBitMapFlag);
   return result;
 }
 
@@ -362,6 +424,22 @@ TEST(OutputAllocationTest, FixedBufferTypedMutationAndSerializationAllocateNothi
   EXPECT_TRUE(measured.values_match);
   EXPECT_TRUE(measured.protobuf_serialized);
   EXPECT_TRUE(measured.ros_serialized);
+  EXPECT_EQ(g_allocation_count.load(std::memory_order_relaxed), 0u);
+}
+
+TEST(OutputAllocationTest,
+     ExternalGrowableMutationAndSerializationAllocateNothing) {
+  ExerciseResult warmup = ExerciseExternalOutput();
+  ASSERT_TRUE(warmup.values_match);
+  ASSERT_TRUE(warmup.protobuf_serialized);
+
+  g_allocation_count.store(0, std::memory_order_relaxed);
+  g_count_allocations.store(true, std::memory_order_relaxed);
+  ExerciseResult measured = ExerciseExternalOutput();
+  g_count_allocations.store(false, std::memory_order_relaxed);
+
+  EXPECT_TRUE(measured.values_match);
+  EXPECT_TRUE(measured.protobuf_serialized);
   EXPECT_EQ(g_allocation_count.load(std::memory_order_relaxed), 0u);
 }
 
