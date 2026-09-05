@@ -11,8 +11,8 @@ message Status {
       type: "int32"
     };
 
-    OK = 0;
-    BAD = 1;
+    CONSTANTS_OK = 0;
+    CONSTANTS_BAD = 1;
   }
 
   int32 value = 1;
@@ -45,7 +45,7 @@ enum LegacyStatus {
     type: "uint8"
   };
 
-  LEGACY_STATUS_OK = 0 [(phaser.ros_enum_value) = { name: "OK" }];
+  LEGACY_STATUS_OK = 0;
 }
 
 message LegacyStatusWrapper {

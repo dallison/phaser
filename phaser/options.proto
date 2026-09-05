@@ -49,7 +49,8 @@ message RosEnumValueMetadata {
   // Exclude a synthetic protobuf value from the ROS constant list.
   bool ignore = 1;
 
-  // Original ROS name and textual value when protobuf changed either one.
+  // Original ROS name when it cannot be inferred by removing the enum type's
+  // UPPER_SNAKE_CASE prefix, and its textual value when protobuf changed it.
   string name = 2;
   string value = 3;
 }

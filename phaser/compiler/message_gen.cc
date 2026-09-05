@@ -309,6 +309,35 @@ static bool IsRosConstantOnlyMessageField(
   return saw_constant;
 }
 
+static std::string UpperSnakeCase(std::string_view name) {
+  std::string result;
+  result.reserve(name.size() * 2);
+  for (size_t i = 0; i < name.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(name[i]);
+    if (i > 0 && std::isupper(c)) {
+      result.push_back('_');
+    }
+    result.push_back(std::isalnum(c) ? static_cast<char>(std::toupper(c)) : '_');
+  }
+  return result;
+}
+
+static std::string RosEnumValueName(
+    const google::protobuf::EnumDescriptor* enum_type,
+    const google::protobuf::EnumValueDescriptor* value) {
+  const auto& metadata =
+      value->options().GetExtension(phaser::ros_enum_value);
+  if (!metadata.name().empty()) {
+    return metadata.name();
+  }
+
+  const std::string prefix = UpperSnakeCase(enum_type->name()) + "_";
+  if (value->name().compare(0, prefix.size(), prefix) == 0) {
+    return std::string(value->name().substr(prefix.size()));
+  }
+  return std::string(value->name());
+}
+
 static std::vector<std::string> RosConstantDeclarations(
     const google::protobuf::Descriptor* message) {
   const auto& message_metadata =
@@ -333,9 +362,7 @@ static std::vector<std::string> RosConstantDeclarations(
       if (value_metadata.ignore()) {
         continue;
       }
-      const std::string name = value_metadata.name().empty()
-                                   ? std::string(value->name())
-                                   : value_metadata.name();
+      const std::string name = RosEnumValueName(enum_type, value);
       const std::string text_value = value_metadata.value().empty()
                                          ? std::to_string(value->number())
                                          : value_metadata.value();
