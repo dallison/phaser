@@ -472,14 +472,18 @@ struct MessageRuntime {
   // an underflow read.
   size_t AllocatedCapacity(toolbelt::BufferOffset data_offset,
                            size_t elem_size) const {
-    if (elem_size == 0 || data_offset == 0 || pb == nullptr) {
+    if (elem_size == 0 ||
+        data_offset < sizeof(toolbelt::BufferOffset)) {
       return 0;
     }
-    uint32_t* block = pb->ToAddress<uint32_t>(data_offset);
-    if (block == nullptr) {
+    const toolbelt::BufferOffset size_offset =
+        data_offset -
+        static_cast<toolbelt::BufferOffset>(sizeof(toolbelt::BufferOffset));
+    const auto* size_word = ToAddress<const toolbelt::BufferOffset>(size_offset);
+    if (size_word == nullptr) {
       return 0;
     }
-    return ::toolbelt::PayloadBuffer::DecodeSize(block) / elem_size;
+    return *size_word / elem_size;
   }
 
   template <typename T = void>

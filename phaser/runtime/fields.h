@@ -651,7 +651,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   StringField& operator=(const char* s) {
     ::toolbelt::PayloadBuffer::SetString(
         GetBufferAddr(), std::string_view(s, std::strlen(s)),
-        StringHeaderOffset());
+        GetMessageBinaryStart() + relative_binary_offset_);
     return *this;
   }
 
@@ -679,31 +679,34 @@ class StringField : public Field, public StringFieldFacade<StringField> {
 
   template <typename Str>
   void Set(Str s) {
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
-                                         StringHeaderOffset());
+    ::toolbelt::PayloadBuffer::SetString(
+        GetBufferAddr(), s, GetMessageBinaryStart() + relative_binary_offset_);
   }
 
   void Set(const char* data, size_t size) {
     ::toolbelt::PayloadBuffer::SetString(
-        GetBufferAddr(), std::string_view(data, size), StringHeaderOffset());
+        GetBufferAddr(), std::string_view(data, size),
+        GetMessageBinaryStart() + relative_binary_offset_);
   }
 
   void SetNoCopy(const void* data) {
     toolbelt::StringHeader* header =
-        GetRuntime()->ToAddress<toolbelt::StringHeader>(StringHeaderOffset());
+        GetRuntime()->ToAddress<toolbelt::StringHeader>(
+            GetMessageBinaryStart() + relative_binary_offset_);
     *header = GetRuntime()->ToOffset(data);
   }
 
   void Clear() {
-    ::toolbelt::PayloadBuffer::ClearString(GetBufferAddr(), StringHeaderOffset());
+    ::toolbelt::PayloadBuffer::ClearString(
+        GetBufferAddr(), GetMessageBinaryStart() + relative_binary_offset_);
   }
 
   // Allocate space for the given size for the string and return the
   // starting address.
   absl::Span<char> Allocate(size_t size, bool clear = false) {
-    return ::toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(), size,
-                                                    StringHeaderOffset(),
-                                                    clear);
+    return ::toolbelt::PayloadBuffer::AllocateString(
+        GetBufferAddr(), size,
+        GetMessageBinaryStart() + relative_binary_offset_, clear);
   }
 
   size_t size() const {
@@ -741,8 +744,8 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     if (!s.ok()) {
       return s.status();
     }
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), *s,
-                                         StringHeaderOffset());
+    ::toolbelt::PayloadBuffer::SetString(
+        GetBufferAddr(), *s, GetMessageBinaryStart() + relative_binary_offset_);
     return absl::OkStatus();
   }
 
@@ -763,15 +766,6 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   }
   ::toolbelt::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-
-  ::toolbelt::BufferOffset StringHeaderOffset() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      return GetMessageBinaryStart() + relative_binary_offset_;
-    }
-    return GetMessageBinaryStart() +
-           static_cast<::toolbelt::BufferOffset>(offset);
   }
 
   uint32_t source_offset_;

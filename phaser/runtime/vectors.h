@@ -1197,7 +1197,7 @@ class MessageVectorField : public Field {
     ::toolbelt::BufferOffset absolute_binary_offset =
         GetRuntime()->ToOffset(binary);
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), absolute_binary_offset);
+        GetBufferAddr(), Header(), absolute_binary_offset);
     T result(GetRuntime(), absolute_binary_offset);
     result.template InstallMetadata<T>();
     return result;
@@ -1208,10 +1208,10 @@ class MessageVectorField : public Field {
   T Mutable(size_t index) {
     if (index >= size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), index + 1);
+          GetBufferAddr(), Header(), index + 1);
     }
 
-    auto hdr = ResolvedVectorHeader();
+    auto hdr = Header();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     if (data[index] == 0) {
@@ -1220,7 +1220,7 @@ class MessageVectorField : public Field {
       ::toolbelt::BufferOffset absolute_binary_offset =
           GetRuntime()->ToOffset(binary);
 
-      hdr = ResolvedVectorHeader();
+      hdr = Header();
       data =
           GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
       data[index] = absolute_binary_offset;
@@ -1234,9 +1234,9 @@ class MessageVectorField : public Field {
   void SetOffset(int index, toolbelt::BufferOffset offset) {
     if (static_cast<size_t>(index) >= size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), static_cast<size_t>(index) + 1);
+          GetBufferAddr(), Header(), static_cast<size_t>(index) + 1);
     }
-    auto hdr = ResolvedVectorHeader();
+    auto hdr = Header();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     if (data[index] != 0) {
@@ -1253,12 +1253,12 @@ class MessageVectorField : public Field {
     result.reserve(n);
     Clear();
     ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+        GetBufferAddr(), Header(), n);
     // Allocate memory for n messages in the payload buffer.
     std::vector<void*> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
         GetBufferAddr(), T::BinarySize(), static_cast<uint32_t>(n), true);
 
-    toolbelt::VectorHeader* hdr = ResolvedVectorHeader();
+    toolbelt::VectorHeader* hdr = Header();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
 
@@ -1279,14 +1279,14 @@ class MessageVectorField : public Field {
 
   void reserve(size_t n) {
     ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+        GetBufferAddr(), Header(), n);
   }
 
   void resize(size_t n) {
     const size_t old_size = size();
     if (n < old_size) {
       for (size_t i = n; i < old_size; ++i) {
-        auto hdr = ResolvedVectorHeader();
+        auto hdr = Header();
         auto data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
             hdr->data);
         const ::toolbelt::BufferOffset offset = data[i];
@@ -1297,7 +1297,7 @@ class MessageVectorField : public Field {
       }
     }
     ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+        GetBufferAddr(), Header(), n);
     for (size_t i = old_size; i < n; ++i) {
       (void)Mutable(i);
     }
@@ -1370,7 +1370,7 @@ class MessageVectorField : public Field {
   }
 
   void Clear() {
-    auto hdr = ResolvedVectorHeader();
+    auto hdr = Header();
     auto data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     for (uint32_t i = 0; i < hdr->num_elements; i++) {
@@ -1381,7 +1381,7 @@ class MessageVectorField : public Field {
       GetBuffer()->Free(GetRuntime()->ToAddress(data[i]));
     }
     ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader());
+        GetBufferAddr(), Header());
   }
   void clear() { Clear(); }
 
@@ -1546,14 +1546,6 @@ class MessageVectorField : public Field {
     }
     return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
         GetMessageBinaryStart() + relative_offset);
-  }
-
-  toolbelt::VectorHeader* ResolvedVectorHeader() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      offset = static_cast<int32_t>(relative_binary_offset_);
-    }
-    return Header(static_cast<uint32_t>(offset));
   }
 
   ::toolbelt::BufferOffset BaseOffset() const {
@@ -1814,7 +1806,7 @@ class StringVectorField : public Field {
 
     // Add an offset for the new string to the binary.
     ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), hdr_offset);
+        GetBufferAddr(), Header(), hdr_offset);
   }
 
   template <typename Str>
@@ -1841,10 +1833,10 @@ class StringVectorField : public Field {
   void Set(size_t index, Str s) {
     if (index >= size()) {
       ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), index + 1);
+          GetBufferAddr(), Header(), index + 1);
     }
 
-    auto hdr = ResolvedVectorHeader();
+    auto hdr = Header();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     if (data[index] == 0) {
@@ -1853,7 +1845,7 @@ class StringVectorField : public Field {
           GetBufferAddr(), sizeof(toolbelt::StringHeader));
       ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
 
-      hdr = ResolvedVectorHeader();
+      hdr = Header();
       data =
           GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
       data[index] = hdr_offset;
@@ -1870,14 +1862,14 @@ class StringVectorField : public Field {
 
   void reserve(size_t n) {
     ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+        GetBufferAddr(), Header(), n);
   }
 
   void resize(size_t n) {
     const size_t old_size = size();
     if (n < old_size) {
       for (size_t i = n; i < old_size; ++i) {
-        auto hdr = ResolvedVectorHeader();
+        auto hdr = Header();
         auto data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
             hdr->data);
         const ::toolbelt::BufferOffset offset = data[i];
@@ -1889,7 +1881,7 @@ class StringVectorField : public Field {
       }
     }
     ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+        GetBufferAddr(), Header(), n);
   }
   void resize(size_t n, std::string_view value) {
     const std::string value_copy(value);
@@ -1963,7 +1955,7 @@ class StringVectorField : public Field {
   }
 
   void Clear() {
-    auto hdr = ResolvedVectorHeader();
+    auto hdr = Header();
     auto data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
     for (size_t i = 0; i < hdr->num_elements; ++i) {
@@ -1975,7 +1967,7 @@ class StringVectorField : public Field {
           .Clear();
     }
     ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader());
+        GetBufferAddr(), Header());
   }
 
   void clear() { Clear(); }  // STL compatibility.
@@ -2101,14 +2093,6 @@ class StringVectorField : public Field {
     }
     return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
         GetMessageBinaryStart() + relative_offset);
-  }
-
-  toolbelt::VectorHeader* ResolvedVectorHeader() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      offset = static_cast<int32_t>(relative_binary_offset_);
-    }
-    return Header(static_cast<uint32_t>(offset));
   }
 
   const std::shared_ptr<MessageRuntime>& GetRuntime() const {
