@@ -1,6 +1,6 @@
 module(
     name = "phaser",
-    version = "2.1.0"
+    version = "2.1.1"
 )
 
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
@@ -20,12 +20,11 @@ bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
 bazel_dep(name = "cpp_toolbelt", version = "2.1.2")
 bazel_dep(name = "coroutines", version = "3.3.2")
 
-# Until cpp_toolbelt 2.1.3 is published to BCR, pin the bounds-checking fixes
-# from the bounds_fixes branch. Remove this override once the release lands.
-git_override(
+# cpp_toolbelt VectorPush growth fix: allocations @ a016109 (sibling checkout
+# until pushed to origin; then replace with git_override commit = "a016109").
+local_path_override(
     module_name = "cpp_toolbelt",
-    remote = "https://github.com/dallison/cpp_toolbelt.git",
-    commit = "f69cb51",
+    path = "../cpp_toolbelt",
 )
 
 # protobuf pulls an older rules_go via gazelle; Bazel 9 needs a current rules_go.
