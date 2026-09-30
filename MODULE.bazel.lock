@@ -79,6 +79,8 @@
     "https://bcr.bazel.build/modules/buildozer/8.5.1/source.json": "e3386e6ff4529f2442800dee47ad28d3e6487f36a1f75ae39ae56c70f0cd2fbd",
     "https://bcr.bazel.build/modules/coroutines/3.3.2/MODULE.bazel": "ad1395ae9758ee5d113acab755b4d972c368c4dab66513bfe31423136f3ee608",
     "https://bcr.bazel.build/modules/coroutines/3.3.2/source.json": "fb47a4c3e13d730a1a58ed6a34add8f6aaeef655a47d0f179427f71bf58ba150",
+    "https://bcr.bazel.build/modules/cpp_toolbelt/2.1.5/MODULE.bazel": "6e09603c35d27d12d9d1ad33157d82acd2d0e87ff8f957b7efb257b2a7a3ece6",
+    "https://bcr.bazel.build/modules/cpp_toolbelt/2.1.5/source.json": "22d3adfbd3e6ce87f688d14866b93c6158d3f704919022c41528c8228e7b8396",
     "https://bcr.bazel.build/modules/gawk/5.3.2.bcr.1/MODULE.bazel": "cdf8cbe5ee750db04b78878c9633cc76e80dcf4416cbe982ac3a9222f80713c8",
     "https://bcr.bazel.build/modules/gawk/5.3.2.bcr.1/source.json": "fa7b512dfcb5eafd90ce3959cf42a2a6fe96144ebbb4b3b3928054895f2afac2",
     "https://bcr.bazel.build/modules/gazelle/0.45.0/MODULE.bazel": "ecd19ebe9f8e024e1ccffb6d997cc893a974bcc581f1ae08f386bdd448b10687",

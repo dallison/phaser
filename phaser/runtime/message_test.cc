@@ -2111,6 +2111,45 @@ TEST(MessageTest, PhaserBank) {
   free(buffer);
 }
 
+// Regression for pooled-output reuse: repeated nested messages with per-element
+// strings in a tight fixed buffer without vector reserve. Integrity watchdog
+// hit wrong monitor names on tick 1 and a PayloadBuffer::Free spin on tick 2.
+TEST(MessageTest, RepeatedNestedMessagesNoReserveSurvivesPoolClear) {
+  // Fixed buffer; 8 KiB matches watchdog pool slots but this harness message is
+  // larger than IntegrityWatchdogStatus, so use 64 KiB to stay in-buffer while
+  // still exercising vector growth without reserve.
+  constexpr size_t kBufSize = 65536;
+  char* buffer = static_cast<char*>(calloc(kBufSize, 1));
+  ASSERT_NE(nullptr, buffer);
+  TestMessage msg = TestMessage::CreateMutable(buffer, kBufSize);
+
+  auto build_and_check = [&](int tick) {
+    msg.vm_.clear();
+    for (int i = 0; i < 50; ++i) {
+      InnerMessage mon = msg.vm_.Add();
+      const std::string name = absl::StrFormat(
+          "/module_thorx_b/%02d_some_integrity_monitor_with_a_long_name",
+          i + tick * 100);
+      mon.str_.Set(name);
+      mon.f_.Set(static_cast<uint64_t>(i));
+    }
+    ASSERT_EQ(50u, msg.vm_.size());
+    for (int i = 0; i < 50; ++i) {
+      const std::string expect = absl::StrFormat(
+          "/module_thorx_b/%02d_some_integrity_monitor_with_a_long_name",
+          i + tick * 100);
+      SCOPED_TRACE(absl::StrFormat("tick=%d index=%d", tick, i));
+      EXPECT_EQ(expect, msg.vm_.Get(static_cast<size_t>(i)).str_.Get());
+    }
+  };
+
+  build_and_check(1);
+  msg.Clear();
+  build_and_check(2);
+  msg.Clear();
+  free(buffer);
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 
