@@ -2111,6 +2111,40 @@ TEST(MessageTest, PhaserBank) {
   free(buffer);
 }
 
+// Regression for pooled-output reuse: repeated nested messages with per-element
+// strings in an 8 KiB dynamic buffer without vector reserve. Tick 1 string
+// corruption and tick 2 Clear() spinning in PayloadBuffer::Free occurred when
+// vector/string mutation used static layout offsets instead of resolved metadata
+// offsets (StringHeaderOffset / ResolvedVectorHeader).
+TEST(MessageTest, RepeatedNestedMessagesNoReserveSurvivesPoolClear) {
+  constexpr size_t kBufSize = 8192;
+  TestMessage msg = TestMessage::CreateDynamicMutable(kBufSize);
+
+  auto build_and_check = [&](int tick) {
+    for (int i = 0; i < 50; ++i) {
+      InnerMessage entry = msg.vm_.Add();
+      const std::string name = absl::StrFormat(
+          "/example/item_%02d_repeated_nested_field_with_a_long_string_value",
+          i + tick * 100);
+      entry.str_.Set(name);
+      entry.f_.Set(static_cast<uint64_t>(i));
+    }
+    ASSERT_EQ(50u, msg.vm_.size());
+    for (int i = 0; i < 50; ++i) {
+      const std::string expect = absl::StrFormat(
+          "/example/item_%02d_repeated_nested_field_with_a_long_string_value",
+          i + tick * 100);
+      SCOPED_TRACE(absl::StrFormat("tick=%d index=%d", tick, i));
+      EXPECT_EQ(expect, msg.vm_.Get(static_cast<size_t>(i)).str_.Get());
+    }
+  };
+
+  build_and_check(1);
+  msg.Clear();
+  build_and_check(2);
+  msg.Clear();
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 

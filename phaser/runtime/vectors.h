@@ -1676,7 +1676,7 @@ class StringVectorField : public Field {
       }
       const ::toolbelt::BufferOffset string_offset =
           GetRuntime()->ToOffset(str_hdr);
-      hdr = Header();
+      hdr = ResolvedVectorHeader();
       if (hdr == nullptr) {
         return {};
       }
