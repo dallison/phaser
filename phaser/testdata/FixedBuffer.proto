@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+// Messages for fixed_buffer_test, which fills fixed size buffers until they
+// run out of space.  The fields cover every kind that allocates in the buffer.
+package foo.bar;
+
+import "phaser/options.proto";
+
+message FixedBufferInner {
+  int32 id = 1;
+  string label = 2;
+}
+
+message FixedBufferMessage {
+  int32 x = 1;
+  string name = 2;
+  FixedBufferInner inner = 3;
+  repeated int32 values = 4;
+  repeated string names = 5;
+  repeated FixedBufferInner inners = 6;
+  oneof choice {
+    string choice_name = 7;
+    FixedBufferInner choice_inner = 8;
+  }
+  repeated int32 fixed_values = 9 [(phaser.array_size) = 4];
+  repeated string fixed_names = 10 [(phaser.array_size) = 2];
+  repeated FixedBufferInner fixed_inners = 11 [(phaser.array_size) = 2];
+  bytes payload = 12;
+}

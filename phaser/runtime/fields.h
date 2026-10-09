@@ -89,7 +89,7 @@ class Field {
  protected:
   void RequireMutable(uint32_t source_offset) const {
     if (!Message::GetRuntime(this, source_offset)->IsMutable()) {
-      throw std::logic_error("cannot mutate a readonly Phaser message");
+      PHASER_THROW(std::logic_error("cannot mutate a readonly Phaser message"));
     }
   }
 
@@ -741,8 +741,10 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     if (!s.ok()) {
       return s.status();
     }
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), *s,
-                                         StringHeaderOffset());
+    if (::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), *s,
+                                             StringHeaderOffset()) == nullptr) {
+      return internal::AllocationFailedError();
+    }
     return absl::OkStatus();
   }
 
@@ -810,7 +812,7 @@ class NonEmbeddedStringField
     if (this == &other) {
       return *this;
     }
-    if (other.IsPlaceholder()) {
+    if (IsPlaceholder() || other.IsPlaceholder()) {
       return *this;
     }
     std::string_view value = other.Get();
@@ -828,6 +830,9 @@ class NonEmbeddedStringField
         GetBuffer()->ToOffset(const_cast<char*>(value.data()));
     absl::Span<char> destination = ::toolbelt::PayloadBuffer::AllocateString(
         GetBufferAddr(), value.size(), absolute_binary_offset_, false);
+    if (destination.data() == nullptr) {
+      return *this;
+    }
     memmove(destination.data(), GetBuffer()->ToAddress<char>(source),
             value.size());
     return *this;
@@ -844,9 +849,7 @@ class NonEmbeddedStringField
     return *this;
   }
   NonEmbeddedStringField& operator=(const char* s) {
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(),
-                                         std::string_view(s, std::strlen(s)),
-                                         absolute_binary_offset_);
+    Set(std::string_view(s, std::strlen(s)));
     return *this;
   }
 
@@ -900,7 +903,7 @@ class NonEmbeddedStringField
 
   ::toolbelt::PayloadBuffer** GetBufferAddr() const {
     if (!msg_->runtime->IsMutable()) {
-      throw std::logic_error("cannot mutate a readonly Phaser string");
+      PHASER_THROW(std::logic_error("cannot mutate a readonly Phaser string"));
     }
     return &msg_->runtime->pb;
   }
@@ -1003,6 +1006,10 @@ class IndirectMessageField : public Field {
     // Allocate a new message.
     void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      internal::BindToAllocationFailureSink(msg_);
+      return &msg_;
+    }
     ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
@@ -1105,6 +1112,9 @@ class IndirectMessageField : public Field {
     // Allocate a new message.
     void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
@@ -1116,7 +1126,9 @@ class IndirectMessageField : public Field {
     *addr = msg_offset;  // Put message field offset into message.
 
     // Install the metadata into the binary message.
-    msg_.template InstallMetadata<MessageType>();
+    if (!msg_.template InstallMetadata<MessageType>()) {
+      return internal::AllocationFailedError();
+    }
 
     ProtoBuffer sub_buffer(s.value());
     return msg_.Deserialize(sub_buffer);

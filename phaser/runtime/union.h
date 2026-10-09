@@ -302,8 +302,10 @@ class UnionStringField : public UnionMemberField {
     if (!v.ok()) {
       return v.status();
     }
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v,
-                                         abs_offset);
+    if (::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v,
+                                             abs_offset) == nullptr) {
+      return internal::AllocationFailedError();
+    }
     return absl::OkStatus();
   }
 
@@ -359,6 +361,10 @@ class UnionMessageField : public UnionMemberField {
     // Allocate a new message.
     void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      internal::BindToAllocationFailureSink(msg_);
+      return &msg_;
+    }
     ::toolbelt::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
@@ -405,10 +411,18 @@ class UnionMessageField : public UnionMemberField {
       Bind(runtime, old_offset);
       msg_.Clear();
       GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
+      addr = GetIndirectAddress(runtime, abs_offset);
+      if (addr == nullptr) {
+        return;
+      }
+      *addr = 0;
     }
     // Allocate a new message.
     void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      return;
+    }
     ::toolbelt::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
@@ -475,12 +489,17 @@ class UnionMessageField : public UnionMemberField {
     }
     void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ::toolbelt::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = msg_offset;
-    msg_.template InstallMetadata<MessageType>();
+    if (!msg_.template InstallMetadata<MessageType>()) {
+      return internal::AllocationFailedError();
+    }
 
     // Buffer might have moved, get address of indirect again.
     ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
@@ -562,7 +581,7 @@ class UnionField : public Field {
   template <typename Alternative>
   decltype(auto) get() const {
     if (!holds_alternative<Alternative>()) {
-      throw std::bad_variant_access();
+      PHASER_THROW(std::bad_variant_access());
     }
     if constexpr (Alternative::kIsMessage) {
       return GetReference<Alternative::kIndex,
@@ -576,7 +595,7 @@ class UnionField : public Field {
   template <typename Alternative>
   decltype(auto) get() {
     if (!holds_alternative<Alternative>()) {
-      throw std::bad_variant_access();
+      PHASER_THROW(std::bad_variant_access());
     }
     if constexpr (Alternative::kIsMessage) {
       return *Mutable<Alternative::kIndex, typename Alternative::value_type>();

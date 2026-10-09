@@ -104,6 +104,43 @@ phaser_library(
 )
 
 proto_library(
+    name = "fixed_buffer_proto",
+    srcs = ["FixedBuffer.proto"],
+    deps = ["//phaser:options_proto"],
+)
+
+cc_proto_library(
+    name = "fixed_buffer_cc_proto",
+    deps = [":fixed_buffer_proto"],
+)
+
+# Generated without exceptions or RTTI to check that Phaser builds that way.
+phaser_library(
+    name = "fixed_buffer_phaser",
+    add_namespace = "phaser",
+    copts = [
+        "-fno-exceptions",
+        "-fno-rtti",
+    ],
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":fixed_buffer_proto"],
+)
+
+# The ROS frontend generates fixed size arrays for the array_size fields.
+phaser_library(
+    name = "fixed_buffer_ros_phaser",
+    add_namespace = "phaser_ros",
+    copts = [
+        "-fno-exceptions",
+        "-fno-rtti",
+    ],
+    direct_header_symlinks = False,
+    frontend = "ros",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":fixed_buffer_proto"],
+)
+
+proto_library(
     name = "service_only_proto",
     srcs = ["ServiceOnly.proto"],
     deps = ["@com_google_protobuf//:empty_proto"],

@@ -258,10 +258,18 @@ class AnyMessage : public Message {
     constexpr std::string_view full_name = T::FullName();
     absl::Span<char> url =
         type_url_.Allocate(prefix.size() + full_name.size(), false);
-    memcpy(url.data(), prefix.data(), prefix.size());
-    memcpy(url.data() + prefix.size(), full_name.data(), full_name.size());
     size_t size = T::BinarySize();
-    absl::Span<char> memory = value_.Allocate(size, true);
+    absl::Span<char> memory;
+    if (url.data() != nullptr) {
+      memcpy(url.data(), prefix.data(), prefix.size());
+      memcpy(url.data() + prefix.size(), full_name.data(), full_name.size());
+      memory = value_.Allocate(size, true);
+    }
+    if (memory.data() == nullptr) {
+      T detached(InternalDefault{});
+      internal::BindToAllocationFailureSink(detached);
+      return detached;
+    }
     auto msg = T(runtime, runtime->ToOffset(memory.data()));
     msg.template InstallMetadata<T>();
     return msg;
@@ -356,6 +364,9 @@ class AnyMessage : public Message {
       return binary_size.status();
     }
     absl::Span<char> memory = value_.Allocate(*binary_size, true);
+    if (memory.data() == nullptr) {
+      return internal::AllocationFailedError();
+    }
     return PhaserBankAllocateAtOffset(type, runtime,
                                       runtime->ToOffset(memory.data()));
   }
@@ -370,6 +381,9 @@ class AnyMessage : public Message {
       return binary_size.status();
     }
     absl::Span<char> memory = value_.Allocate(*binary_size, true);
+    if (memory.data() == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ProtoBuffer sub(wire);
     return PhaserBankDeserializeAtOffset(
         type, runtime, runtime->ToOffset(memory.data()), sub);

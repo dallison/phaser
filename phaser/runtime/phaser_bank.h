@@ -92,6 +92,9 @@ inline absl::StatusOr<std::pair<T*, toolbelt::BufferOffset>> PhaserBankAllocate(
     return bank_info.status();
   }
   auto [msg, offset] = (*bank_info)->allocate(runtime);
+  if (msg == nullptr) {
+    return internal::AllocationFailedError();
+  }
   return std::make_pair(static_cast<T*>(msg), offset);
 }
 
@@ -103,7 +106,12 @@ PhaserBankAllocate(const std::string& message_type,
   if (!bank_info.ok()) {
     return bank_info.status();
   }
-  return (*bank_info)->allocate(runtime);
+  std::pair<Message*, toolbelt::BufferOffset> result =
+      (*bank_info)->allocate(runtime);
+  if (result.first == nullptr) {
+    return internal::AllocationFailedError();
+  }
+  return result;
 }
 
 absl::Status PhaserBankClear(const std::string& message_type, Message& msg);

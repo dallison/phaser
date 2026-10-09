@@ -8,9 +8,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -21,6 +24,27 @@
 #include "absl/status/statusor.h"
 #include "toolbelt/hexdump.h"
 #include "toolbelt/payload_buffer.h"
+
+namespace phaser {
+namespace internal {
+[[noreturn]] inline void Fatal(const char* what) {
+  (void)std::fprintf(stderr, "phaser: %s\n", what);
+  std::abort();
+}
+
+inline absl::Status AllocationFailedError() {
+  return absl::ResourceExhaustedError("phaser: payload buffer is full");
+}
+}  // namespace internal
+}  // namespace phaser
+
+// Reports a programming error such as an out-of-range index or a write to a
+// readonly message.  Builds without exceptions print the error and abort.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+#define PHASER_THROW(exception) throw exception
+#else
+#define PHASER_THROW(exception) ::phaser::internal::Fatal(#exception)
+#endif
 
 namespace phaser {
 
@@ -289,6 +313,9 @@ inline RuntimeControlBlock* InitializeRuntimeControl(
   capacity = std::max<size_t>(capacity, 1);
   void* memory = ::toolbelt::PayloadBuffer::Allocate(
       pb, static_cast<uint32_t>(RuntimeControlSize(capacity)), true);
+  if (memory == nullptr) {
+    return nullptr;
+  }
   auto* control = new (memory) RuntimeControlBlock;
   control->capacity = static_cast<uint32_t>(capacity);
   (*pb)->metadata = (*pb)->ToOffset(control);
@@ -343,6 +370,9 @@ struct MessageRuntime {
       void* memory = ::toolbelt::PayloadBuffer::Realloc(
           &pb, pb->ToAddress(old_offset),
           static_cast<uint32_t>(RuntimeControlSize(new_capacity)), true);
+      if (memory == nullptr) {
+        return;
+      }
       control = static_cast<RuntimeControlBlock*>(memory);
       control->capacity = new_capacity;
       pb->metadata = pb->ToOffset(control);
@@ -350,6 +380,9 @@ struct MessageRuntime {
     void* name_memory = ::toolbelt::PayloadBuffer::Allocate(
         &pb, static_cast<uint32_t>(name.size()), false);
     if (!name.empty()) {
+      if (name_memory == nullptr) {
+        return;
+      }
       memcpy(name_memory, name.data(), name.size());
     }
     control = GetRuntimeControl();
@@ -629,7 +662,7 @@ struct Message {
     const Message* msg = reinterpret_cast<const Message*>(
         reinterpret_cast<const char*>(field) - offset);
     if (!msg->runtime->IsMutable()) {
-      throw std::logic_error("cannot mutate a readonly Phaser message");
+      PHASER_THROW(std::logic_error("cannot mutate a readonly Phaser message"));
     }
     return &msg->runtime->pb;
   }
@@ -711,26 +744,46 @@ struct Message {
     return runtime->pb->ToAddress<T>(offset);
   }
 
+  // Returns false, leaving the message without field metadata, if the buffer
+  // has no space for it.
   template <typename MessageType>
-  void InstallMetadata() {
+  bool InstallMetadata() {
     auto metadata = runtime->GetMetadata(MessageType::FullName());
     if (metadata != 0) {
       ::toolbelt::BufferOffset* header =
           runtime->pb->ToAddress<::toolbelt::BufferOffset>(
               absolute_binary_offset);
       *header = metadata;
-      return;
+      return true;
     }
 
     // Allocate space for field data in the payload buffer and copy it in.
     void* fields = ::toolbelt::PayloadBuffer::Allocate(
         &runtime->pb, sizeof(MessageType::field_data), false);
+    if (fields == nullptr) {
+      return false;
+    }
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
     ::toolbelt::BufferOffset* header =
         runtime->pb->ToAddress<::toolbelt::BufferOffset>(
             absolute_binary_offset);
     *header = runtime->pb->ToOffset(fields);
     runtime->AddMetadata(MessageType::FullName(), *header);
+    return true;
+  }
+
+  // True if an allocation in this message's buffer failed because a fixed
+  // size buffer was full.  The message is then incomplete: setters that
+  // needed space did nothing, and serializing the message fails.
+  bool AllocationFailed() const {
+    return runtime != nullptr && runtime->pb != nullptr &&
+           runtime->pb->AllocationFailed();
+  }
+
+  // Binds this handle to its own copy of 'rt'.
+  void BindDetached(MessageRuntime& rt, ::toolbelt::BufferOffset offset) {
+    absolute_binary_offset = offset;
+    BindRuntime(BorrowRuntime(rt));
   }
 
   // Looks for the field number in the field data. Returns the offset of the
@@ -818,6 +871,32 @@ struct Message {
     }
   }
 };
+
+namespace internal {
+
+// Binds 'msg' to detached per-thread storage after the allocation for it
+// failed.  Callers that must hand back a writable message use this so writes
+// through the handle stay in bounds.  The owning buffer has already recorded
+// the failure, and nothing reads the storage back.  Allocations made through
+// the detached handle always fail because its buffer has no free space.
+template <typename MessageType>
+void BindToAllocationFailureSink(MessageType& msg) {
+  constexpr size_t kSize =
+      (sizeof(::toolbelt::PayloadBuffer) + MessageType::BinarySize() + 64 + 7) &
+      ~size_t{7};
+  alignas(8) static thread_local char storage[kSize];
+  auto* pb = new (storage)
+      ::toolbelt::PayloadBuffer(static_cast<uint32_t>(kSize), false);
+  if (::toolbelt::PayloadBuffer::AllocateMainMessage(
+          &pb, MessageType::BinarySize()) == nullptr) {
+    Fatal("allocation failure sink is too small");
+  }
+  pb->free_list = 0;
+  MessageRuntime runtime(pb, true);
+  msg.BindDetached(runtime, pb->message);
+}
+
+}  // namespace internal
 
 ::toolbelt::PayloadBuffer* NewDynamicBuffer(
     size_t initial_size, Tuning tuning = Tuning::kPerformance);

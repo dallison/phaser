@@ -150,13 +150,13 @@ class PrimitiveVectorField : public Field {
 
   T& at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("PrimitiveVectorField::at");
+      PHASER_THROW(std::out_of_range("PrimitiveVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   T at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("PrimitiveVectorField::at");
+      PHASER_THROW(std::out_of_range("PrimitiveVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -169,6 +169,9 @@ class PrimitiveVectorField : public Field {
   T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
 
   void Set(size_t index, T v) {
+    if (index >= size()) {
+      return;
+    }
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
     if (base == nullptr) {
       return;
@@ -193,14 +196,22 @@ class PrimitiveVectorField : public Field {
 #undef ITYPE
 #undef CTYPE
 
-  void push_back(const T& v) {
-    ::toolbelt::PayloadBuffer::VectorPush<T>(
+  void push_back(const T& v) { (void)Push(v); }
+
+  // Returns false, leaving the vector unchanged, if the buffer has no space.
+  bool Push(const T& v) {
+    return ::toolbelt::PayloadBuffer::VectorPush<T>(
         GetBufferAddr(), Header(relative_binary_offset_), v);
   }
 
+  // Returns a detached value if the buffer has no space for the new element.
   template <typename... Args>
   T& emplace_back(Args&&... args) {
+    const size_t old_size = size();
     push_back(T(std::forward<Args>(args)...));
+    if (size() == old_size) {
+      return (*this)[-1];
+    }
     return (*this)[static_cast<int>(size() - 1)];
   }
 
@@ -223,7 +234,7 @@ class PrimitiveVectorField : public Field {
     const T value_copy = value;
     const size_t old_size = size();
     resize(n);
-    for (size_t i = old_size; i < n; ++i) {
+    for (size_t i = old_size; i < size(); ++i) {
       Set(i, value_copy);
     }
   }
@@ -521,6 +532,9 @@ class PrimitiveVectorField : public Field {
           return absl::OkStatus();
         }
         T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+        if (base == nullptr || size() != data->size() / sizeof(T)) {
+          return internal::AllocationFailedError();
+        }
         memcpy(base, data->data(), data->size());
         return absl::OkStatus();
       } else {
@@ -530,7 +544,9 @@ class PrimitiveVectorField : public Field {
           if (!v.ok()) {
             return v.status();
           }
-          push_back(*v);
+          if (!Push(*v)) {
+            return internal::AllocationFailedError();
+          }
         }
       }
     } else {
@@ -539,13 +555,17 @@ class PrimitiveVectorField : public Field {
         if (!v.ok()) {
           return v.status();
         }
-        push_back(*v);
+        if (!Push(*v)) {
+          return internal::AllocationFailedError();
+        }
       } else {
         absl::StatusOr<T> v = buffer.DeserializeVarint<T, Signed>();
         if (!v.ok()) {
           return v.status();
         }
-        push_back(*v);
+        if (!Push(*v)) {
+          return internal::AllocationFailedError();
+        }
       }
     }
     return absl::OkStatus();
@@ -644,13 +664,13 @@ class EnumVectorField : public Field {
 
   Enum& at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("EnumVectorField::at");
+      PHASER_THROW(std::out_of_range("EnumVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   Enum at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("EnumVectorField::at");
+      PHASER_THROW(std::out_of_range("EnumVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -673,6 +693,9 @@ class EnumVectorField : public Field {
   Enum Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
 
   void Set(size_t index, Enum v) {
+    if (index >= size()) {
+      return;
+    }
     Enum* base = GetRuntime()->template ToAddress<Enum>(BaseOffset());
     if (base == nullptr) {
       return;
@@ -717,14 +740,22 @@ class EnumVectorField : public Field {
     return absl::Span<const Enum>(base, n);
   }
 
-  void push_back(const Enum& v) {
-    ::toolbelt::PayloadBuffer::VectorPush<T>(
+  void push_back(const Enum& v) { (void)Push(v); }
+
+  // Returns false, leaving the vector unchanged, if the buffer has no space.
+  bool Push(const Enum& v) {
+    return ::toolbelt::PayloadBuffer::VectorPush<T>(
         GetBufferAddr(), Header(relative_binary_offset_), static_cast<T>(v));
   }
 
+  // Returns a detached value if the buffer has no space for the new element.
   template <typename... Args>
   Enum& emplace_back(Args&&... args) {
+    const size_t old_size = size();
     push_back(Enum(std::forward<Args>(args)...));
+    if (size() == old_size) {
+      return (*this)[-1];
+    }
     return (*this)[static_cast<int>(size() - 1)];
   }
 
@@ -746,7 +777,7 @@ class EnumVectorField : public Field {
   void resize(size_t n, Enum value) {
     const size_t old_size = size();
     resize(n);
-    for (size_t i = old_size; i < n; ++i) {
+    for (size_t i = old_size; i < size(); ++i) {
       Set(i, value);
     }
   }
@@ -990,14 +1021,18 @@ class EnumVectorField : public Field {
         if (!v.ok()) {
           return v.status();
         }
-        push_back(static_cast<Enum>(*v));
+        if (!Push(static_cast<Enum>(*v))) {
+          return internal::AllocationFailedError();
+        }
       }
     } else {
       absl::StatusOr<T> v = buffer.DeserializeVarint<T, false>();
       if (!v.ok()) {
         return v.status();
       }
-      push_back(static_cast<Enum>(*v));
+      if (!Push(static_cast<Enum>(*v))) {
+        return internal::AllocationFailedError();
+      }
     }
     return absl::OkStatus();
   }
@@ -1098,13 +1133,13 @@ class MessageVectorField : public Field {
 
   T at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("MessageVectorField::at");
+      PHASER_THROW(std::out_of_range("MessageVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   T at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("MessageVectorField::at");
+      PHASER_THROW(std::out_of_range("MessageVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -1190,14 +1225,22 @@ class MessageVectorField : public Field {
 
   T emplace_back() { return Add(); }
 
+  // Returns a detached message, leaving the vector unchanged, if the buffer
+  // has no space for the new element.
   T Add() {
     // Allocate a new message.
     void* binary =
         ::toolbelt::PayloadBuffer::Allocate(GetBufferAddr(), T::BinarySize());
+    if (binary == nullptr) {
+      return DetachedMessage();
+    }
     ::toolbelt::BufferOffset absolute_binary_offset =
         GetRuntime()->ToOffset(binary);
-    ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), absolute_binary_offset);
+    if (!::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
+            GetBufferAddr(), ResolvedVectorHeader(), absolute_binary_offset)) {
+      GetBuffer()->Free(GetRuntime()->ToAddress(absolute_binary_offset));
+      return DetachedMessage();
+    }
     T result(GetRuntime(), absolute_binary_offset);
     result.template InstallMetadata<T>();
     return result;
@@ -1207,16 +1250,24 @@ class MessageVectorField : public Field {
 
   T Mutable(size_t index) {
     if (index >= size()) {
-      ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), index + 1);
+      if (!::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+              GetBufferAddr(), ResolvedVectorHeader(), index + 1)) {
+        return DetachedMessage();
+      }
     }
 
     auto hdr = ResolvedVectorHeader();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return DetachedMessage();
+    }
     if (data[index] == 0) {
       void* binary =
           ::toolbelt::PayloadBuffer::Allocate(GetBufferAddr(), T::BinarySize());
+      if (binary == nullptr) {
+        return DetachedMessage();
+      }
       ::toolbelt::BufferOffset absolute_binary_offset =
           GetRuntime()->ToOffset(binary);
 
@@ -1233,12 +1284,18 @@ class MessageVectorField : public Field {
 
   void SetOffset(int index, toolbelt::BufferOffset offset) {
     if (static_cast<size_t>(index) >= size()) {
-      ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), static_cast<size_t>(index) + 1);
+      if (!::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+              GetBufferAddr(), ResolvedVectorHeader(),
+              static_cast<size_t>(index) + 1)) {
+        return;
+      }
     }
     auto hdr = ResolvedVectorHeader();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return;
+    }
     if (data[index] != 0) {
       // Already set, free the current value.
       T(GetRuntime(), data[index]).Clear();
@@ -1252,11 +1309,18 @@ class MessageVectorField : public Field {
     std::vector<T> result;
     result.reserve(n);
     Clear();
-    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+    if (!::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+            GetBufferAddr(), ResolvedVectorHeader(), n)) {
+      return result;
+    }
     // Allocate memory for n messages in the payload buffer.
     std::vector<void*> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
         GetBufferAddr(), T::BinarySize(), static_cast<uint32_t>(n), true);
+    if (addrs.size() != n) {
+      (void)::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+          GetBufferAddr(), ResolvedVectorHeader(), 0);
+      return result;
+    }
 
     toolbelt::VectorHeader* hdr = ResolvedVectorHeader();
     ::toolbelt::BufferOffset* data =
@@ -1296,8 +1360,10 @@ class MessageVectorField : public Field {
         }
       }
     }
-    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+    if (!::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+            GetBufferAddr(), ResolvedVectorHeader(), n)) {
+      return;
+    }
     for (size_t i = old_size; i < n; ++i) {
       (void)Mutable(i);
     }
@@ -1305,7 +1371,7 @@ class MessageVectorField : public Field {
   void resize(size_t n, const T& value) {
     const size_t old_size = size();
     resize(n);
-    for (size_t i = old_size; i < n; ++i) {
+    for (size_t i = old_size; i < size(); ++i) {
       (void)Mutable(i).CloneFrom(value);
     }
   }
@@ -1512,7 +1578,11 @@ class MessageVectorField : public Field {
       return v.status();
     }
     ProtoBuffer msg_buffer(*v);
+    const size_t old_size = size();
     T msg = Add();
+    if (size() == old_size) {
+      return internal::AllocationFailedError();
+    }
     if (absl::Status status = msg.Deserialize(msg_buffer); !status.ok()) {
       return status;
     }
@@ -1526,6 +1596,12 @@ class MessageVectorField : public Field {
   }
 
  private:
+  static T DetachedMessage() {
+    T msg(InternalDefault{});
+    internal::BindToAllocationFailureSink(msg);
+    return msg;
+  }
+
   std::vector<T> CopyValues() const {
     std::vector<T> result;
     result.reserve(size());
@@ -1693,13 +1769,13 @@ class StringVectorField : public Field {
 
   NonEmbeddedStringField at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("StringVectorField::at");
+      PHASER_THROW(std::out_of_range("StringVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   std::string_view at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("StringVectorField::at");
+      PHASER_THROW(std::out_of_range("StringVectorField::at"));
     }
     return Get(index);
   }
@@ -1809,22 +1885,37 @@ class StringVectorField : public Field {
     // Allocate string header in buffer.
     void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), sizeof(toolbelt::StringHeader));
+    if (str_hdr == nullptr) {
+      return;
+    }
     ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s, hdr_offset);
+    if (::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s, hdr_offset) ==
+        nullptr) {
+      GetBuffer()->Free(GetRuntime()->ToAddress(hdr_offset));
+      return;
+    }
 
     // Add an offset for the new string to the binary.
-    ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), hdr_offset);
+    if (!::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
+            GetBufferAddr(), ResolvedVectorHeader(), hdr_offset)) {
+      ::toolbelt::PayloadBuffer::ClearString(GetBufferAddr(), hdr_offset);
+      GetBuffer()->Free(GetRuntime()->ToAddress(hdr_offset));
+    }
   }
 
+  // These return a detached string if the buffer has no space for the new
+  // element.
   template <typename Str>
   NonEmbeddedStringField emplace_back(Str s) {
+    const size_t old_size = size();
     push_back(s);
+    if (size() == old_size) {
+      return {};
+    }
     return back();
   }
   NonEmbeddedStringField emplace_back() {
-    push_back(std::string_view());
-    return back();
+    return emplace_back(std::string_view());
   }
 
   void Add(const char* s, size_t len) { push_back(std::string_view(s, len)); }
@@ -1840,17 +1931,25 @@ class StringVectorField : public Field {
   template <typename Str>
   void Set(size_t index, Str s) {
     if (index >= size()) {
-      ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), index + 1);
+      if (!::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+              GetBufferAddr(), ResolvedVectorHeader(), index + 1)) {
+        return;
+      }
     }
 
     auto hdr = ResolvedVectorHeader();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return;
+    }
     if (data[index] == 0) {
       // Allocate string header in buffer.
       void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
           GetBufferAddr(), sizeof(toolbelt::StringHeader));
+      if (str_hdr == nullptr) {
+        return;
+      }
       ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
 
       hdr = ResolvedVectorHeader();
@@ -1895,7 +1994,7 @@ class StringVectorField : public Field {
     const std::string value_copy(value);
     const size_t old_size = size();
     resize(n);
-    for (size_t i = old_size; i < n; ++i) {
+    for (size_t i = old_size; i < size(); ++i) {
       Set(i, value_copy);
     }
   }
@@ -2080,7 +2179,11 @@ class StringVectorField : public Field {
     if (!v.ok()) {
       return v.status();
     }
+    const size_t old_size = size();
     push_back(*v);
+    if (size() == old_size) {
+      return internal::AllocationFailedError();
+    }
     return absl::OkStatus();
   }
 

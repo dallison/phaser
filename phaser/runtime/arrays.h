@@ -104,11 +104,15 @@ struct FixedArrayConstIterator {
   using const_reverse_iterator = ctype;                                        \
                                                                                \
   iterator begin() {                                                             \
-    EnsureExtent();                                                              \
+    if (!EnsureExtent()) {                                                       \
+      return iterator(this, 0);                                                  \
+    }                                                                            \
     return iterator(this, BaseOffset());                                         \
   }                                                                              \
   iterator end() {                                                               \
-    EnsureExtent();                                                              \
+    if (!EnsureExtent()) {                                                       \
+      return iterator(this, 0);                                                  \
+    }                                                                            \
     return iterator(                                                             \
         this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(extent *     \
                                                                     sizeof(      \
@@ -123,9 +127,15 @@ struct FixedArrayConstIterator {
   const_iterator cbegin() const { return begin(); }                              \
   const_iterator cend() const { return end(); }                                  \
   reverse_iterator rbegin() {                                                    \
+    if (!EnsureExtent()) {                                                       \
+      return reverse_iterator(this, 0, true);                                    \
+    }                                                                            \
     return reverse_iterator(this, BaseOffset(), true);                           \
   }                                                                              \
   reverse_iterator rend() {                                                      \
+    if (!EnsureExtent()) {                                                       \
+      return reverse_iterator(this, 0, true);                                    \
+    }                                                                            \
     return reverse_iterator(                                                     \
         this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(extent *     \
                                                                     sizeof(      \
@@ -158,9 +168,15 @@ class PrimitiveArrayField : public Field {
   PrimitiveArrayField(const PrimitiveArrayField&) = default;
   PrimitiveArrayField(PrimitiveArrayField&&) = default;
 
+  // Returns a detached value if the buffer has no space for the array.
   T& operator[](size_t index) {
-    EnsureExtent();
-    return data()[index];
+    T* base = data();
+    if (base == nullptr) {
+      static thread_local T detached;
+      detached = T{};
+      return detached;
+    }
+    return base[index];
   }
 
   T operator[](size_t index) const { return GetAt(index); }
@@ -216,7 +232,9 @@ class PrimitiveArrayField : public Field {
     if (parsed_count_ > N) {
       return absl::InvalidArgumentError("array_size overflow");
     }
-    EnsureExtent();
+    if (!EnsureExtent()) {
+      return internal::AllocationFailedError();
+    }
     parsed_count_ = 0;
     return absl::OkStatus();
   }
@@ -225,13 +243,18 @@ class PrimitiveArrayField : public Field {
     ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
                                               Header(relative_binary_offset_));
     parsed_count_ = 0;
-    EnsureStorage(N);
+    this->ResetFieldCache();
+    if (!EnsureStorage(N)) {
+      return;
+    }
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return;
+    }
     for (size_t i = 0; i < N; i++) {
       base[i] = T{};
     }
     SetActiveCount(N);
-    this->ResetFieldCache();
   }
   void clear() { Clear(); }
 
@@ -255,8 +278,11 @@ class PrimitiveArrayField : public Field {
   size_t max_size() const { return N; }
   bool empty() const { return N == 0; }
 
+  // Returns nullptr if the buffer has no space for the array.
   T* data() {
-    EnsureExtent();
+    if (!EnsureExtent()) {
+      return nullptr;
+    }
     return GetRuntime()->template ToAddress<T>(BaseOffset());
   }
   const T* data() const { return StoragePointer(); }
@@ -379,8 +405,10 @@ class PrimitiveArrayField : public Field {
         return absl::InvalidArgumentError("array_size overflow");
       }
       if constexpr (FixedSize) {
-        EnsureStorage(N);
-        T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+        T* base = StorageFor(N);
+        if (base == nullptr) {
+          return internal::AllocationFailedError();
+        }
         memcpy(base + parsed_count_, payload->data(), payload->size());
         parsed_count_ += count;
         SetActiveCount(parsed_count_);
@@ -394,38 +422,26 @@ class PrimitiveArrayField : public Field {
           if (!v.ok()) {
             return v.status();
           }
-          EnsureStorage(parsed_count_ + 1);
-          GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] =
-              *v;
-          parsed_count_++;
-          SetActiveCount(parsed_count_);
+          if (absl::Status status = Append(*v); !status.ok()) {
+            return status;
+          }
         }
       }
     } else {
+      if (parsed_count_ >= N) {
+        return absl::InvalidArgumentError("array_size overflow");
+      }
+      absl::StatusOr<T> v;
       if constexpr (FixedSize) {
-        if (parsed_count_ >= N) {
-          return absl::InvalidArgumentError("array_size overflow");
-        }
-        absl::StatusOr<T> v = buffer.DeserializeFixed<T>();
-        if (!v.ok()) {
-          return v.status();
-        }
-        EnsureStorage(parsed_count_ + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-        parsed_count_++;
-        SetActiveCount(parsed_count_);
+        v = buffer.DeserializeFixed<T>();
       } else {
-        if (parsed_count_ >= N) {
-          return absl::InvalidArgumentError("array_size overflow");
-        }
-        absl::StatusOr<T> v = buffer.DeserializeVarint<T, Signed>();
-        if (!v.ok()) {
-          return v.status();
-        }
-        EnsureStorage(parsed_count_ + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-        parsed_count_++;
-        SetActiveCount(parsed_count_);
+        v = buffer.DeserializeVarint<T, Signed>();
+      }
+      if (!v.ok()) {
+        return v.status();
+      }
+      if (absl::Status status = Append(*v); !status.ok()) {
+        return status;
       }
     }
     return absl::OkStatus();
@@ -462,32 +478,53 @@ class PrimitiveArrayField : public Field {
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
-  void EnsureStorage(size_t count) {
-    ::toolbelt::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
-                                                Header(relative_binary_offset_),
-                                                count);
-    ::toolbelt::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
-                                                 Header(relative_binary_offset_),
-                                                 count);
+  // Returns false if the buffer has no space for 'count' elements.
+  bool EnsureStorage(size_t count) {
+    return ::toolbelt::PayloadBuffer::VectorReserve<T>(
+               GetBufferAddr(), Header(relative_binary_offset_), count) &&
+           ::toolbelt::PayloadBuffer::VectorResize<T>(
+               GetBufferAddr(), Header(relative_binary_offset_), count);
   }
 
-  void EnsureExtent() {
+  // Returns the storage for at least 'count' elements, or nullptr if the
+  // buffer has no space for them.
+  T* StorageFor(size_t count) {
+    if (!EnsureStorage(count)) {
+      return nullptr;
+    }
+    return GetRuntime()->template ToAddress<T>(BaseOffset());
+  }
+
+  absl::Status Append(T v) {
+    T* base = StorageFor(parsed_count_ + 1);
+    if (base == nullptr) {
+      return internal::AllocationFailedError();
+    }
+    base[parsed_count_] = v;
+    parsed_count_++;
+    SetActiveCount(parsed_count_);
+    return absl::OkStatus();
+  }
+
+  // Returns false if the array is mutable and the buffer has no space for
+  // all N elements.
+  bool EnsureExtent() {
     if (!IsMutable()) {
-      return;
+      return true;
     }
     const size_t current = NumElements();
     if (current >= N) {
-      return;
+      return true;
     }
-    EnsureStorage(N);
-    T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+    T* base = StorageFor(N);
     if (base == nullptr) {
-      return;
+      return false;
     }
     for (size_t i = current; i < N; i++) {
       base[i] = T{};
     }
     SetActiveCount(N);
+    return true;
   }
 
   T GetAt(size_t index) const {
@@ -557,9 +594,15 @@ class EnumArrayField : public Field {
 
   using T = typename std::underlying_type<Enum>::type;
 
+  // Returns a detached value if the buffer has no space for the array.
   Enum& operator[](size_t index) {
-    EnsureExtent();
-    return *reinterpret_cast<Enum*>(&data()[index]);
+    Enum* base = data();
+    if (base == nullptr) {
+      static thread_local Enum detached;
+      detached = static_cast<Enum>(T{});
+      return detached;
+    }
+    return base[index];
   }
 
   const Enum operator[](size_t index) const { return GetAt(index); }
@@ -590,8 +633,14 @@ class EnumArrayField : public Field {
   }
 
   void Set(size_t index, Enum v) {
-    EnsureExtent();
-    GetRuntime()->template ToAddress<T>(BaseOffset())[index] = static_cast<T>(v);
+    if (index >= N) {
+      return;
+    }
+    Enum* base = data();
+    if (base == nullptr) {
+      return;
+    }
+    base[index] = v;
   }
 
   std::array<Enum, N> Get() const {
@@ -618,7 +667,9 @@ class EnumArrayField : public Field {
     if (parsed_count_ > N) {
       return absl::InvalidArgumentError("array_size overflow");
     }
-    EnsureExtent();
+    if (!EnsureExtent()) {
+      return internal::AllocationFailedError();
+    }
     parsed_count_ = 0;
     return absl::OkStatus();
   }
@@ -627,13 +678,15 @@ class EnumArrayField : public Field {
     ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
                                               Header(relative_binary_offset_));
     parsed_count_ = 0;
-    EnsureStorage(N);
-    T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+    this->ResetFieldCache();
+    T* base = StorageFor(N);
+    if (base == nullptr) {
+      return;
+    }
     for (size_t i = 0; i < N; i++) {
       base[i] = T{};
     }
     SetActiveCount(N);
-    this->ResetFieldCache();
   }
   void clear() { Clear(); }
 
@@ -657,8 +710,11 @@ class EnumArrayField : public Field {
   size_t max_size() const { return N; }
   bool empty() const { return N == 0; }
 
+  // Returns nullptr if the buffer has no space for the array.
   Enum* data() {
-    EnsureExtent();
+    if (!EnsureExtent()) {
+      return nullptr;
+    }
     return reinterpret_cast<Enum*>(GetRuntime()->template ToAddress<T>(
         BaseOffset()));
   }
@@ -757,10 +813,9 @@ class EnumArrayField : public Field {
         if (!v.ok()) {
           return v.status();
         }
-        EnsureStorage(parsed_count_ + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-        parsed_count_++;
-        SetActiveCount(parsed_count_);
+        if (absl::Status status = Append(*v); !status.ok()) {
+          return status;
+        }
       }
     } else {
       if (parsed_count_ >= N) {
@@ -770,10 +825,9 @@ class EnumArrayField : public Field {
       if (!v.ok()) {
         return v.status();
       }
-      EnsureStorage(parsed_count_ + 1);
-      GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-      parsed_count_++;
-      SetActiveCount(parsed_count_);
+      if (absl::Status status = Append(*v); !status.ok()) {
+        return status;
+      }
     }
     return absl::OkStatus();
   }
@@ -811,32 +865,48 @@ class EnumArrayField : public Field {
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
-  void EnsureStorage(size_t count) {
-    ::toolbelt::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
-                                                Header(relative_binary_offset_),
-                                                count);
-    ::toolbelt::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
-                                               Header(relative_binary_offset_),
-                                               count);
+  // Returns the storage for at least 'count' elements, or nullptr if the
+  // buffer has no space for them.
+  T* StorageFor(size_t count) {
+    if (!::toolbelt::PayloadBuffer::VectorReserve<T>(
+            GetBufferAddr(), Header(relative_binary_offset_), count) ||
+        !::toolbelt::PayloadBuffer::VectorResize<T>(
+            GetBufferAddr(), Header(relative_binary_offset_), count)) {
+      return nullptr;
+    }
+    return GetRuntime()->template ToAddress<T>(BaseOffset());
   }
 
-  void EnsureExtent() {
+  absl::Status Append(T v) {
+    T* base = StorageFor(parsed_count_ + 1);
+    if (base == nullptr) {
+      return internal::AllocationFailedError();
+    }
+    base[parsed_count_] = v;
+    parsed_count_++;
+    SetActiveCount(parsed_count_);
+    return absl::OkStatus();
+  }
+
+  // Returns false if the array is mutable and the buffer has no space for
+  // all N elements.
+  bool EnsureExtent() {
     if (!IsMutable()) {
-      return;
+      return true;
     }
     const size_t current = NumElements();
     if (current >= N) {
-      return;
+      return true;
     }
-    EnsureStorage(N);
-    T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+    T* base = StorageFor(N);
     if (base == nullptr) {
-      return;
+      return false;
     }
     for (size_t i = current; i < N; i++) {
       base[i] = T{};
     }
     SetActiveCount(N);
+    return true;
   }
 
   Enum GetAt(size_t index) const {
@@ -960,8 +1030,8 @@ class MessageArrayField : public MessageVectorField<T> {
     if (parsed_count_ > N) {
       return absl::InvalidArgumentError("array_size overflow");
     }
-    while (MessageVectorField<T>::size() < N) {
-      MessageVectorField<T>::Add();
+    if (!FillTo(N)) {
+      return internal::AllocationFailedError();
     }
     parsed_count_ = 0;
     return absl::OkStatus();
@@ -973,9 +1043,7 @@ class MessageArrayField : public MessageVectorField<T> {
     }
     MessageVectorField<T>::Clear();
     parsed_count_ = 0;
-    for (size_t i = 0; i < N; i++) {
-      MessageVectorField<T>::Add();
-    }
+    (void)FillTo(N);
     this->ResetFieldCache();
   }
   void clear() { Clear(); }
@@ -1058,9 +1126,10 @@ class MessageArrayField : public MessageVectorField<T> {
     if (!v.ok()) {
       return v.status();
     }
-    T msg = parsed_count_ < MessageVectorField<T>::size()
-                ? MessageVectorField<T>::Mutable(parsed_count_)
-                : MessageVectorField<T>::Add();
+    if (!FillTo(parsed_count_ + 1)) {
+      return internal::AllocationFailedError();
+    }
+    T msg = MessageVectorField<T>::Mutable(parsed_count_);
     ProtoBuffer msg_buffer(*v);
     if (absl::Status status = msg.Deserialize(msg_buffer); !status.ok()) {
       return status;
@@ -1074,12 +1143,7 @@ class MessageArrayField : public MessageVectorField<T> {
     if (!HasMutablePayload(MessageVectorField<T>::GetRuntime())) {
       return MessageVectorField<T>::operator[](static_cast<int>(index));
     }
-    while (MessageVectorField<T>::size() <= index) {
-      MessageVectorField<T>::Add();
-    }
-    while (MessageVectorField<T>::size() < N) {
-      MessageVectorField<T>::Add();
-    }
+    (void)FillTo(std::max(index + 1, N));
     return MessageVectorField<T>::Mutable(index);
   }
 
@@ -1087,9 +1151,20 @@ class MessageArrayField : public MessageVectorField<T> {
     if (!HasMutablePayload(MessageVectorField<T>::GetRuntime())) {
       return;
     }
-    while (MessageVectorField<T>::size() < N) {
+    (void)FillTo(N);
+  }
+
+  // Adds messages until there are 'count'.  Returns false if the buffer has
+  // no space for them.
+  bool FillTo(size_t count) {
+    while (MessageVectorField<T>::size() < count) {
+      const size_t old_size = MessageVectorField<T>::size();
       MessageVectorField<T>::Add();
+      if (MessageVectorField<T>::size() == old_size) {
+        return false;
+      }
     }
+    return true;
   }
 
   size_t parsed_count_for_serialize() const {
@@ -1338,15 +1413,23 @@ class StringArrayField : public Field {
     if (parsed_count_ >= N) {
       return absl::InvalidArgumentError("array_size overflow");
     }
-    EnsureStorage(parsed_count_ + 1);
+    if (!EnsureStorage(parsed_count_ + 1)) {
+      return internal::AllocationFailedError();
+    }
     absl::StatusOr<std::string_view> v = buffer.DeserializeString();
     if (!v.ok()) {
       return v.status();
     }
     void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
         GetBufferAddr(), sizeof(toolbelt::StringHeader));
+    if (str_hdr == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), *v, hdr_offset);
+    if (::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), *v, hdr_offset) ==
+        nullptr) {
+      return internal::AllocationFailedError();
+    }
     toolbelt::VectorHeader* hdr = Header();
     ::toolbelt::BufferOffset* data =
         GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
@@ -1380,11 +1463,12 @@ class StringArrayField : public Field {
     Header()->num_elements = static_cast<uint32_t>(count);
   }
 
-  void EnsureStorage(size_t count) {
-    ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
-        GetBufferAddr(), Header(), count);
-    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), Header(), count);
+  // Returns false if the buffer has no space for 'count' elements.
+  bool EnsureStorage(size_t count) {
+    return ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
+               GetBufferAddr(), Header(), count) &&
+           ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+               GetBufferAddr(), Header(), count);
   }
 
   size_t parsed_count_for_serialize() const {
@@ -1421,7 +1505,10 @@ class StringArrayField : public Field {
     }
     const size_t current = NumElements();
     if (current < N) {
-      EnsureStorage(N);
+      if (!EnsureStorage(N)) {
+        BindExistingSlots(0, N);
+        return;
+      }
       for (size_t i = current; i < N; i++) {
         AllocateStringSlot(i);
       }
@@ -1467,6 +1554,9 @@ class StringArrayField : public Field {
     if (data[index] == 0) {
       void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
           GetBufferAddr(), sizeof(toolbelt::StringHeader));
+      if (str_hdr == nullptr) {
+        return;
+      }
       hdr = Header();
       data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
           hdr->data);

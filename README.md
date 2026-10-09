@@ -269,6 +269,38 @@ Dynamic messages, reflection/debug output, unknown `Any` error handling, and
 explicit owning conversions such as `RosHeaderView::ToOwned()` are outside this
 guarantee.
 
+#### When a fixed buffer runs out of space
+
+A caller-provided buffer cannot grow, so every write checks for space and stays
+inside the buffer. `TryCreateMutable` reports a buffer that is too small for the
+message:
+
+```c++
+absl::StatusOr<foo::bar::phaser::TestMessage> msg =
+    foo::bar::phaser::TestMessage::TryCreateMutable(buffer, size);
+if (!msg.ok()) {
+  // InvalidArgument for a buffer smaller than its header, ResourceExhausted
+  // when the message itself does not fit.
+}
+```
+
+`CreateMutable` aborts in the same cases. Once the message exists, a write that
+needs more space than is left does nothing and marks the buffer:
+
+- Setters keep the previous value.
+- Repeated fields keep their previous elements.
+- `mutable_` accessors, `add_` accessors and array elements return a detached
+  handle whose writes go to per-thread scratch storage.
+- `msg.AllocationFailed()` is true from then on.
+- `Serialize` and `SerializeToArray` fail, and `Deserialize` returns
+  `ResourceExhausted`.
+- `CreateReadonly` treats the marked buffer as empty, so a receiver never sees a
+  partly written message.
+
+Phaser and its generated code build with `-fno-exceptions -fno-rtti`. Without
+exceptions, misuse that would otherwise throw, such as `at()` out of range or
+mutating a readonly message, aborts.
+
 ### 3. Zero-copy field access
 
 Beyond the standard protobuf accessors, Phaser adds helpers that hand you the final storage

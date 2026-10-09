@@ -1726,6 +1726,9 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream& os,
 
 void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
   if (decl) {
+    os << "  static absl::StatusOr<" << MessageName(message_)
+       << "> TryCreateMutable(void *addr, size_t size, ::phaser::Tuning "
+          "tuning = ::phaser::Tuning::kPerformance);\n";
     os << "  static " << MessageName(message_)
        << " CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning = "
           "::phaser::Tuning::kPerformance);\n";
@@ -1752,26 +1755,50 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
           "::phaser::Tuning::kPerformance);\n";
     return;
   }
-  os << "// Create a mutable message in the given memory.\n";
-  os << MessageName(message_) << " " << MessageName(message_)
-     << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
+  os << "// Create a mutable message in the given memory.  Fails if the memory "
+        "is too\n// small for the message's fixed parts.\n";
+  os << "absl::StatusOr<" << MessageName(message_) << "> "
+     << MessageName(message_)
+     << "::TryCreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) "
+        "{\n"
+        "  if (addr == nullptr || size < sizeof(::toolbelt::PayloadBuffer) + "
+        "sizeof(::toolbelt::FreeBlockHeader)) {\n"
+        "    return absl::InvalidArgumentError(\"phaser: buffer is too "
+        "small\");\n"
+        "  }\n"
         "  ::toolbelt::PayloadBuffer *pb = new (addr) "
         "::toolbelt::PayloadBuffer(static_cast<uint32_t>(size), tuning == "
         "::phaser::Tuning::kPerformance);\n"
-        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  if (::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
-     << "::BinarySize());\n"
-        "  ::phaser::InitializeRuntimeControl(&pb, "
+     << "::BinarySize()) == nullptr ||\n"
+        "      ::phaser::InitializeRuntimeControl(&pb, "
      << MessageName(message_)
-     << "::MetadataTypeCount());\n"
+     << "::MetadataTypeCount()) == nullptr) {\n"
+        "    return ::phaser::internal::AllocationFailedError();\n"
+        "  }\n"
         "  ::phaser::MessageRuntime runtime(pb, true);\n"
         "  auto msg = "
      << MessageName(message_)
      << "(BorrowRuntime(runtime), pb->message);\n"
-        "  msg.InstallMetadata<"
+        "  if (!msg.InstallMetadata<"
      << MessageName(message_)
-     << ">();\n"
+     << ">()) {\n"
+        "    return ::phaser::internal::AllocationFailedError();\n"
+        "  }\n"
         "  return msg;\n"
+        "}\n"
+        "\n";
+  os << "// Create a mutable message in the given memory.  Aborts if the "
+        "memory is too\n// small for the message's fixed parts.\n";
+  os << MessageName(message_) << " " << MessageName(message_)
+     << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
+        "  auto message = TryCreateMutable(addr, size, tuning);\n"
+        "  if (!message.ok()) {\n"
+        "    ::phaser::internal::Fatal(\"buffer is too small for "
+        "CreateMutable\");\n"
+        "  }\n"
+        "  return std::move(*message);\n"
         "}\n"
         "\n";
 
@@ -4011,6 +4038,8 @@ void MessageGenerator::GenerateSerializer(std::ostream& os, bool decl) {
   }
   os << "absl::Status " << MessageName(message_)
      << "::Serialize(::phaser::ProtoBuffer &_phaser_buffer) const {\n";
+  os << "  if (AllocationFailed()) return "
+        "::phaser::internal::AllocationFailedError();\n";
   for (auto& field : fields_) {
     if (field->field->is_repeated()) {
       os << "  if (absl::Status _phaser_status = " << field->member_name
@@ -4113,6 +4142,8 @@ void MessageGenerator::GenerateDeserializer(std::ostream& os, bool decl) {
       }
     }
   }
+  os << "  if (AllocationFailed()) return "
+        "::phaser::internal::AllocationFailedError();\n";
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
 }
@@ -4535,6 +4566,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
      << "Allocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {\n";
   os << "  void *addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb, "
      << MessageName(message_) << "::BinarySize());\n";
+  os << "  if (addr == nullptr) return {nullptr, 0};\n";
   os << "  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);\n";
   os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
   os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
