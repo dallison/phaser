@@ -195,6 +195,7 @@ class MessageGenerator {
   std::string SanitizedIdentifier(const std::string& name) const;
   std::string GeneratedClassName() const;
   std::string FieldAccessorName(const std::string& name) const;
+  std::string PresenceAccessorName(const std::string& name) const;
   std::string MemberVariableName(const std::string& proto_name) const;
   std::string OneofVariantTypeName(
       const google::protobuf::OneofDescriptor* oneof) const;

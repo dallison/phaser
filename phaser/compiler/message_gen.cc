@@ -447,6 +447,15 @@ std::string MessageGenerator::FieldAccessorName(
   return name;
 }
 
+std::string MessageGenerator::PresenceAccessorName(
+    const std::string& proto_name) const {
+  // A field named has_<proto_name> already has an accessor with that name.
+  if (message_->FindFieldByName("has_" + proto_name) != nullptr) {
+    return "_phaser_has_" + proto_name;
+  }
+  return "has_" + proto_name;
+}
+
 std::string MessageGenerator::MemberVariableName(
     const std::string& proto_name) const {
   // The ROS frontend exposes the member itself, so there is no accessor for it
@@ -2302,11 +2311,11 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         }
         os << "  }\n";
         if (union_index == -1) {
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".IsPresent();\n";
           os << "  }\n";
         } else {
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".template IsPresent<"
              << std::to_string(union_index) << ">();\n";
           os << "  }\n";
@@ -2365,7 +2374,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
              << "() const {\n";
           os << "    return " << member_name << ".Get();\n";
           os << "  }\n";
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".IsPresent();\n";
           os << "  }\n";
           os << "  " << field->c_type << "* mutable_" << field_name << "() {\n";
@@ -2391,7 +2400,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
              << MessageName(field->field->message_type()) << ">();\n";
           os << "  }\n";
 
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".template IsPresent<"
              << std::to_string(union_index) << ">();\n";
           os << "  }\n";
@@ -4615,7 +4624,9 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
     } else if (field->field->is_repeated()) {
       os << "    return m->" << field->field->name() << "_size() > 0;\n";
     } else {
-      os << "    return m->has_" << field->field->name() << "();\n";
+      os << "    return m->"
+         << PresenceAccessorName(std::string(field->field->name()))
+         << "();\n";
     }
   }
   for (auto& [oneof, u] : unions_) {

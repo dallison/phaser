@@ -104,6 +104,18 @@ phaser_library(
 )
 
 proto_library(
+    name = "generator_edge_cases_proto",
+    srcs = ["GeneratorEdgeCases.proto"],
+)
+
+phaser_library(
+    name = "generator_edge_cases_phaser",
+    add_namespace = "phaser",
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":generator_edge_cases_proto"],
+)
+
+proto_library(
     name = "fixed_buffer_proto",
     srcs = ["FixedBuffer.proto"],
     deps = ["//phaser:options_proto"],
