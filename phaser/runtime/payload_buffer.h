@@ -70,67 +70,33 @@ using StringHeader = BufferOffset;
 using Resizer =
     std::function<void(PayloadBuffer **, size_t old_size, size_t new_size)>;
 
-// BitMap allocator.  In order to reduce fragmentation and speed up allocation
-// of small blocks, we use a bitmap allocator for a fixed number of small block
-// sizes.  Each BitMapRun refers to a run of blocks of the same size.  It
-// contains a bitmap with a bit for each block in the run.  The PayloadBuffer
-// header contains the offset to a vector header that holds vector of offsets to
-// BitMapRun objects.  The index into this vector is stored in the 8 bytes
-// preceding an allocated small block to avoid searching during free.
+// Small block allocator.  In order to reduce fragmentation and speed up
+// allocation of small blocks, blocks of up to 128 bytes are rounded up to one
+// of a fixed number of size classes.  Each size class has a LIFO free list
+// (like the fastbins in common malloc implementations) whose head offset is
+// held in the PayloadBuffer header ('bitmaps', a name kept for layout
+// compatibility).  A free small block holds the offset of the next free block
+// of its class in its first 4 bytes.  When a class's free list is empty a
+// single block is carved from the main free list, so a freshly created buffer
+// is filled by what is effectively bump allocation and no space is reserved
+// for blocks that are never used.  Freed small blocks stay in their class and
+// are not coalesced back into the main free list.
 
-struct BitMapRun {
-  uint32_t bits; // Bit per chunk.
-  uint8_t size;  // Size of each chunk.
-  uint8_t num;   // Number of chunks in run.
-  uint8_t free;  // Number of free chunks.
-  // The memory for the run is immediately after the BitMapRun.
-
-  // Allocate a chunk from the run.  If we are out of chunks, a new
-  // run is allocated and the chunk is taken from that.
-  static void *Allocate(PayloadBuffer **pb, int index, uint32_t n, int size,
-                        int num, bool clear = true);
-  static void Free(PayloadBuffer *pb, int index, int bitmap_index, int bitnum);
-};
-
-// Default bitmap allocator runs.
+// Number of small block size classes.
 inline constexpr size_t kNumBitmapRuns = 4;
 
-// Run size for each block size.   This is the size of the run, that is, how
-// many individual blocks are in a run.  There is a limit of 32 since we use an
-// unsigned int for the bitmap.  A whole run is allocated at once so there is
-// overhead in the allocation of a run.  Tune this to balance the performance vs
-// message size.
-inline constexpr int kRunSize1 = 20;
-inline constexpr int kRunSize2 = 10;
-inline constexpr int kRunSize3 = 6;
-inline constexpr int kRunSize4 = 2;
-
-// Block size for each bitmap run.  Each bitmap run allocates blocks of the same
-// size in a contiguous block of memory in the buffer.  The size of each block
-// in a run is below.
+// Block size for each small block class.
 inline constexpr int kBitmapRunSize1 = 16;
 inline constexpr int kBitmapRunSize2 = 32;
 inline constexpr int kBitmapRunSize3 = 64;
 inline constexpr int kBitmapRunSize4 = 128;
 
-// In order to allow free to work without searching, we use the 8 bytes
-// preceding the allocated block in the run to store the size of the block, the
-// index into the BitMapRun vector and the bit number in the bitmap.  In order
-// to distinguish this between small blocks and regular blocks allocated from
-// the free list, we use a negative number (top bit set) containing:
-// 1. Bit 31 set
-// 2. Bits 30-26 (5 bits) contain the bit number into the bitmap.
-// 3. Bits 25-8 (18 bits) contain the index into the vector of bitmap runs.
-// 3. Bits 7-0 (8 bits) contain the size of the block.
-
-// Shifts for size encoding for small blocks.
-inline constexpr int kBitmpRunBitNumShift = 26;
-inline constexpr int kBitmapRunBitMapShift = 8;
-inline constexpr int kBitmapRunSizeShift = 0;
-
-// Masks
-inline constexpr uint32_t kBitmapRunBitNumMask = 0x1f;
-inline constexpr uint32_t kBitmapRunBitMapMask = 0x3ffff;
+// The 8 bytes preceding an allocated block hold its size.  To distinguish a
+// small block from a regular block allocated from the free list, a small
+// block's size word has the top bit set with the requested size (at most 128)
+// in bits 7-0.  The requested size always maps back to the block's size class
+// because a block is always taken from the smallest class that fits.
+inline constexpr uint32_t kSmallBlockFlag = 1U << 31;
 inline constexpr uint32_t kBitmapRunSizeMask = 0xff;
 
 // This is a buffer that holds the contents of a message.
@@ -145,7 +111,7 @@ struct PayloadBuffer {
   BufferOffset free_list; // Heap free list.
   BufferOffset metadata;  // Offset to message metadata.
   BufferOffset
-      bitmaps[kNumBitmapRuns]; // Offset to VectorHeader for BitMapRun offsets.
+      bitmaps[kNumBitmapRuns]; // Free list head for each small block class.
 
   // Initialize a new PayloadBuffer at this with a message of the
   // given size.  This is a fixed size buffer.
@@ -211,9 +177,8 @@ struct PayloadBuffer {
 
   // Allocate space for the message metadata and copy it in.
   static void AllocateMetadata(PayloadBuffer **self, void *md, size_t size);
-  // Prime the bitmap runs for the given size.  This pre-allocates the runs
-  // for the size to remove the initial allocation time overhead for the
-  // first allocation.  Returns true if successful.
+  // The small block allocator has no per-class setup cost so there is nothing
+  // to prime.  Always returns true.
   static bool PrimeBitmapAllocator(PayloadBuffer **self, size_t size);
   void SetPresenceBit(uint32_t bit, uint32_t offset) {
     uint32_t word = bit / 32;
@@ -246,7 +211,7 @@ struct PayloadBuffer {
   static uint32_t DecodeSize(BufferOffset *addr) {
     // Length is 64 bits long but we only need the bottom 32 bits of it.
     uint32_t *p = reinterpret_cast<uint32_t *>(addr) - 2;
-    if ((*p & (1U << 31)) == 0) {
+    if ((*p & kSmallBlockFlag) == 0) {
       return *p;
     }
     return *p & kBitmapRunSizeMask;
@@ -347,11 +312,9 @@ struct PayloadBuffer {
   void Free(void *p);
   static void *Realloc(PayloadBuffer **buffer, void *p, uint32_t n,
                        bool clear = true, bool enable_small_block = true);
-  static BufferOffset AllocateBitMapRunVector(PayloadBuffer **self);
   static void *AllocateSmallBlock(PayloadBuffer **pb, uint32_t size, int index,
                                   bool clear = true);
-  static void FreeSmallBlock(PayloadBuffer *pb, int index, int bitmap_index,
-                             int bitnum);
+  static void FreeSmallBlock(PayloadBuffer *pb, void *p, int index);
 
   // Allocate 'n' items of size 'size' in the buffer.  The buffer might move.
   // Each allocation is capable of being freed
@@ -399,7 +362,7 @@ struct PayloadBuffer {
   // block.
   static uint32_t DecodedSize(BufferOffset *addr) {
     BufferOffset *p = addr - 2;
-    if (*p & (1U << 31)) {
+    if (*p & kSmallBlockFlag) {
       return *p & kBitmapRunSizeMask;
     }
     return *p;
@@ -506,8 +469,6 @@ struct PayloadBuffer {
       hwm = off;
     }
   }
-  static BitMapRun *AllocateBitMapRun(PayloadBuffer **self, uint32_t size,
-                                      uint32_t num);
 };
 
 template <>
