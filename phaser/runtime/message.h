@@ -598,25 +598,18 @@ struct Message {
  public:
   Message() : readonly_runtime_(nullptr, size_t{0}, false) {}
   Message(const RuntimeHandle& rt, ::phaser::BufferOffset start)
-      : readonly_runtime_(nullptr, size_t{0}, false),
-        absolute_binary_offset(start) {
-    BindRuntime(rt);
-  }
+      : readonly_runtime_(RuntimeToCopy(rt)),
+        runtime(IsBorrowed(rt) ? BorrowRuntime(readonly_runtime_) : rt),
+        absolute_binary_offset(start) {}
   Message(RuntimeHandle&& rt, ::phaser::BufferOffset start)
-      : readonly_runtime_(nullptr, size_t{0}, false),
-        absolute_binary_offset(start) {
-    BindRuntime(std::move(rt));
-  }
-  Message(const Message& other)
-      : readonly_runtime_(nullptr, size_t{0}, false),
-        absolute_binary_offset(other.absolute_binary_offset) {
-    BindRuntime(other.runtime);
-  }
+      : readonly_runtime_(RuntimeToCopy(rt)),
+        runtime(IsBorrowed(rt) ? BorrowRuntime(readonly_runtime_)
+                               : std::move(rt)),
+        absolute_binary_offset(start) {}
+  Message(const Message& other) : Message(other.runtime,
+                                          other.absolute_binary_offset) {}
   Message(Message&& other) noexcept
-      : readonly_runtime_(nullptr, size_t{0}, false),
-        absolute_binary_offset(other.absolute_binary_offset) {
-    BindRuntime(std::move(other.runtime));
-  }
+      : Message(std::move(other.runtime), other.absolute_binary_offset) {}
   Message& operator=(const Message& other) {
     if (this != &other) {
       absolute_binary_offset = other.absolute_binary_offset;
@@ -843,8 +836,17 @@ struct Message {
   }
 
  private:
+  // A borrowed runtime has no owner, so it lives in another handle that may
+  // be destroyed first; each handle keeps its own copy.
+  static bool IsBorrowed(const RuntimeHandle& rt) {
+    return rt != nullptr && rt.use_count() == 0;
+  }
+  static MessageRuntime RuntimeToCopy(const RuntimeHandle& rt) {
+    return IsBorrowed(rt) ? *rt : MessageRuntime(nullptr, size_t{0}, false);
+  }
+
   void BindRuntime(const RuntimeHandle& other) {
-    if (other != nullptr && other.use_count() == 0) {
+    if (IsBorrowed(other)) {
       readonly_runtime_ = *other;
       runtime = BorrowRuntime(readonly_runtime_);
     } else {
@@ -852,7 +854,7 @@ struct Message {
     }
   }
   void BindRuntime(RuntimeHandle&& other) {
-    if (other != nullptr && other.use_count() == 0) {
+    if (IsBorrowed(other)) {
       readonly_runtime_ = *other;
       runtime = BorrowRuntime(readonly_runtime_);
     } else {
