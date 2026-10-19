@@ -301,7 +301,6 @@ class PrimitiveVectorField : public Field {
     for (size_t i = 0; i < other.size(); i++) {
       push_back(other[static_cast<int>(i)]);
     }
-    ResetFieldCache();
     return *this;
   }
   PrimitiveVectorField& operator=(PrimitiveVectorField&& other) noexcept {
@@ -825,7 +824,6 @@ class EnumVectorField : public Field {
     for (size_t i = 0; i < other.size(); i++) {
       push_back(other[static_cast<int>(i)]);
     }
-    ResetFieldCache();
     return *this;
   }
   EnumVectorField& operator=(EnumVectorField&& other) noexcept {
@@ -1367,7 +1365,6 @@ class MessageVectorField : public Field {
         return *this;
       }
     }
-    ResetFieldCache();
     return *this;
   }
   MessageVectorField& operator=(MessageVectorField&& other) noexcept {
@@ -1874,7 +1871,6 @@ class StringVectorField : public Field {
     for (size_t i = 0; i < other.size(); i++) {
       push_back(other.Get(i));
     }
-    ResetFieldCache();
     return *this;
   }
 

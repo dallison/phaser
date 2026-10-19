@@ -20,6 +20,8 @@
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -39,18 +41,13 @@ class Field {
  public:
   Field() = default;
   Field(int id, int number) : id_(id), number_(number) {}
-  // The owning Message base is constructed before its fields, so it already
-  // knows whether the fields are at their compiled locations.
-  Field(int id, int number, uint32_t source_offset,
+  // 'relative_binary_offset' is where the field is in its message's compiled
+  // layout.
+  Field(int id, int number, uint32_t /*source_offset*/,
         uint32_t relative_binary_offset)
-      : id_(id), number_(number) {
-    if (Message::GetMessage(static_cast<const void*>(this), source_offset)
-            ->FieldLocationsKnown()) {
-      cached_offset_ = static_cast<int32_t>(relative_binary_offset);
-      cached_field_id_ = id;
-      field_cache_resolved_ = true;
-    }
-  }
+      : id_(id),
+        number_(number),
+        compiled_offset_(static_cast<int32_t>(relative_binary_offset)) {}
   Field(const Field&) = default;
   Field& operator=(const Field&) = default;
   // Fields are only destroyed as members of their message, so the
@@ -80,14 +77,23 @@ class Field {
   int Id() const { return id_; }
   int Number() const { return number_; }
 
+  // A message whose fields are not at their compiled locations was written
+  // with another version of its schema, so its fields are looked up in its
+  // metadata on each access.
   int32_t FindFieldOffset(uint32_t source_offset) const {
-    ResolveField(source_offset);
-    return cached_offset_;
+    const Message* message = Message::GetMessage(this, source_offset);
+    if (message->FieldLocationsKnown()) {
+      return compiled_offset_;
+    }
+    return message->FindField(static_cast<uint32_t>(number_)).offset;
   }
 
   int32_t FindFieldId(uint32_t source_offset) const {
-    ResolveField(source_offset);
-    return cached_field_id_;
+    const Message* message = Message::GetMessage(this, source_offset);
+    if (message->FieldLocationsKnown()) {
+      return id_;
+    }
+    return message->FindField(static_cast<uint32_t>(number_)).id;
   }
 
   // For printing.
@@ -102,38 +108,50 @@ class Field {
 
  protected:
   void RequireMutable(uint32_t source_offset) const {
-    if (!Message::GetRuntime(this, source_offset)->IsMutable()) {
-      throw std::logic_error("cannot mutate a readonly Phaser message");
-    }
+    (void)MutableBuffer(source_offset);
   }
 
-  void ResolveField(uint32_t source_offset) const {
-    if (field_cache_resolved_) {
-      return;
+  // The buffer of the message holding this field, which must be mutable.
+  ::phaser::PayloadBuffer* MutableBuffer(uint32_t source_offset) const {
+    const MessageRuntime& runtime = *Message::GetRuntime(this, source_offset);
+    if (ABSL_PREDICT_FALSE(!runtime.IsMutable())) {
+      ThrowReadonlyMessage();
     }
+    return runtime.pb;
+  }
+
+  [[noreturn]] ABSL_ATTRIBUTE_NOINLINE static void ThrowReadonlyMessage() {
+    throw std::logic_error("cannot mutate a readonly Phaser message");
+  }
+
+  // Writes 'v' at the field's compiled location, where it is in every mutable
+  // message, and marks the field present.  Everything is read before the
+  // payload is written, which the compiler must assume can change the field.
+  template <typename T>
+  void StoreValue(uint32_t source_offset, T v) {
     const Message* message = Message::GetMessage(this, source_offset);
-    if (message->runtime == nullptr) {
-      return;
-    }
-    const FieldLocation location =
-        message->FindField(static_cast<uint32_t>(number_));
-    cached_offset_ = location.offset;
-    cached_field_id_ = location.id;
-    field_cache_resolved_ = true;
+    ::phaser::PayloadBuffer* pb = MutableBuffer(source_offset);
+    const ::phaser::BufferOffset start = message->absolute_binary_offset;
+    const uint32_t id = static_cast<uint32_t>(id_);
+    pb->Set(start + static_cast<uint32_t>(compiled_offset_), v);
+    pb->SetPresenceBit(id, start + kPresenceMaskOffset);
   }
 
-  void ResetFieldCache() {
-    cached_offset_ = -1;
-    cached_field_id_ = -1;
-    field_cache_resolved_ = false;
+  void ClearValue(uint32_t source_offset) {
+    const Message* message = Message::GetMessage(this, source_offset);
+    MutableBuffer(source_offset)
+        ->ClearPresenceBit(static_cast<uint32_t>(id_),
+                           message->absolute_binary_offset +
+                               kPresenceMaskOffset);
   }
+
+  // The presence mask follows the metadata offset at the start of a message.
+  static constexpr uint32_t kPresenceMaskOffset = 4;
 
  protected:
   int id_ = 0;
   int number_ = 0;
-  mutable int32_t cached_offset_ = -1;
-  mutable int32_t cached_field_id_ = -1;
-  mutable bool field_cache_resolved_ = false;
+  int32_t compiled_offset_ = -1;
   mutable int indent_ = 0;
 };
 
@@ -395,7 +413,6 @@ class StringFieldFacade {
       } else {                                                                \
         Clear();                                                              \
       }                                                                       \
-      ResetFieldCache();                                                      \
       return *this;                                                           \
     }                                                                         \
     cname##Field& operator=(cname##Field&& other) noexcept {                  \
@@ -428,15 +445,8 @@ class StringFieldFacade {
           source_offset_, GetPresenceMaskStart());                            \
     }                                                                         \
                                                                               \
-    void Set(type v) {                                                        \
-      RequireMutable(source_offset_);                                         \
-      GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, v); \
-      SetPresence(GetBuffer(), GetPresenceMaskStart());                       \
-    }                                                                         \
-    void Clear() {                                                            \
-      RequireMutable(source_offset_);                                         \
-      ClearPresence(GetBuffer(), GetPresenceMaskStart());                     \
-    }                                                                         \
+    void Set(type v) { StoreValue(source_offset_, v); }                       \
+    void Clear() { ClearValue(source_offset_); }                              \
     bool operator==(const cname##Field& other) const {                        \
       return Get() == other.Get();                                            \
     }                                                                         \
@@ -545,7 +555,6 @@ class EnumField : public Field {
     } else {
       Clear();
     }
-    ResetFieldCache();
     return *this;
   }
   EnumField& operator=(EnumField&& other) noexcept {
@@ -592,22 +601,13 @@ class EnumField : public Field {
   }
 
   void Set(Enum e) {
-    RequireMutable(source_offset_);
-    GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_,
-                     static_cast<typename std::underlying_type<Enum>::type>(e));
-    SetPresence(GetBuffer(), GetPresenceMaskStart());
+    StoreValue(source_offset_,
+               static_cast<typename std::underlying_type<Enum>::type>(e));
   }
 
-  void Set(T e) {
-    RequireMutable(source_offset_);
-    GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, e);
-    SetPresence(GetBuffer(), GetPresenceMaskStart());
-  }
+  void Set(T e) { StoreValue(source_offset_, e); }
 
-  void Clear() {
-    RequireMutable(source_offset_);
-    ClearPresence(GetBuffer(), GetPresenceMaskStart());
-  }
+  void Clear() { ClearValue(source_offset_); }
 
   bool operator==(const EnumField& other) const {
     return static_cast<Enum>(*this) == static_cast<Enum>(other);
@@ -674,7 +674,6 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     } else {
       Clear();
     }
-    ResetFieldCache();
     return *this;
   }
   StringField& operator=(StringField&& other) noexcept {
@@ -990,7 +989,6 @@ class IndirectMessageField : public Field {
     } else {
       Clear();
     }
-    ResetFieldCache();
     return *this;
   }
   IndirectMessageField& operator=(IndirectMessageField&& other) noexcept {

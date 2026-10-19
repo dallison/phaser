@@ -207,18 +207,24 @@ struct PayloadBuffer {
                               reinterpret_cast<const char *>(this));
   }
 
+  // The address of 'offset' in a buffer this process built, for an offset
+  // that cannot be 0, such as one inside a message.
+  template <typename T = void> T *AddressOf(BufferOffset offset) {
+    return reinterpret_cast<T *>(reinterpret_cast<char *>(this) + offset);
+  }
+
   // The writers below are only used on mutable buffers.
   void SetPresenceBit(uint32_t bit, uint32_t offset) {
     uint32_t word = bit / 32;
     bit %= 32;
-    uint32_t *p = UncheckedAddress<uint32_t>(offset);
+    uint32_t *p = AddressOf<uint32_t>(offset);
     p[word] |= (1 << bit);
   }
 
   void ClearPresenceBit(uint32_t bit, uint32_t offset) {
     uint32_t word = bit / 32;
     bit %= 32;
-    uint32_t *p = UncheckedAddress<uint32_t>(offset);
+    uint32_t *p = AddressOf<uint32_t>(offset);
     p[word] &= ~(1 << bit);
   }
 
@@ -621,7 +627,7 @@ inline void PayloadBuffer::Free(void *p) {
 }
 
 template <typename T> inline void PayloadBuffer::Set(BufferOffset offset, T v) {
-  memcpy(UncheckedAddress<T>(offset), &v, sizeof(T));
+  memcpy(AddressOf<T>(offset), &v, sizeof(T));
 }
 
 template <typename T> inline T &PayloadBuffer::Get(BufferOffset offset) {

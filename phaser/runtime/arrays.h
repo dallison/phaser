@@ -231,7 +231,6 @@ class PrimitiveArrayField : public Field {
       base[i] = T{};
     }
     SetActiveCount(N);
-    this->ResetFieldCache();
   }
   void clear() { Clear(); }
 
@@ -243,7 +242,6 @@ class PrimitiveArrayField : public Field {
     for (size_t i = 0; i < N; i++) {
       (*this)[i] = other.GetAt(i);
     }
-    this->ResetFieldCache();
     return *this;
   }
   PrimitiveArrayField& operator=(PrimitiveArrayField&& other) noexcept {
@@ -633,7 +631,6 @@ class EnumArrayField : public Field {
       base[i] = T{};
     }
     SetActiveCount(N);
-    this->ResetFieldCache();
   }
   void clear() { Clear(); }
 
@@ -645,7 +642,6 @@ class EnumArrayField : public Field {
     for (size_t i = 0; i < N; i++) {
       (*this)[i] = other.GetAt(i);
     }
-    this->ResetFieldCache();
     return *this;
   }
   EnumArrayField& operator=(EnumArrayField&& other) noexcept {
@@ -976,7 +972,6 @@ class MessageArrayField : public MessageVectorField<T> {
     for (size_t i = 0; i < N; i++) {
       MessageVectorField<T>::Add();
     }
-    this->ResetFieldCache();
   }
   void clear() { Clear(); }
 
@@ -991,7 +986,6 @@ class MessageArrayField : public MessageVectorField<T> {
         return *this;
       }
     }
-    this->ResetFieldCache();
     return *this;
   }
   MessageArrayField& operator=(MessageArrayField&& other) noexcept {
@@ -1252,7 +1246,6 @@ class StringArrayField : public Field {
       ResetSlots();
     }
     EnsureMutableExtent();
-    this->ResetFieldCache();
   }
   void clear() { Clear(); }
 
@@ -1264,7 +1257,6 @@ class StringArrayField : public Field {
     for (size_t i = 0; i < N; i++) {
       (*this)[i] = other.ConstSlot(i);
     }
-    this->ResetFieldCache();
     return *this;
   }
   StringArrayField& operator=(StringArrayField&& other) noexcept {
