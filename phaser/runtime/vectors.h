@@ -1191,15 +1191,22 @@ class MessageVectorField : public Field {
   T emplace_back() { return Add(); }
 
   T Add() {
-    // Allocate a new message.
-    void* binary =
-        ::phaser::PayloadBuffer::Allocate(GetBufferAddr(), T::BinarySize());
-    ::phaser::BufferOffset absolute_binary_offset =
-        GetRuntime()->ToOffset(binary);
-    ::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), absolute_binary_offset);
-    T result(GetRuntime(), absolute_binary_offset);
-    InstallElementMetadata(result);
+    ::phaser::PayloadBuffer** buffer = GetBufferAddr();
+    void* binary = ::phaser::PayloadBuffer::Allocate(buffer, T::BinarySize());
+    const ::phaser::BufferOffset element = (*buffer)->ToOffset(binary);
+    ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+    const ::phaser::BufferOffset metadata = FirstElementMetadata(hdr);
+    ::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(buffer, hdr,
+                                                                element);
+    T result(GetRuntime(), element);
+    // The push can move the buffer, so find the element again.
+    ::phaser::BufferOffset* element_metadata =
+        (*buffer)->template ToAddress<::phaser::BufferOffset>(element);
+    if (metadata != 0 && element_metadata != nullptr) {
+      *element_metadata = metadata;
+    } else {
+      result.template InstallMetadata<T>();
+    }
     return result;
   }
 
@@ -1558,6 +1565,22 @@ class MessageVectorField : public Field {
       }
     }
     element.template InstallMetadata<T>();
+  }
+
+  // The first element's metadata, or 0 if there is no element to copy from.
+  ::phaser::BufferOffset FirstElementMetadata(
+      const ::phaser::VectorHeader* hdr) const {
+    if (hdr == nullptr || hdr->num_elements == 0) {
+      return 0;
+    }
+    const ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+    if (data == nullptr || data[0] == 0) {
+      return 0;
+    }
+    const ::phaser::BufferOffset* first =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(data[0]);
+    return first != nullptr ? *first : 0;
   }
 
   friend FieldIterator<MessageVectorField, T>;

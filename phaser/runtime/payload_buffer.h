@@ -252,6 +252,10 @@ struct PayloadBuffer {
   template <typename T>
   static void VectorPush(PayloadBuffer **self, VectorHeader *hdr, T v,
                          bool enable_small_block = true);
+  // VectorPush when the vector's block has no room for another element.
+  template <typename T>
+  static void VectorPushSlow(PayloadBuffer **self, VectorHeader *hdr, T v,
+                             bool enable_small_block);
 
   template <typename T>
   static void VectorReserve(PayloadBuffer **self, VectorHeader *hdr, size_t n,
@@ -584,6 +588,37 @@ template <typename T> inline T &PayloadBuffer::Get(BufferOffset offset) {
 template <typename T>
 inline void PayloadBuffer::VectorPush(PayloadBuffer **self, VectorHeader *hdr,
                                       T v, bool enable_small_block) {
+  PayloadBuffer *pb = *self;
+  const uint32_t needed = (hdr->num_elements + 1) * uint32_t(sizeof(T));
+  if (hdr->data != 0 && needed <= pb->full_size &&
+      hdr->data <= pb->full_size - needed) {
+    char *block = reinterpret_cast<char *>(pb) + hdr->data;
+    uint64_t *size_ptr = reinterpret_cast<uint64_t *>(block) - 1;
+    const uint32_t size_word = static_cast<uint32_t>(*size_ptr);
+    uint32_t capacity = size_word;
+    if ((size_word & kSmallBlockFlag) != 0) {
+      // A small block can use the rest of its size class.  Its size word must
+      // still cover the elements, and stays in the same class because the
+      // block came from the smallest class that fit.
+      const int index = SmallBlockIndex(size_word & kBitmapRunSizeMask);
+      capacity = index >= 0 ? SmallBlockSize(index) : 0;
+      if (needed <= capacity && needed > (size_word & kBitmapRunSizeMask)) {
+        *size_ptr = kSmallBlockFlag | needed;
+      }
+    }
+    if (needed <= capacity) {
+      memcpy(block + needed - sizeof(T), &v, sizeof(T));
+      hdr->num_elements++;
+      return;
+    }
+  }
+  VectorPushSlow(self, hdr, v, enable_small_block);
+}
+
+template <typename T>
+inline void PayloadBuffer::VectorPushSlow(PayloadBuffer **self,
+                                          VectorHeader *hdr, T v,
+                                          bool enable_small_block) {
   // hdr points to a VectorHeader:
   // uint32_t num_elements;     - number of elements in the vector
   // BufferOffset data;         - BufferOffset to vector contents

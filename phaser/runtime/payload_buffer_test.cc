@@ -558,6 +558,34 @@ TEST(BufferTest, VectorExpandMore) {
   free(buffer);
 }
 
+TEST(BufferTest, VectorPushFillsSmallBlockInPlace) {
+  char *buffer = (char *)calloc(1, 4096);
+  PayloadBuffer *pb = new (buffer) PayloadBuffer(4096);
+  PayloadBuffer::AllocateMainMessage(&pb, sizeof(VectorHeader));
+  VectorHeader *hdr = pb->ToAddress<VectorHeader>(pb->message);
+
+  // The first push asks for 8 bytes, which comes from the 16 byte class, so
+  // the next three pushes fit without moving the data.
+  PayloadBuffer::VectorPush<uint32_t>(&pb, hdr, 1);
+  const BufferOffset data = hdr->data;
+  for (uint32_t i = 2; i <= 4; i++) {
+    PayloadBuffer::VectorPush<uint32_t>(&pb, hdr, i);
+    ASSERT_EQ(data, hdr->data);
+    const uint64_t size_word =
+        *(pb->ToAddress<uint64_t>(hdr->data) - 1) & 0xffffffff;
+    ASSERT_NE(0u, size_word & ::phaser::kSmallBlockFlag);
+    ASSERT_GE(size_word & ::phaser::kBitmapRunSizeMask, i * sizeof(uint32_t));
+  }
+
+  PayloadBuffer::VectorPush<uint32_t>(&pb, hdr, 5);
+  ASSERT_EQ(5u, hdr->num_elements);
+  for (uint32_t i = 0; i < 5; i++) {
+    ASSERT_EQ(i + 1, pb->VectorGet<uint32_t>(hdr, i));
+  }
+
+  free(buffer);
+}
+
 TEST(BufferTest, VectorPushWithResize) {
   char *buffer = (char *)calloc(256, 1);
   bool resized = false;
