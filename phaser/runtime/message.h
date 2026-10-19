@@ -12,6 +12,7 @@
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -637,10 +638,11 @@ template <typename T>
 struct HasReleaseAt<T, std::void_t<decltype(&T::PhaserReleaseAt)>>
     : std::true_type {};
 
-// Frees the message of type T at 'offset' and everything it owns.
+// Frees everything the message of type T at 'offset' owns, but not the
+// message itself.
 template <typename T>
-void ReleaseMessageAt(const RuntimeHandle& runtime,
-                      ::phaser::BufferOffset offset) {
+void ReleaseMessageContents(const RuntimeHandle& runtime,
+                            ::phaser::BufferOffset offset) {
   if constexpr (!ClearReleasesNothing<T>::value) {
     if constexpr (HasReleaseAt<T>::value) {
       T::PhaserReleaseAt(runtime, offset);
@@ -648,33 +650,154 @@ void ReleaseMessageAt(const RuntimeHandle& runtime,
       T(runtime, offset).Clear();
     }
   }
+}
+
+// Frees the message of type T at 'offset' and everything it owns.
+template <typename T>
+void ReleaseMessageAt(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset offset) {
+  ReleaseMessageContents<T>(runtime, offset);
   runtime->pb->FreeAt(offset);
 }
 
-// Frees the elements of the message vector whose VectorHeader is at
-// 'header', but not the vector's data.
+// A vector of messages can have at most this many chunks after the first.
+inline constexpr uint32_t kMaxMessageVectorChunks = 31;
+
+// Where the elements of a vector of messages are, read from its
+// MessageVectorBlock.  A default layout has no elements.
+struct MessageVectorLayout {
+  ::phaser::BufferOffset block = 0;
+  uint32_t stride = 0;
+  uint32_t first_capacity = 0;
+  ::phaser::BufferOffset directory = 0;
+  uint32_t num_chunks = 0;
+
+  uint64_t Capacity() const { return uint64_t(first_capacity) << num_chunks; }
+};
+
+// The layout of the vector data at 'block' in a received buffer, or a
+// default layout if the block, its first chunk or its directory is not
+// inside the buffer.
+inline MessageVectorLayout LoadReceivedMessageVectorLayout(
+    const MessageRuntime& runtime, ::phaser::BufferOffset block) {
+  const uint64_t size = runtime.TrustedSize();
+  if (runtime.pb == nullptr || block == 0 ||
+      uint64_t(block) + sizeof(::phaser::MessageVectorBlock) > size) {
+    return {};
+  }
+  const char* base = reinterpret_cast<const char*>(runtime.pb);
+  ::phaser::MessageVectorBlock b;
+  memcpy(&b, base + block, sizeof(b));
+  if (b.stride < sizeof(uint64_t) || b.stride % sizeof(uint64_t) != 0 ||
+      b.first_capacity == 0 ||
+      uint64_t(block) + sizeof(b) + uint64_t(b.first_capacity) * b.stride >
+          size) {
+    return {};
+  }
+  uint32_t num_chunks = 0;
+  if (b.directory != 0) {
+    if (uint64_t(b.directory) + sizeof(num_chunks) > size) {
+      return {};
+    }
+    memcpy(&num_chunks, base + b.directory, sizeof(num_chunks));
+    if (num_chunks > kMaxMessageVectorChunks ||
+        uint64_t(b.directory) +
+                (uint64_t(num_chunks) + 1) * sizeof(::phaser::BufferOffset) >
+            size) {
+      return {};
+    }
+  }
+  return {block, b.stride, b.first_capacity, b.directory, num_chunks};
+}
+
+// Reads the layout of the vector data at 'block', which is not 0.  The
+// layout of a received buffer is validated, and one that is not valid has no
+// elements.
+inline MessageVectorLayout LoadMessageVectorLayout(
+    const MessageRuntime& runtime, ::phaser::BufferOffset block) {
+  if (!runtime.IsMutable()) {
+    return LoadReceivedMessageVectorLayout(runtime, block);
+  }
+  const char* base = reinterpret_cast<const char*>(runtime.pb);
+  const auto* b =
+      reinterpret_cast<const ::phaser::MessageVectorBlock*>(base + block);
+  const uint32_t num_chunks =
+      b->directory == 0
+          ? 0
+          : *reinterpret_cast<const uint32_t*>(base + b->directory);
+  return {block, b->stride, b->first_capacity, b->directory, num_chunks};
+}
+
+// The offset of element 'index', which must be less than the layout's
+// capacity.  Returns 0 if the element is not inside a received buffer.
+inline ::phaser::BufferOffset MessageVectorElement(
+    const MessageRuntime& runtime, const MessageVectorLayout& layout,
+    uint32_t index) {
+  if (index < layout.first_capacity) {
+    // The layout checked that the first chunk is inside the buffer.
+    return static_cast<::phaser::BufferOffset>(
+        layout.block + sizeof(::phaser::MessageVectorBlock) +
+        uint64_t(index) * layout.stride);
+  }
+  // Chunk k holds the elements from first_capacity << (k - 1), so k - 1 is
+  // the shift that brings first_capacity's top bit to index's or one less.
+  uint32_t shift = __builtin_clz(layout.first_capacity) - __builtin_clz(index);
+  if ((uint64_t(layout.first_capacity) << shift) > index) {
+    shift--;
+  }
+  // The layout checked that the directory is inside the buffer.
+  ::phaser::BufferOffset chunk;
+  memcpy(&chunk,
+         reinterpret_cast<const char*>(runtime.pb) + layout.directory +
+             (shift + 1) * sizeof(::phaser::BufferOffset),
+         sizeof(chunk));
+  if (chunk == 0) {
+    return 0;
+  }
+  const uint64_t start = uint64_t(layout.first_capacity) << shift;
+  const uint64_t offset =
+      uint64_t(chunk) + (index - start) * uint64_t(layout.stride);
+  if (!runtime.IsMutable() && offset + layout.stride > runtime.TrustedSize()) {
+    return 0;
+  }
+  return static_cast<::phaser::BufferOffset>(offset);
+}
+
+// Frees what the elements of the message vector whose VectorHeader is at
+// 'header' own, and the vector's data, leaving the vector empty.
 template <typename T>
-void ReleaseMessageElements(const RuntimeHandle& runtime,
-                            ::phaser::BufferOffset header) {
+void ReleaseMessageVector(const RuntimeHandle& runtime,
+                          ::phaser::BufferOffset header) {
   const ::phaser::VectorHeader* hdr =
-      PayloadAt<::phaser::VectorHeader>(runtime->pb, header);
-  if (hdr == nullptr) {
+      runtime->ToAddress<::phaser::VectorHeader>(header);
+  if (hdr == nullptr || hdr->data == 0) {
     return;
   }
   const uint32_t count = hdr->num_elements;
-  const ::phaser::BufferOffset data_offset = hdr->data;
-  for (uint32_t i = 0; i < count; i++) {
-    // Clearing an element through the fallback can allocate and move the
-    // buffer, so the data is found again for each element.
-    const ::phaser::BufferOffset* data =
-        PayloadAt<::phaser::BufferOffset>(runtime->pb, data_offset, count);
-    if (data == nullptr) {
-      return;
-    }
-    if (data[i] != 0) {
-      ReleaseMessageAt<T>(runtime, data[i]);
+  const MessageVectorLayout layout =
+      LoadMessageVectorLayout(*runtime, hdr->data);
+  if constexpr (!ClearReleasesNothing<T>::value) {
+    // The fallback release can allocate and move the buffer, so each element
+    // is found again from the layout's offsets.
+    for (uint32_t i = 0; i < count && i < layout.Capacity(); i++) {
+      const ::phaser::BufferOffset element =
+          MessageVectorElement(*runtime, layout, i);
+      if (element != 0) {
+        ReleaseMessageContents<T>(runtime, element);
+      }
     }
   }
+  ::phaser::PayloadBuffer* pb = runtime->pb;
+  for (uint32_t k = 1; k <= layout.num_chunks; k++) {
+    pb->FreeAt(OffsetAt(pb, layout.directory +
+                                k * sizeof(::phaser::BufferOffset)));
+  }
+  pb->FreeAt(layout.directory);
+  pb->FreeAt(layout.block);
+  ::phaser::VectorHeader* cleared =
+      runtime->ToAddress<::phaser::VectorHeader>(header);
+  cleared->num_elements = 0;
+  cleared->data = 0;
 }
 
 // Frees the data of the vector whose VectorHeader is at 'field'.
@@ -698,8 +821,7 @@ template <typename T>
 struct MessageVectorRelease : std::true_type {
   static void Release(const RuntimeHandle& runtime,
                       ::phaser::BufferOffset field) {
-    ReleaseMessageElements<T>(runtime, field);
-    ReleaseVectorData(runtime, field);
+    ReleaseMessageVector<T>(runtime, field);
   }
 };
 
@@ -949,27 +1071,31 @@ struct Message {
     return runtime->pb->ToAddress<T>(offset);
   }
 
+  // Returns the offset of the metadata of MessageType in the runtime's
+  // buffer, copying it in if it is not there yet.  This can move the buffer.
   template <typename MessageType>
-  void InstallMetadata() {
+  static ::phaser::BufferOffset MetadataFor(const RuntimeHandle& runtime) {
     const uint64_t key = MetadataKeyFor<MessageType>();
-    auto metadata = runtime->GetMetadata(key);
+    ::phaser::BufferOffset metadata = runtime->GetMetadata(key);
     if (metadata != 0) {
-      ::phaser::BufferOffset* header =
-          runtime->pb->ToAddress<::phaser::BufferOffset>(
-              absolute_binary_offset);
-      *header = metadata;
-      return;
+      return metadata;
     }
-
-    // Allocate space for field data in the payload buffer and copy it in.
     void* fields = ::phaser::PayloadBuffer::Allocate(
         &runtime->pb, sizeof(MessageType::field_data), false);
+    if (fields == nullptr) {
+      throw std::bad_alloc();
+    }
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
-    ::phaser::BufferOffset* header =
-        runtime->pb->ToAddress<::phaser::BufferOffset>(
-            absolute_binary_offset);
-    *header = runtime->pb->ToOffset(fields);
-    runtime->AddMetadata(key, *header);
+    metadata = runtime->pb->ToOffset(fields);
+    runtime->AddMetadata(key, metadata);
+    return metadata;
+  }
+
+  template <typename MessageType>
+  void InstallMetadata() {
+    const ::phaser::BufferOffset metadata = MetadataFor<MessageType>(runtime);
+    *runtime->pb->ToAddress<::phaser::BufferOffset>(absolute_binary_offset) =
+        metadata;
   }
 
   // Looks for the field number in the field data. Returns the offset of the

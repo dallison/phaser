@@ -1,10 +1,8 @@
 #pragma once
 
 // Phaser's own PayloadBuffer, forked from toolbelt::PayloadBuffer so that its
-// allocator can change without affecting other toolbelt users.  The in-buffer
-// layout (the PayloadBuffer header, magic values and the 8-byte size word
-// before each block) must stay compatible with toolbelt::PayloadBuffer since
-// existing code reads Phaser buffers through the toolbelt type.
+// allocator and layout can change without affecting other toolbelt users.
+// Phaser buffers are not readable through toolbelt::PayloadBuffer.
 
 #include "absl/types/span.h"
 #include <functional>
@@ -43,6 +41,19 @@ struct FreeBlockHeader {
 struct VectorHeader {
   uint32_t num_elements; // Number of populated elements.
   BufferOffset data;     // Absolute offset of vector data.
+};
+
+// The data of a vector of messages.  The elements are held inline in chunks
+// that never move, so a handle to an element stays valid as the vector grows.
+// This block is followed by the first chunk, of 'first_capacity' elements.
+// Chunk k after it holds first_capacity << (k - 1) elements, so each chunk
+// doubles the capacity, and is listed in the directory: a uint32_t count
+// followed by the offsets of the chunks.
+struct MessageVectorBlock {
+  uint32_t stride;         // Bytes per element, a multiple of 8.
+  uint32_t first_capacity; // Elements in the first chunk.
+  BufferOffset metadata;   // Metadata of the element type.
+  BufferOffset directory;  // The further chunks, or 0 if there are none.
 };
 
 struct PayloadBuffer;

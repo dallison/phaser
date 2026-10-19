@@ -170,6 +170,202 @@ TEST(PhaserTest, NewFieldsRepeatedBasic) {
   ASSERT_EQ(msg2.vstr(2), msg.vstr(2));
 }
 
+namespace {
+void SetInnerMessage(foo::bar::phaser::InnerMessage inner, int i) {
+  inner.set_str(absl::StrFormat("element %d", i));
+  inner.set_f(i);
+  for (int j = 0; j < i % 4; j++) {
+    inner.add_ev(foo::bar::phaser::BAR);
+  }
+}
+
+template <typename Inner>
+void ExpectInnerMessage(const Inner& inner, int i) {
+  EXPECT_EQ(absl::StrFormat("element %d", i), inner.str());
+  EXPECT_EQ(i, inner.f());
+  EXPECT_EQ(i % 4, inner.ev_size());
+}
+
+template <typename Message>
+void ExpectInnerMessages(const Message& msg, int count) {
+  ASSERT_EQ(count, msg.vm_size());
+  for (int i = 0; i < count; i++) {
+    ExpectInnerMessage(msg.vm(i), i);
+  }
+}
+}  // namespace
+
+TEST(PhaserTest, RepeatedMessagesGrowAcrossChunks) {
+  constexpr int kCount = 100;
+  foo::bar::phaser::TestMessage msg;
+  std::vector<foo::bar::phaser::InnerMessage> handles;
+  for (int i = 0; i < kCount; i++) {
+    handles.push_back(msg.add_vm());
+  }
+  // Every handle is still valid after the later elements were added.
+  for (int i = 0; i < kCount; i++) {
+    SetInnerMessage(handles[i], i);
+  }
+  ExpectInnerMessages(msg, kCount);
+  EXPECT_GE(msg.vm().capacity(), size_t(kCount));
+
+  const char* base = static_cast<const char*>(msg.Data());
+  std::vector<char> recv(base, base + msg.Size());
+  ExpectInnerMessages(
+      foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size()),
+      kCount);
+  ExpectInnerMessages(foo::bar::phaser::TestMessageNewFields::CreateReadonly(
+                          recv.data(), recv.size()),
+                      kCount);
+
+  std::string serialized;
+  ASSERT_TRUE(msg.SerializeToString(&serialized));
+  foo::bar::TestMessage pb;
+  ASSERT_TRUE(pb.ParseFromString(serialized));
+  ASSERT_EQ(kCount, pb.vm_size());
+  for (int i = 0; i < kCount; i++) {
+    EXPECT_EQ(absl::StrFormat("element %d", i), pb.vm(i).str());
+    EXPECT_EQ(i, pb.vm(i).f());
+  }
+  foo::bar::phaser::TestMessage parsed;
+  ASSERT_TRUE(parsed.ParseFromString(serialized));
+  ExpectInnerMessages(parsed, kCount);
+
+  foo::bar::phaser::TestMessage copy;
+  ASSERT_TRUE(copy.CloneFrom(msg).ok());
+  ExpectInnerMessages(copy, kCount);
+}
+
+TEST(PhaserTest, RepeatedMessagesResizeAndReserve) {
+  foo::bar::phaser::TestMessage msg;
+  for (int i = 0; i < 40; i++) {
+    SetInnerMessage(msg.add_vm(), i);
+  }
+  msg.resize_vm(10);
+  ExpectInnerMessages(msg, 10);
+
+  // An element reused after shrinking starts out empty.
+  auto reused = msg.add_vm();
+  EXPECT_EQ("", reused.str());
+  EXPECT_EQ(0, reused.f());
+  EXPECT_EQ(0, reused.ev_size());
+  SetInnerMessage(reused, 10);
+  msg.resize_vm(30);
+  ASSERT_EQ(30, msg.vm_size());
+  for (int i = 0; i < 11; i++) {
+    ExpectInnerMessage(msg.vm(i), i);
+  }
+  EXPECT_EQ("", msg.vm(29).str());
+  for (int i = 11; i < 30; i++) {
+    SetInnerMessage(msg.mutable_vm(i), i);
+  }
+  ExpectInnerMessages(msg, 30);
+
+  msg.clear_vm();
+  EXPECT_EQ(0, msg.vm_size());
+  EXPECT_EQ(0, msg.vm().capacity());
+
+  // Reserving empty storage sizes it exactly; growing past it doubles it.
+  msg.reserve_vm(40);
+  EXPECT_EQ(40, msg.vm().capacity());
+  for (int i = 0; i < 41; i++) {
+    SetInnerMessage(msg.add_vm(), i);
+  }
+  EXPECT_EQ(80, msg.vm().capacity());
+  ExpectInnerMessages(msg, 41);
+}
+
+TEST(PhaserTest, ClearedRepeatedMessagesReuseTheBuffer) {
+  foo::bar::phaser::TestMessage msg;
+  for (int i = 0; i < 50; i++) {
+    SetInnerMessage(msg.add_vm(), i);
+  }
+  msg.clear_vm();
+  const size_t size = msg.Size();
+  for (int round = 0; round < 20; round++) {
+    for (int i = 0; i < 50; i++) {
+      SetInnerMessage(msg.add_vm(), i);
+    }
+    ExpectInnerMessages(msg, 50);
+    msg.clear_vm();
+  }
+  EXPECT_EQ(size, msg.Size());
+}
+
+// A hostile sender can corrupt the block that holds a vector of messages.
+// Reading it must stay inside the received bytes; run under AddressSanitizer
+// to check.
+TEST(PhaserTest, HostileRepeatedMessageBlockIsBounded) {
+  constexpr int kCount = 20;
+  foo::bar::phaser::TestMessage src;
+  for (int i = 0; i < kCount; i++) {
+    SetInnerMessage(src.add_vm(), i);
+  }
+  const char* base = static_cast<const char*>(src.Data());
+  const std::vector<char> original(base, base + src.Size());
+
+  // Find the VectorHeader {kCount, block} whose block starts with the stride.
+  const uint32_t stride =
+      (foo::bar::phaser::InnerMessage::BinarySize() + 7) & ~size_t(7);
+  size_t header = 0;
+  uint32_t block = 0;
+  for (size_t i = 0; i + 2 * sizeof(uint32_t) <= original.size(); i += 4) {
+    uint32_t num, data, word;
+    std::memcpy(&num, original.data() + i, sizeof(num));
+    std::memcpy(&data, original.data() + i + 4, sizeof(data));
+    if (num == kCount && data + sizeof(word) <= original.size()) {
+      std::memcpy(&word, original.data() + data, sizeof(word));
+      if (word == stride) {
+        header = i;
+        block = data;
+        break;
+      }
+    }
+  }
+  ASSERT_NE(0, block);
+  uint32_t directory;
+  std::memcpy(&directory, original.data() + block + 12, sizeof(directory));
+  ASSERT_NE(0, directory);
+
+  const struct {
+    size_t offset;
+    uint32_t value;
+  } corruptions[] = {
+      {header, 0xffffffffu},         // num_elements
+      {header + 4, 0xfffffff0u},     // data
+      {block, 0},                    // stride
+      {block, 0xfffffff8u},          // stride
+      {block, 8},                    // stride
+      {block + 4, 0},                // first_capacity
+      {block + 4, 0xffffffffu},      // first_capacity
+      {block + 4, 1},                // first_capacity
+      {block + 8, 0xfffffff0u},      // metadata
+      {block + 12, 0xfffffff0u},     // directory
+      {block + 12, block},           // directory
+      {directory, 0xffffffffu},      // chunk count
+      {directory, 31},               // chunk count
+      {directory + 4, 0xfffffff0u},  // first chunk
+      {directory + 4, 8},            // first chunk
+  };
+  for (const auto& corruption : corruptions) {
+    std::vector<char> recv = original;
+    std::memcpy(recv.data() + corruption.offset, &corruption.value,
+                sizeof(corruption.value));
+    auto msg =
+        foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size());
+    const size_t count = msg.vm_size();
+    ASSERT_LE(count, recv.size() / sizeof(uint64_t));
+    for (size_t i = 0; i < count + 2; i++) {
+      const auto inner = msg.vm(i);
+      ASSERT_LE(inner.str().size(), recv.size());
+      (void)inner.f();
+      (void)inner.ev_size();
+    }
+    (void)msg.vm().capacity();
+    (void)msg.DebugString();
+  }
+}
+
 // A malicious sender can build a structurally valid payload but corrupt the
 // in-buffer offsets/lengths/counts it contains. Attaching to such a buffer with
 // CreateReadonly and reading fields must never read outside the received bytes.

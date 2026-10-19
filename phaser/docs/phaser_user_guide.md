@@ -671,9 +671,9 @@ The members of this are:
 1. `pb`: a pointer to a `PayloadBuffer` object that holds the actual binary for the message data
 2. `buffer_size`: the size of the buffer if it was received
 
-The `PayloadBuffer` (`phaser/runtime/payload_buffer.h`) is Phaser's own copy of the one
-in my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt), with the same
-in-buffer layout, so that Phaser can tune it without affecting other toolbelt users.  It
+The `PayloadBuffer` (`phaser/runtime/payload_buffer.h`) is Phaser's own fork of the one
+in my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt), so that Phaser can
+change its allocator and layout without affecting other toolbelt users.  It
 provides a relocatable heap (malloc/free/realloc) inside a variable or fixed buffer.  It
 holds the binary values for all fields in the message in a relocatable form.  Generally,
 you won't have to concern yourself about the `PayloadBuffer`.

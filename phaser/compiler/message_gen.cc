@@ -4177,6 +4177,15 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
              << ".data(), static_cast<size_t>(*_phaser_count))); "
                 "!_phaser_status.ok()) return _phaser_status;\n";
         } else {
+          if (descriptor->type() ==
+                  google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+              !IsRosIntrinsic(descriptor)) {
+            // A hostile count can only reserve one element per four bytes
+            // left in the input.  Smaller elements still fit by growing.
+            os << "    " << item->member_name
+               << ".reserve(std::min<size_t>(*_phaser_count, "
+                  "_phaser_buffer.Remaining() / sizeof(uint32_t)));\n";
+          }
           os << "    for (uint32_t _phaser_index = 0; "
                 "_phaser_index < *_phaser_count; ++_phaser_index) {\n";
           GenerateROSFieldRead(os, descriptor, item->member_name, "      ",
@@ -4603,6 +4612,8 @@ void MessageGenerator::GenerateCopy(std::ostream& os, bool decl) {
         } else if (field->field->type() ==
                        google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
                    !IsRosIntrinsic(field->field)) {
+          os << "  " << field->member_name << ".reserve(_phaser_other."
+             << field->member_name << ".size());\n";
           os << "  for (auto _phaser_value : _phaser_other."
              << field->member_name << ") {\n";
           os << "    auto _phaser_message = " << field->member_name
