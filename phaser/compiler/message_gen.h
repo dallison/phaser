@@ -101,6 +101,7 @@ class MessageGenerator {
   void GenerateFieldMetadata(std::ostream& os);
   void GenerateCreators(std::ostream& os, bool decl);
   void GenerateClear(std::ostream& os, bool decl);
+  void GenerateReleaseAt(std::ostream& os, bool decl);
 
   void GeneratePublicFieldDeclarations(std::ostream& os);
   void GenerateRosOneofTypes(std::ostream& os);

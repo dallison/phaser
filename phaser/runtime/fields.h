@@ -497,6 +497,23 @@ DEFINE_PRIMITIVE_FIELD(Bool, bool)
 
 #undef DEFINE_PRIMITIVE_FIELD
 
+namespace internal {
+template <bool F, bool S>
+struct FieldRelease<Int32Field<F, S>> : NoFieldRelease {};
+template <bool F, bool S>
+struct FieldRelease<Uint32Field<F, S>> : NoFieldRelease {};
+template <bool F, bool S>
+struct FieldRelease<Int64Field<F, S>> : NoFieldRelease {};
+template <bool F, bool S>
+struct FieldRelease<Uint64Field<F, S>> : NoFieldRelease {};
+template <bool F, bool S>
+struct FieldRelease<DoubleField<F, S>> : NoFieldRelease {};
+template <bool F, bool S>
+struct FieldRelease<FloatField<F, S>> : NoFieldRelease {};
+template <bool F, bool S>
+struct FieldRelease<BoolField<F, S>> : NoFieldRelease {};
+}  // namespace internal
+
 struct InternalIntStringizer {
   std::string operator()(int i) const { return std::to_string(i); }
 };
@@ -624,6 +641,11 @@ class EnumField : public Field {
   uint32_t source_offset_;
   ::phaser::BufferOffset relative_binary_offset_;
 };
+
+namespace internal {
+template <typename Enum, typename Stringizer, typename Parser>
+struct FieldRelease<EnumField<Enum, Stringizer, Parser>> : NoFieldRelease {};
+}  // namespace internal
 
 // String field with an offset inline in the message.
 class StringField : public Field, public StringFieldFacade<StringField> {
@@ -1180,6 +1202,20 @@ class IndirectMessageField : public Field {
   ::phaser::BufferOffset relative_binary_offset_;
   mutable MessageType msg_;
 };
+
+namespace internal {
+template <>
+struct FieldRelease<StringField> : std::true_type {
+  static void Release(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset field) {
+    runtime->pb->FreeAt(OffsetAt(runtime->pb, field));
+  }
+};
+
+template <typename MessageType>
+struct FieldRelease<IndirectMessageField<MessageType>>
+    : IndirectMessageRelease<MessageType> {};
+}  // namespace internal
 
 template <typename MessageType>
 class MessageObject {

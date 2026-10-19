@@ -574,6 +574,133 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
 
 using RuntimeHandle = std::shared_ptr<MessageRuntime>;
 
+namespace internal {
+// Frees the payload memory owned by a field of a mutable message without
+// resetting the field, for use only when the message holding the field is
+// about to be freed and no handle to it outlives that.  'field' is the
+// field's absolute offset, which relies on a mutable message having its
+// compiled layout.  Only field types with a specialization are supported; a
+// message with any other field releases through Clear() instead.
+template <typename F>
+struct FieldRelease : std::false_type {};
+
+// A field that owns no payload memory.
+struct NoFieldRelease : std::true_type {
+  static void Release(const RuntimeHandle&, ::phaser::BufferOffset) {}
+};
+
+// The 'count' values of type T at 'offset', or nullptr if they don't fit in
+// the buffer.
+template <typename T>
+const T* PayloadAt(const ::phaser::PayloadBuffer* pb,
+                   ::phaser::BufferOffset offset, size_t count = 1) {
+  if (offset == 0 || offset > pb->full_size ||
+      count > (pb->full_size - offset) / sizeof(T)) {
+    return nullptr;
+  }
+  return reinterpret_cast<const T*>(reinterpret_cast<const char*>(pb) +
+                                    offset);
+}
+
+// The offset stored at 'field', or 0.
+inline ::phaser::BufferOffset OffsetAt(const ::phaser::PayloadBuffer* pb,
+                                       ::phaser::BufferOffset field) {
+  const ::phaser::BufferOffset* p =
+      PayloadAt<::phaser::BufferOffset>(pb, field);
+  return p != nullptr ? *p : 0;
+}
+
+template <typename F>
+void ReleaseField(const RuntimeHandle& runtime, ::phaser::BufferOffset field) {
+  if constexpr (FieldRelease<F>::value) {
+    FieldRelease<F>::Release(runtime, field);
+  }
+}
+
+template <typename T, typename = void>
+struct HasReleaseAt : std::false_type {};
+template <typename T>
+struct HasReleaseAt<T, std::void_t<decltype(&T::PhaserReleaseAt)>>
+    : std::true_type {};
+
+// Frees the message of type T at 'offset' and everything it owns.
+template <typename T>
+void ReleaseMessageAt(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset offset) {
+  if constexpr (!ClearReleasesNothing<T>::value) {
+    if constexpr (HasReleaseAt<T>::value) {
+      T::PhaserReleaseAt(runtime, offset);
+    } else {
+      T(runtime, offset).Clear();
+    }
+  }
+  runtime->pb->FreeAt(offset);
+}
+
+// Frees the elements of the message vector whose VectorHeader is at
+// 'header', but not the vector's data.
+template <typename T>
+void ReleaseMessageElements(const RuntimeHandle& runtime,
+                            ::phaser::BufferOffset header) {
+  const ::phaser::VectorHeader* hdr =
+      PayloadAt<::phaser::VectorHeader>(runtime->pb, header);
+  if (hdr == nullptr) {
+    return;
+  }
+  const uint32_t count = hdr->num_elements;
+  const ::phaser::BufferOffset data_offset = hdr->data;
+  for (uint32_t i = 0; i < count; i++) {
+    // Clearing an element through the fallback can allocate and move the
+    // buffer, so the data is found again for each element.
+    const ::phaser::BufferOffset* data =
+        PayloadAt<::phaser::BufferOffset>(runtime->pb, data_offset, count);
+    if (data == nullptr) {
+      return;
+    }
+    if (data[i] != 0) {
+      ReleaseMessageAt<T>(runtime, data[i]);
+    }
+  }
+}
+
+// Frees the data of the vector whose VectorHeader is at 'field'.
+inline void ReleaseVectorData(const RuntimeHandle& runtime,
+                              ::phaser::BufferOffset field) {
+  const ::phaser::VectorHeader* hdr =
+      PayloadAt<::phaser::VectorHeader>(runtime->pb, field);
+  if (hdr != nullptr) {
+    runtime->pb->FreeAt(hdr->data);
+  }
+}
+
+struct VectorDataRelease : std::true_type {
+  static void Release(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset field) {
+    ReleaseVectorData(runtime, field);
+  }
+};
+
+template <typename T>
+struct MessageVectorRelease : std::true_type {
+  static void Release(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset field) {
+    ReleaseMessageElements<T>(runtime, field);
+    ReleaseVectorData(runtime, field);
+  }
+};
+
+template <typename T>
+struct IndirectMessageRelease : std::true_type {
+  static void Release(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset field) {
+    const ::phaser::BufferOffset message = OffsetAt(runtime->pb, field);
+    if (message != 0) {
+      ReleaseMessageAt<T>(runtime, message);
+    }
+  }
+};
+}  // namespace internal
+
 struct InternalDefault {};
 
 // Tuning parameters for messages.  The kPerformance tuning uses a bitmap

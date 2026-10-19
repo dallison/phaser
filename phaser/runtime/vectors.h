@@ -1377,18 +1377,12 @@ class MessageVectorField : public Field {
   }
 
   void Clear() {
-    auto hdr = ResolvedVectorHeader();
-    auto data =
-        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
-    for (uint32_t i = 0; i < hdr->num_elements; i++) {
-      if (data[i] == 0) {
-        continue;
-      }
-      if constexpr (!internal::ClearReleasesNothing<T>::value) {
-        T(GetRuntime(), data[i]).Clear();
-      }
-      GetBuffer()->Free(GetRuntime()->ToAddress(data[i]));
+    ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+    if (hdr == nullptr) {
+      return;
     }
+    internal::ReleaseMessageElements<T>(GetRuntime(),
+                                        GetRuntime()->ToOffset(hdr));
     ::phaser::PayloadBuffer::VectorClear<::phaser::BufferOffset>(
         GetBufferAddr(), ResolvedVectorHeader());
   }
@@ -2202,5 +2196,41 @@ class StringVectorField : public Field {
 
 #undef DECLARE_ZERO_COPY_VECTOR_BITS
 #undef DECLARE_RELAY_VECTOR_BITS
+
+namespace internal {
+template <typename T, bool FixedSize, bool Signed, bool Packed>
+struct FieldRelease<PrimitiveVectorField<T, FixedSize, Signed, Packed>>
+    : VectorDataRelease {};
+
+template <typename Enum, typename Stringizer, typename Parser, bool Packed>
+struct FieldRelease<EnumVectorField<Enum, Stringizer, Parser, Packed>>
+    : VectorDataRelease {};
+
+template <typename T>
+struct FieldRelease<MessageVectorField<T>> : MessageVectorRelease<T> {};
+
+template <>
+struct FieldRelease<StringVectorField> : std::true_type {
+  static void Release(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset field) {
+    ::phaser::PayloadBuffer* pb = runtime->pb;
+    const ::phaser::VectorHeader* hdr =
+        PayloadAt<::phaser::VectorHeader>(pb, field);
+    if (hdr == nullptr) {
+      return;
+    }
+    const ::phaser::BufferOffset* data =
+        PayloadAt<::phaser::BufferOffset>(pb, hdr->data, hdr->num_elements);
+    if (data != nullptr) {
+      for (uint32_t i = 0; i < hdr->num_elements; ++i) {
+        if (data[i] != 0) {
+          pb->FreeAt(OffsetAt(pb, data[i]));
+        }
+      }
+    }
+    pb->FreeAt(hdr->data);
+  }
+};
+}  // namespace internal
 
 }  // namespace phaser

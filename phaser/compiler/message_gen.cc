@@ -1394,6 +1394,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateCreators(os, true);
   // Generate clear function.
   GenerateClear(os, true);
+  GenerateReleaseAt(os, true);
   if (IsRosFrontend()) {
     GenerateRosSyncToPayload(os);
   }
@@ -1658,6 +1659,7 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
   GenerateCreators(os, false);
   // Generate clear function.
   GenerateClear(os, false);
+  GenerateReleaseAt(os, false);
 
   GenerateMessageInfo(os, false);
 
@@ -2166,6 +2168,39 @@ void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
       os << "  " << u->member_name << ".Clear<" << i << ">();\n";
     }
   }
+  os << "}\n\n";
+}
+
+void MessageGenerator::GenerateReleaseAt(std::ostream& os, bool decl) {
+  if (decl) {
+    os << "  static void PhaserReleaseAt(const "
+          "std::shared_ptr<::phaser::MessageRuntime>& _phaser_runtime, "
+          "::phaser::BufferOffset _phaser_offset);\n";
+    return;
+  }
+  const std::string name = MessageName(message_);
+  os << "void " << name
+     << "::PhaserReleaseAt(const std::shared_ptr<::phaser::MessageRuntime>& "
+        "_phaser_runtime, ::phaser::BufferOffset _phaser_offset) {\n";
+  if (!unions_.empty()) {
+    os << "  " << name << "(_phaser_runtime, _phaser_offset).Clear();\n";
+    os << "}\n\n";
+    return;
+  }
+  os << "  if constexpr (true";
+  for (auto& field : fields_) {
+    os << "\n      && ::phaser::internal::FieldRelease<decltype(" << name
+       << "::" << field->member_name << ")>::value";
+  }
+  os << ") {\n";
+  for (auto& field : fields_) {
+    os << "    ::phaser::internal::ReleaseField<decltype(" << name
+       << "::" << field->member_name
+       << ")>(_phaser_runtime, _phaser_offset + " << field->offset << ");\n";
+  }
+  os << "  } else {\n";
+  os << "    " << name << "(_phaser_runtime, _phaser_offset).Clear();\n";
+  os << "  }\n";
   os << "}\n\n";
 }
 

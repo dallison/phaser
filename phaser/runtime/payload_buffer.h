@@ -235,7 +235,23 @@ struct PayloadBuffer {
     return SetString(self, s.data(), s.size(), header_offset);
   }
 
-  static void ClearString(PayloadBuffer **self, BufferOffset header_offset);
+  static void ClearString(PayloadBuffer **self, BufferOffset header_offset) {
+    PayloadBuffer *pb = *self;
+    BufferOffset *hdr = pb->ToAddress<BufferOffset>(header_offset);
+    if (hdr != nullptr && *hdr != 0) {
+      pb->FreeAt(*hdr);
+      *hdr = 0;
+    }
+  }
+
+  // Frees the block this buffer allocated at 'offset'.  An offset outside
+  // the buffer is ignored.
+  void FreeAt(BufferOffset offset) {
+    if (offset >= uint32_t(sizeof(uint64_t)) &&
+        offset <= full_size - uint32_t(sizeof(BufferOffset))) {
+      Free(reinterpret_cast<char *>(this) + offset);
+    }
+  }
 
   static absl::Span<char> AllocateString(PayloadBuffer **self, size_t len,
                                          BufferOffset header_offset,

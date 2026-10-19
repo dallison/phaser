@@ -627,4 +627,18 @@ class RosHeaderField : public IndirectMessageField<Backend> {
   }
 };
 
+namespace internal {
+template <typename Backend, typename Traits>
+struct FieldRelease<RosMessageField<Backend, Traits>>
+    : IndirectMessageRelease<Backend> {};
+
+template <typename Backend>
+struct FieldRelease<RosHeaderField<Backend>>
+    : IndirectMessageRelease<Backend> {};
+
+template <typename Sequence, typename Traits>
+struct FieldRelease<RosRepeatedMessageField<Sequence, Traits>>
+    : FieldRelease<Sequence> {};
+}  // namespace internal
+
 }  // namespace phaser

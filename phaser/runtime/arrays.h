@@ -1532,4 +1532,18 @@ class StringArrayField : public Field {
 
 #undef DECLARE_FIXED_ARRAY_BITS
 
+namespace internal {
+template <typename T, size_t N, bool FixedSize, bool Signed, bool Packed>
+struct FieldRelease<PrimitiveArrayField<T, N, FixedSize, Signed, Packed>>
+    : VectorDataRelease {};
+
+template <typename Enum, size_t N, typename Stringizer, typename Parser,
+          bool Packed>
+struct FieldRelease<EnumArrayField<Enum, N, Stringizer, Parser, Packed>>
+    : VectorDataRelease {};
+
+template <typename T, size_t N>
+struct FieldRelease<MessageArrayField<T, N>> : MessageVectorRelease<T> {};
+}  // namespace internal
+
 }  // namespace phaser
