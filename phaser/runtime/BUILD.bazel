@@ -8,6 +8,26 @@ load(
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
+    name = "payload_buffer",
+    srcs = ["payload_buffer.cc"],
+    hdrs = ["payload_buffer.h"],
+    copts = PHASER_COPTS,
+    deps = ["@com_google_absl//absl/types:span"],
+)
+
+cc_test(
+    name = "payload_buffer_test",
+    srcs = ["payload_buffer_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
+    deps = [
+        ":payload_buffer",
+        "@com_google_googletest//:gtest",
+        "@cpp_toolbelt//toolbelt",
+    ],
+)
+
+cc_library(
     name = "phaser_runtime",
     srcs = [
         "md5.cc",
@@ -31,6 +51,7 @@ cc_library(
         "ros.h",
     ],
     deps = [
+        ":payload_buffer",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

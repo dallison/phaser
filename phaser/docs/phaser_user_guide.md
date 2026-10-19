@@ -619,7 +619,7 @@ This base class contains the following:
 ```c++
 struct Message {
   Message() = default;
-  Message(std::shared_ptr<MessageRuntime> rt, ::toolbelt::BufferOffset start)
+  Message(std::shared_ptr<MessageRuntime> rt, ::phaser::BufferOffset start)
       : runtime(rt), absolute_binary_offset(start) {}
   virtual ~Message() = default;
 
@@ -630,7 +630,7 @@ struct Message {
   virtual void CopyFrom(const Message &src) {}
 
   std::shared_ptr<MessageRuntime> runtime;
-  ::toolbelt::BufferOffset absolute_binary_offset;
+  ::phaser::BufferOffset absolute_binary_offset;
 };
 ```
 
@@ -651,11 +651,11 @@ The member `runtime` is a pointer to the following struct:
 // so that we know where the metadata for each message is stored.  The
 // metadata offset is held in the message header.
 struct MessageRuntime {
-  MessageRuntime(::toolbelt::PayloadBuffer *p) : pb(p) {}
-  MessageRuntime(::toolbelt::PayloadBuffer *p, size_t size)
+  MessageRuntime(::phaser::PayloadBuffer *p) : pb(p) {}
+  MessageRuntime(::phaser::PayloadBuffer *p, size_t size)
       : pb(p), buffer_size(size) {}
   virtual ~MessageRuntime() = default;
-  ::toolbelt::PayloadBuffer *pb;
+  ::phaser::PayloadBuffer *pb;
 
   // This is the size of the buffer.  If it is zero, the size is inside
   // the payload buffer.  If it's non-zero, it's the size of the received
@@ -671,7 +671,9 @@ The members of this are:
 1. `pb`: a pointer to a `PayloadBuffer` object that holds the actual binary for the message data
 2. `buffer_size`: the size of the buffer if it was received
 
-The `PayloadBuffer` is part of my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt) and
+The `PayloadBuffer` (`phaser/runtime/payload_buffer.h`) is Phaser's own copy of the one
+in my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt), with the same
+in-buffer layout, so that Phaser can tune it without affecting other toolbelt users.  It
 provides a relocatable heap (malloc/free/realloc) inside a variable or fixed buffer.  It
 holds the binary values for all fields in the message in a relocatable form.  Generally,
 you won't have to concern yourself about the `PayloadBuffer`.
@@ -1094,15 +1096,15 @@ absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string &message_type,
 absl::StatusOr<Message *>
 PhaserBankAllocateAtOffset(const std::string &message_type,
                            std::shared_ptr<::phaser::MessageRuntime> runtime,
-                           toolbelt::BufferOffset offset);
+                           ::phaser::BufferOffset offset);
 
 template <typename T>
-absl::StatusOr<std::pair<T *, toolbelt::BufferOffset>>
+absl::StatusOr<std::pair<T *, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string &message_type,
                    std::shared_ptr<::phaser::MessageRuntime> runtime);
 
 template <>
-absl::StatusOr<std::pair<Message *, toolbelt::BufferOffset>>
+absl::StatusOr<std::pair<Message *, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string &message_type,
                    std::shared_ptr<::phaser::MessageRuntime> runtime);              
 
@@ -1153,8 +1155,8 @@ struct BankInfo {
   size_t (*serialized_size)(const Message &msg);
   Message *(*allocate_at_offset)(
       std::shared_ptr<::phaser::MessageRuntime> runtime,
-      toolbelt::BufferOffset offset);
-  std::pair<Message *, toolbelt::BufferOffset> (*allocate)(
+      ::phaser::BufferOffset offset);
+  std::pair<Message *, ::phaser::BufferOffset> (*allocate)(
       std::shared_ptr<::phaser::MessageRuntime> runtime);
   void (*clear)(Message &msg);
   absl::Status (*copy)(const Message &src, Message &dst);
@@ -1359,7 +1361,7 @@ union field in a message (I'll show how to use this in a details document).
 
 ## The Payload Buffer
 Whereas the source message is what the user's program interacts with, the location
-of the actual message field values is stored in a [PayloadBuffer](https://github.com/dallison/cpp_toolbelt/toolbelt/payload_buffer.h).
+of the actual message field values is stored in a [PayloadBuffer](../runtime/payload_buffer.h).
 
 This is C++ class that provides a heap inside a relocatable buffer.  The buffer's memory
 can be either provided by the user or allocated by Phaser.  If it is allocated
@@ -1400,8 +1402,8 @@ The start of every PayloadBuffer contains a header, shown in the following diagr
 
 Each member is 4-bytes long.  The first member is the `magic` which is either:
 
-1. toolbelt::kFixedBufferMagic
-2. toolbelt::kMovableBufferMagic
+1. ::phaser::kFixedBufferMagic
+2. ::phaser::kMovableBufferMagic
 
 This serves to identify the buffer as a PayloadBuffer and also whether it is
 movable or fixed.  Movable buffers are only moved when creating the message, however

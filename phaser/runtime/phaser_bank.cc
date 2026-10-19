@@ -86,7 +86,7 @@ absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string& message_type,
 absl::Status PhaserBankSerializeAtOffset(
     std::string_view message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset, ProtoBuffer& buffer) {
+    ::phaser::BufferOffset offset, ProtoBuffer& buffer) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
     return bank_info.status();
@@ -97,7 +97,7 @@ absl::Status PhaserBankSerializeAtOffset(
 absl::Status PhaserBankDeserializeAtOffset(
     std::string_view message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset, ProtoBuffer& buffer) {
+    ::phaser::BufferOffset offset, ProtoBuffer& buffer) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
     return bank_info.status();
@@ -108,7 +108,7 @@ absl::Status PhaserBankDeserializeAtOffset(
 absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
     std::string_view message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset) {
+    ::phaser::BufferOffset offset) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
     return bank_info.status();
@@ -119,7 +119,7 @@ absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
 absl::StatusOr<Message*> PhaserBankAllocateAtOffset(
     const std::string& message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset) {
+    ::phaser::BufferOffset offset) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
     return bank_info.status();

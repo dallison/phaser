@@ -16,7 +16,7 @@
 #include "phaser/testdata/TestMessage.phaser.h"
 #include "test_helpers.h"
 #include "toolbelt/hexdump.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 TEST(PhaserTest, ProtobufCompat) {
   foo::bar::phaser::TestMessage msg;
@@ -581,7 +581,7 @@ TEST(PhaserTest, GarbageWithValidMagic) {
     buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic.
-  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer) = ::phaser::kFixedBufferMagic;
 
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -620,7 +620,7 @@ TEST(PhaserTest, GarbageWithTailoring) {
     buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic and the header fields.
-  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer) = ::phaser::kFixedBufferMagic;
   *reinterpret_cast<uint32_t*>(buffer + 4) = 0x1c;   // message location.
   *reinterpret_cast<uint32_t*>(buffer + 8) = 1024;   // hwm.
   *reinterpret_cast<uint32_t*>(buffer + 12) = 1000;  // full_size

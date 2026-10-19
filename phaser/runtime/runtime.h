@@ -16,7 +16,7 @@
 #include "phaser/runtime/union.h"
 #include "phaser/runtime/vectors.h"
 #include "toolbelt/hexdump.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 #define DEFINE_PRIMITIVE_FIELD_STREAMER(cname)                          \

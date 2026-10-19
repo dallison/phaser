@@ -26,7 +26,7 @@
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/wireformat.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
@@ -45,11 +45,11 @@ class Field {
 
   // The presence bit is in a set of words immediately after
   // the metadata at the start of the message.
-  void SetPresence(::toolbelt::PayloadBuffer* buffer, uint32_t binary_offset) {
+  void SetPresence(::phaser::PayloadBuffer* buffer, uint32_t binary_offset) {
     buffer->SetPresenceBit(static_cast<uint32_t>(id_), binary_offset);
   }
 
-  void ClearPresence(::toolbelt::PayloadBuffer* buffer,
+  void ClearPresence(::phaser::PayloadBuffer* buffer,
                      uint32_t binary_offset) {
     buffer->ClearPresenceBit(static_cast<uint32_t>(id_), binary_offset);
   }
@@ -401,7 +401,7 @@ class StringFieldFacade {
           Message::GetRuntime(this, source_offset_)                          \
               ->template ToAddress<const type>(                              \
                   GetMessageBinaryStart() +                                  \
-                  static_cast<::toolbelt::BufferOffset>(offset));            \
+                  static_cast<::phaser::BufferOffset>(offset));            \
       if (_phaser_addr == nullptr) {                                          \
         return type();                                                        \
       }                                                                       \
@@ -462,17 +462,17 @@ class StringFieldFacade {
     }                                                                         \
                                                                               \
    private:                                                                   \
-    ::toolbelt::PayloadBuffer* GetBuffer() const {                            \
+    ::phaser::PayloadBuffer* GetBuffer() const {                            \
       return Message::GetBuffer(this, source_offset_);                        \
     }                                                                         \
-    ::toolbelt::BufferOffset GetMessageBinaryStart() const {                  \
+    ::phaser::BufferOffset GetMessageBinaryStart() const {                  \
       return Message::GetMessageBinaryStart(this, source_offset_);            \
     }                                                                         \
-    ::toolbelt::BufferOffset GetPresenceMaskStart() const {                   \
+    ::phaser::BufferOffset GetPresenceMaskStart() const {                   \
       return Message::GetMessageBinaryStart(this, source_offset_) + 4;        \
     }                                                                         \
     uint32_t source_offset_;                                                  \
-    ::toolbelt::BufferOffset relative_binary_offset_;                         \
+    ::phaser::BufferOffset relative_binary_offset_;                         \
   };
 
 DEFINE_PRIMITIVE_FIELD(Int32, int32_t)
@@ -553,7 +553,7 @@ class EnumField : public Field {
         Message::GetRuntime(this, source_offset_)
             ->template ToAddress<const T>(
                 GetMessageBinaryStart() +
-                static_cast<::toolbelt::BufferOffset>(offset));
+                static_cast<::phaser::BufferOffset>(offset));
     if (addr == nullptr) {
       return 0;
     }
@@ -599,18 +599,18 @@ class EnumField : public Field {
   }
 
  private:
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
+  ::phaser::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
+  ::phaser::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
-  ::toolbelt::BufferOffset GetPresenceMaskStart() const {
+  ::phaser::BufferOffset GetPresenceMaskStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_) + 4;
   }
 
   uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
+  ::phaser::BufferOffset relative_binary_offset_;
 };
 
 // String field with an offset inline in the message.
@@ -649,7 +649,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     return *this;
   }
   StringField& operator=(const char* s) {
-    ::toolbelt::PayloadBuffer::SetString(
+    ::phaser::PayloadBuffer::SetString(
         GetBufferAddr(), std::string_view(s, std::strlen(s)),
         StringHeaderOffset());
     return *this;
@@ -662,7 +662,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     }
     return GetRuntime()->GetStringView(
         GetMessageBinaryStart() +
-        static_cast<::toolbelt::BufferOffset>(offset));
+        static_cast<::phaser::BufferOffset>(offset));
   }
 
   bool IsPresent() const {
@@ -670,38 +670,38 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     if (offset < 0) {
       return false;
     }
-    const ::toolbelt::BufferOffset* addr =
-        GetRuntime()->ToAddress<const ::toolbelt::BufferOffset>(
+    const ::phaser::BufferOffset* addr =
+        GetRuntime()->ToAddress<const ::phaser::BufferOffset>(
             GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(offset));
+            static_cast<::phaser::BufferOffset>(offset));
     return addr != nullptr && *addr != 0;
   }
 
   template <typename Str>
   void Set(Str s) {
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(), s,
                                          StringHeaderOffset());
   }
 
   void Set(const char* data, size_t size) {
-    ::toolbelt::PayloadBuffer::SetString(
+    ::phaser::PayloadBuffer::SetString(
         GetBufferAddr(), std::string_view(data, size), StringHeaderOffset());
   }
 
   void SetNoCopy(const void* data) {
-    toolbelt::StringHeader* header =
-        GetRuntime()->ToAddress<toolbelt::StringHeader>(StringHeaderOffset());
+    ::phaser::StringHeader* header =
+        GetRuntime()->ToAddress<::phaser::StringHeader>(StringHeaderOffset());
     *header = GetRuntime()->ToOffset(data);
   }
 
   void Clear() {
-    ::toolbelt::PayloadBuffer::ClearString(GetBufferAddr(), StringHeaderOffset());
+    ::phaser::PayloadBuffer::ClearString(GetBufferAddr(), StringHeaderOffset());
   }
 
   // Allocate space for the given size for the string and return the
   // starting address.
   absl::Span<char> Allocate(size_t size, bool clear = false) {
-    return ::toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(), size,
+    return ::phaser::PayloadBuffer::AllocateString(GetBufferAddr(), size,
                                                     StringHeaderOffset(),
                                                     clear);
   }
@@ -713,7 +713,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     }
     return GetRuntime()->StringSize(
         GetMessageBinaryStart() +
-        static_cast<::toolbelt::BufferOffset>(offset));
+        static_cast<::phaser::BufferOffset>(offset));
   }
 
   const char* data() const {
@@ -723,7 +723,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     }
     return GetRuntime()->StringData(
         GetMessageBinaryStart() +
-        static_cast<::toolbelt::BufferOffset>(offset));
+        static_cast<::phaser::BufferOffset>(offset));
   }
 
   size_t SerializedSize() const {
@@ -741,7 +741,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     if (!s.ok()) {
       return s.status();
     }
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), *s,
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(), *s,
                                          StringHeaderOffset());
     return absl::OkStatus();
   }
@@ -754,28 +754,28 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     return Message::GetRuntime(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
+  ::phaser::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
+  ::phaser::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
-  ::toolbelt::BufferOffset StringHeaderOffset() const {
+  ::phaser::BufferOffset StringHeaderOffset() const {
     int32_t offset = FindFieldOffset(source_offset_);
     if (offset < 0) {
       return GetMessageBinaryStart() + relative_binary_offset_;
     }
     return GetMessageBinaryStart() +
-           static_cast<::toolbelt::BufferOffset>(offset);
+           static_cast<::phaser::BufferOffset>(offset);
   }
 
   uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
+  ::phaser::BufferOffset relative_binary_offset_;
 };
 
 // This is a string field that is not embedded inside a message. They
@@ -824,9 +824,9 @@ class NonEmbeddedStringField
     }
     // Preserve an offset rather than an address: allocating the destination
     // may relocate a dynamic payload, but offsets remain valid.
-    const ::toolbelt::BufferOffset source =
+    const ::phaser::BufferOffset source =
         GetBuffer()->ToOffset(const_cast<char*>(value.data()));
-    absl::Span<char> destination = ::toolbelt::PayloadBuffer::AllocateString(
+    absl::Span<char> destination = ::phaser::PayloadBuffer::AllocateString(
         GetBufferAddr(), value.size(), absolute_binary_offset_, false);
     memmove(destination.data(), GetBuffer()->ToAddress<char>(source),
             value.size());
@@ -844,7 +844,7 @@ class NonEmbeddedStringField
     return *this;
   }
   NonEmbeddedStringField& operator=(const char* s) {
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(),
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(),
                                          std::string_view(s, std::strlen(s)),
                                          absolute_binary_offset_);
     return *this;
@@ -862,7 +862,7 @@ class NonEmbeddedStringField
     if (IsPlaceholder()) {
       return;
     }
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s,
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(), s,
                                          absolute_binary_offset_);
   }
 
@@ -870,7 +870,7 @@ class NonEmbeddedStringField
     if (IsPlaceholder()) {
       return;
     }
-    ::toolbelt::PayloadBuffer::ClearString(GetBufferAddr(),
+    ::phaser::PayloadBuffer::ClearString(GetBufferAddr(),
                                            absolute_binary_offset_);
   }
 
@@ -896,9 +896,9 @@ class NonEmbeddedStringField
   size_t SerializedSize() const { return size(); }
 
  private:
-  ::toolbelt::PayloadBuffer* GetBuffer() const { return msg_->runtime->pb; }
+  ::phaser::PayloadBuffer* GetBuffer() const { return msg_->runtime->pb; }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
     if (!msg_->runtime->IsMutable()) {
       throw std::logic_error("cannot mutate a readonly Phaser string");
     }
@@ -906,10 +906,10 @@ class NonEmbeddedStringField
   }
 
   const Message* msg_ = nullptr;
-  ::toolbelt::BufferOffset absolute_binary_offset_ =
+  ::phaser::BufferOffset absolute_binary_offset_ =
       0;  // Offset into
-          // ::toolbelt::PayloadBuffer of
-          // toolbelt::StringHeader
+          // ::phaser::PayloadBuffer of
+          // ::phaser::StringHeader
 };
 
 // This is a buffer offset containing the absolute offset of a message in the
@@ -970,7 +970,7 @@ class IndirectMessageField : public Field {
     if (offset < 0) {
       return DefaultMessage();
     }
-    ::toolbelt::BufferOffset* addr =
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
     if (addr == nullptr || *addr == 0) {
       return DefaultMessage();
@@ -986,13 +986,13 @@ class IndirectMessageField : public Field {
     if (offset < 0) {
       return false;
     }
-    ::toolbelt::BufferOffset* addr =
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
     return addr != nullptr && *addr != 0;
   }
 
   MessageType* Mutable() {
-    ::toolbelt::BufferOffset* addr =
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (addr != nullptr && *addr != 0) {
       // Already allocated.
@@ -1001,9 +1001,9 @@ class IndirectMessageField : public Field {
       return &msg_;
     }
     // Allocate a new message.
-    void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
+    void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
-    ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
+    ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
     msg_.absolute_binary_offset = msg_offset;
@@ -1017,8 +1017,8 @@ class IndirectMessageField : public Field {
     return &msg_;
   }
 
-  void SetOffset(toolbelt::BufferOffset offset) {
-    ::toolbelt::BufferOffset* addr =
+  void SetOffset(::phaser::BufferOffset offset) {
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (addr == nullptr) {
       return;
@@ -1033,12 +1033,12 @@ class IndirectMessageField : public Field {
   }
 
   void Clear() {
-    ::toolbelt::BufferOffset* addr =
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (addr == nullptr || *addr == 0) {
       return;
     }
-    const ::toolbelt::BufferOffset old_offset = *addr;
+    const ::phaser::BufferOffset old_offset = *addr;
     // Clear the message.
     msg_.runtime = GetRuntime();
     msg_.absolute_binary_offset = old_offset;
@@ -1064,7 +1064,7 @@ class IndirectMessageField : public Field {
     if (offset < 0) {
       return 0;
     }
-    ::toolbelt::BufferOffset* addr =
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
     if (addr != nullptr && *addr != 0) {
       // Load up the message if it's already been allocated.
@@ -1079,7 +1079,7 @@ class IndirectMessageField : public Field {
     if (offset < 0) {
       return absl::OkStatus();
     }
-    ::toolbelt::BufferOffset* addr =
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
@@ -1103,15 +1103,15 @@ class IndirectMessageField : public Field {
       return s.status();
     }
     // Allocate a new message.
-    void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
+    void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
-    ::toolbelt::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
+    ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = GetRuntime();
     msg_.absolute_binary_offset = msg_offset;
 
     // Buffer might have moved, get address of indirect again.
-    ::toolbelt::BufferOffset* addr =
+    ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     *addr = msg_offset;  // Put message field offset into message.
 
@@ -1139,16 +1139,16 @@ class IndirectMessageField : public Field {
     return message;
   }
 
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
+  ::phaser::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::BufferOffset* GetIndirectAddress(uint32_t abs_offset) const {
-    return GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+  ::phaser::BufferOffset* GetIndirectAddress(uint32_t abs_offset) const {
+    return GetRuntime()->template ToAddress<::phaser::BufferOffset>(
         GetMessageBinaryStart() + abs_offset);
   }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
 
@@ -1156,12 +1156,12 @@ class IndirectMessageField : public Field {
     return Message::GetRuntime(this, source_offset_);
   }
 
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
+  ::phaser::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
   uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
+  ::phaser::BufferOffset relative_binary_offset_;
   mutable MessageType msg_;
 };
 

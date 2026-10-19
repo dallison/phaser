@@ -24,7 +24,7 @@
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/vectors.h"
 #include "phaser/runtime/wireformat.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
@@ -110,7 +110,7 @@ struct FixedArrayConstIterator {
   iterator end() {                                                               \
     EnsureExtent();                                                              \
     return iterator(                                                             \
-        this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(extent *     \
+        this, BaseOffset() + static_cast<::phaser::BufferOffset>(extent *     \
                                                                     sizeof(      \
                                                                         utype))); \
   }                                                                              \
@@ -127,7 +127,7 @@ struct FixedArrayConstIterator {
   }                                                                              \
   reverse_iterator rend() {                                                      \
     return reverse_iterator(                                                     \
-        this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(extent *     \
+        this, BaseOffset() + static_cast<::phaser::BufferOffset>(extent *     \
                                                                     sizeof(      \
                                                                         utype)),   \
         true);                                                                   \
@@ -207,7 +207,7 @@ class PrimitiveArrayField : public Field {
 #undef CTYPE
 
   void BeginDeserialize() {
-    ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
                                               Header(relative_binary_offset_));
     parsed_count_ = 0;
   }
@@ -222,7 +222,7 @@ class PrimitiveArrayField : public Field {
   }
 
   void Clear() {
-    ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
                                               Header(relative_binary_offset_));
     parsed_count_ = 0;
     EnsureStorage(N);
@@ -261,10 +261,10 @@ class PrimitiveArrayField : public Field {
   }
   const T* data() const { return StoragePointer(); }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
+  ::phaser::BufferOffset BinaryEndOffset() const {
+    return relative_binary_offset_ + sizeof(::phaser::VectorHeader);
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
+  ::phaser::BufferOffset BinaryOffset() const {
     return relative_binary_offset_;
   }
 
@@ -435,21 +435,21 @@ class PrimitiveArrayField : public Field {
   friend FieldIterator<PrimitiveArrayField, T>;
   friend FieldIterator<PrimitiveArrayField, const T>;
 
-  ::toolbelt::BufferOffset BaseOffset() const {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+  ::phaser::BufferOffset BaseOffset() const {
+    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
     if (hdr == nullptr) {
       return 0;
     }
     return hdr->data;
   }
 
-  toolbelt::VectorHeader* Header(uint32_t offset) const {
-    return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
+  ::phaser::VectorHeader* Header(uint32_t offset) const {
+    return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
         Message::GetMessageBinaryStart(this, source_offset_) + offset);
   }
 
   size_t NumElements() const {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
     if (hdr == nullptr) {
       return 0;
     }
@@ -458,15 +458,15 @@ class PrimitiveArrayField : public Field {
   }
 
   void SetActiveCount(size_t count) {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
   void EnsureStorage(size_t count) {
-    ::toolbelt::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
                                                 Header(relative_binary_offset_),
                                                 count);
-    ::toolbelt::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
                                                  Header(relative_binary_offset_),
                                                  count);
   }
@@ -522,11 +522,11 @@ class PrimitiveArrayField : public Field {
 
   bool IsMutable() const { return HasMutablePayload(GetRuntime()); }
 
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
+  ::phaser::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
 
@@ -535,7 +535,7 @@ class PrimitiveArrayField : public Field {
   }
 
   uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
+  ::phaser::BufferOffset relative_binary_offset_;
   size_t parsed_count_ = 0;
 };
 
@@ -609,7 +609,7 @@ class EnumArrayField : public Field {
 #undef CTYPE
 
   void BeginDeserialize() {
-    ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
                                               Header(relative_binary_offset_));
     parsed_count_ = 0;
   }
@@ -624,7 +624,7 @@ class EnumArrayField : public Field {
   }
 
   void Clear() {
-    ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
                                               Header(relative_binary_offset_));
     parsed_count_ = 0;
     EnsureStorage(N);
@@ -666,10 +666,10 @@ class EnumArrayField : public Field {
     return reinterpret_cast<const Enum*>(StoragePointer());
   }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
+  ::phaser::BufferOffset BinaryEndOffset() const {
+    return relative_binary_offset_ + sizeof(::phaser::VectorHeader);
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
+  ::phaser::BufferOffset BinaryOffset() const {
     return relative_binary_offset_;
   }
 
@@ -784,21 +784,21 @@ class EnumArrayField : public Field {
   friend FieldIterator<EnumArrayField, Enum>;
   friend FieldIterator<EnumArrayField, const Enum>;
 
-  ::toolbelt::BufferOffset BaseOffset() const {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+  ::phaser::BufferOffset BaseOffset() const {
+    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
     if (hdr == nullptr) {
       return 0;
     }
     return hdr->data;
   }
 
-  toolbelt::VectorHeader* Header(uint32_t offset) const {
-    return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
+  ::phaser::VectorHeader* Header(uint32_t offset) const {
+    return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
         Message::GetMessageBinaryStart(this, source_offset_) + offset);
   }
 
   size_t NumElements() const {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
     if (hdr == nullptr) {
       return 0;
     }
@@ -807,15 +807,15 @@ class EnumArrayField : public Field {
   }
 
   void SetActiveCount(size_t count) {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
   void EnsureStorage(size_t count) {
-    ::toolbelt::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
                                                 Header(relative_binary_offset_),
                                                 count);
-    ::toolbelt::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
+    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
                                                Header(relative_binary_offset_),
                                                count);
   }
@@ -871,11 +871,11 @@ class EnumArrayField : public Field {
 
   bool IsMutable() const { return HasMutablePayload(GetRuntime()); }
 
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
+  ::phaser::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
 
@@ -884,7 +884,7 @@ class EnumArrayField : public Field {
   }
 
   uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
+  ::phaser::BufferOffset relative_binary_offset_;
   size_t parsed_count_ = 0;
 };
 
@@ -1007,10 +1007,10 @@ class MessageArrayField : public MessageVectorField<T> {
 
   T Mutable(size_t index) { return MutableObject(index); }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
+  ::phaser::BufferOffset BinaryEndOffset() const {
     return MessageVectorField<T>::BinaryEndOffset();
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
+  ::phaser::BufferOffset BinaryOffset() const {
     return MessageVectorField<T>::BinaryOffset();
   }
 
@@ -1292,10 +1292,10 @@ class StringArrayField : public Field {
     (*this)[index].Set(s);
   }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
+  ::phaser::BufferOffset BinaryEndOffset() const {
+    return relative_binary_offset_ + sizeof(::phaser::VectorHeader);
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
+  ::phaser::BufferOffset BinaryOffset() const {
     return relative_binary_offset_;
   }
 
@@ -1343,16 +1343,16 @@ class StringArrayField : public Field {
     if (!v.ok()) {
       return v.status();
     }
-    void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(), sizeof(toolbelt::StringHeader));
-    ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), *v, hdr_offset);
-    toolbelt::VectorHeader* hdr = Header();
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    void* str_hdr = ::phaser::PayloadBuffer::Allocate(
+        GetBufferAddr(), sizeof(::phaser::StringHeader));
+    ::phaser::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(), *v, hdr_offset);
+    ::phaser::VectorHeader* hdr = Header();
+    ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     data[parsed_count_] = hdr_offset;
     hdr = Header();
-    data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    data = GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     strings_[parsed_count_] = NonEmbeddedStringField(
         Message::GetMessage(this, source_offset_), data[parsed_count_]);
     parsed_count_++;
@@ -1361,19 +1361,19 @@ class StringArrayField : public Field {
   }
 
  private:
-  toolbelt::VectorHeader* Header() const {
-    return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
+  ::phaser::VectorHeader* Header() const {
+    return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
         Message::GetMessageBinaryStart(this, source_offset_) +
         relative_binary_offset_);
   }
 
   size_t NumElements() const {
-    toolbelt::VectorHeader* hdr = Header();
+    ::phaser::VectorHeader* hdr = Header();
     if (hdr == nullptr) {
       return 0;
     }
     return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
-                                           sizeof(::toolbelt::BufferOffset));
+                                           sizeof(::phaser::BufferOffset));
   }
 
   void SetActiveCount(size_t count) {
@@ -1381,9 +1381,9 @@ class StringArrayField : public Field {
   }
 
   void EnsureStorage(size_t count) {
-    ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
+    ::phaser::PayloadBuffer::VectorReserve<::phaser::BufferOffset>(
         GetBufferAddr(), Header(), count);
-    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+    ::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
         GetBufferAddr(), Header(), count);
   }
 
@@ -1404,7 +1404,7 @@ class StringArrayField : public Field {
         s.Clear();
       }
     }
-    ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
+    ::phaser::PayloadBuffer::VectorClear<::phaser::BufferOffset>(
         GetBufferAddr(), Header());
     ResetSlots();
   }
@@ -1437,20 +1437,20 @@ class StringArrayField : public Field {
     if (FindFieldOffset(source_offset_) < 0) {
       return empty_;
     }
-    toolbelt::VectorHeader* hdr = Header();
+    ::phaser::VectorHeader* hdr = Header();
     if (hdr == nullptr || hdr->data == 0) {
       return empty_;
     }
     const size_t count = GetRuntime()->ClampElementCount(
-        hdr->data, hdr->num_elements, sizeof(::toolbelt::BufferOffset));
+        hdr->data, hdr->num_elements, sizeof(::phaser::BufferOffset));
     if (index >= count) {
       return empty_;
     }
     if (!strings_[index].IsPlaceholder()) {
       return strings_[index];
     }
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     if (data == nullptr || data[index] == 0) {
       return empty_;
     }
@@ -1461,14 +1461,14 @@ class StringArrayField : public Field {
   }
 
   void AllocateStringSlot(size_t index) {
-    toolbelt::VectorHeader* hdr = Header();
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    ::phaser::VectorHeader* hdr = Header();
+    ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     if (data[index] == 0) {
-      void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
-          GetBufferAddr(), sizeof(toolbelt::StringHeader));
+      void* str_hdr = ::phaser::PayloadBuffer::Allocate(
+          GetBufferAddr(), sizeof(::phaser::StringHeader));
       hdr = Header();
-      data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+      data = GetRuntime()->template ToAddress<::phaser::BufferOffset>(
           hdr->data);
       data[index] = GetRuntime()->ToOffset(str_hdr);
     }
@@ -1480,20 +1480,20 @@ class StringArrayField : public Field {
     if (start >= end || end > N) {
       return;
     }
-    toolbelt::VectorHeader* hdr = Header();
+    ::phaser::VectorHeader* hdr = Header();
     if (hdr == nullptr || hdr->data == 0) {
       return;
     }
     const size_t count = GetRuntime()->ClampElementCount(
-        hdr->data, hdr->num_elements, sizeof(::toolbelt::BufferOffset));
+        hdr->data, hdr->num_elements, sizeof(::phaser::BufferOffset));
     if (start >= count) {
       return;
     }
     if (end > count) {
       end = count;
     }
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     if (data == nullptr) {
       return;
     }
@@ -1511,11 +1511,11 @@ class StringArrayField : public Field {
 
   bool IsMutable() const { return HasMutablePayload(GetRuntime()); }
 
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
+  ::phaser::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
 
@@ -1524,7 +1524,7 @@ class StringArrayField : public Field {
   }
 
   uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
+  ::phaser::BufferOffset relative_binary_offset_;
   mutable std::array<NonEmbeddedStringField, N> strings_;
   size_t parsed_count_ = 0;
   NonEmbeddedStringField empty_;

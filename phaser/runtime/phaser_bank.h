@@ -19,17 +19,17 @@ struct BankInfo {
   size_t (*serialized_size)(const Message& msg);
   absl::Status (*serialize_at_offset)(
       std::shared_ptr<::phaser::MessageRuntime> runtime,
-      toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+      ::phaser::BufferOffset offset, ProtoBuffer& buffer);
   absl::Status (*deserialize_at_offset)(
       std::shared_ptr<::phaser::MessageRuntime> runtime,
-      toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+      ::phaser::BufferOffset offset, ProtoBuffer& buffer);
   size_t (*serialized_size_at_offset)(
       std::shared_ptr<::phaser::MessageRuntime> runtime,
-      toolbelt::BufferOffset offset);
+      ::phaser::BufferOffset offset);
   Message* (*allocate_at_offset)(
       std::shared_ptr<::phaser::MessageRuntime> runtime,
-      toolbelt::BufferOffset offset);
-  std::pair<Message*, toolbelt::BufferOffset> (*allocate)(
+      ::phaser::BufferOffset offset);
+  std::pair<Message*, ::phaser::BufferOffset> (*allocate)(
       std::shared_ptr<::phaser::MessageRuntime> runtime);
   void (*clear)(Message& msg);
   absl::Status (*copy)(const Message& src, Message& dst);
@@ -64,15 +64,15 @@ absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string& message_type,
 absl::Status PhaserBankSerializeAtOffset(
     std::string_view message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+    ::phaser::BufferOffset offset, ProtoBuffer& buffer);
 absl::Status PhaserBankDeserializeAtOffset(
     std::string_view message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset, ProtoBuffer& buffer);
+    ::phaser::BufferOffset offset, ProtoBuffer& buffer);
 absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
     std::string_view message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset);
+    ::phaser::BufferOffset offset);
 
 // This allocates a message from the heap (using new) with its storage in the
 // payload buffer.  The ownership of the heap memory is passed back to the
@@ -81,10 +81,10 @@ absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
 absl::StatusOr<Message*> PhaserBankAllocateAtOffset(
     const std::string& message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset);
+    ::phaser::BufferOffset offset);
 
 template <typename T>
-inline absl::StatusOr<std::pair<T*, toolbelt::BufferOffset>> PhaserBankAllocate(
+inline absl::StatusOr<std::pair<T*, ::phaser::BufferOffset>> PhaserBankAllocate(
     const std::string& message_type,
     std::shared_ptr<::phaser::MessageRuntime> runtime) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
@@ -96,7 +96,7 @@ inline absl::StatusOr<std::pair<T*, toolbelt::BufferOffset>> PhaserBankAllocate(
 }
 
 template <>
-inline absl::StatusOr<std::pair<Message*, toolbelt::BufferOffset>>
+inline absl::StatusOr<std::pair<Message*, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string& message_type,
                    std::shared_ptr<::phaser::MessageRuntime> runtime) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);

@@ -42,7 +42,7 @@ class AnyMessage : public Message {
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
 
   AnyMessage(std::shared_ptr<phaser::MessageRuntime> rt,
-             ::toolbelt::BufferOffset offset)
+             ::phaser::BufferOffset offset)
       : Message(rt, offset),
         type_url_(offsetof(AnyMessage, type_url_), HeaderSize() + 0, 0, 1),
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
@@ -138,7 +138,7 @@ class AnyMessage : public Message {
     }
     if (value_.IsPresent()) {
       const std::string_view type = MessageTypeName();
-      const toolbelt::BufferOffset offset =
+      const ::phaser::BufferOffset offset =
           runtime->ToOffset(const_cast<char*>(value().data()));
       absl::StatusOr<size_t> inner_size =
           PhaserBankSerializedSizeAtOffset(type, runtime, offset);

@@ -1689,14 +1689,14 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
   if (decl) {
     os << "  " << MessageName(message_)
        << "(std::shared_ptr<::phaser::MessageRuntime> runtime, "
-          "::toolbelt::BufferOffset "
+          "::phaser::BufferOffset "
           "offset);\n";
     return;
   }
   GenerateInvalidOffsetofWarningPush(os);
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
   os << "std::shared_ptr<::phaser::MessageRuntime> runtime_ptr, "
-        "::toolbelt::BufferOffset "
+        "::phaser::BufferOffset "
         "offset) : Message(runtime_ptr, offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
@@ -1755,10 +1755,10 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
   os << "// Create a mutable message in the given memory.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
-        "  ::toolbelt::PayloadBuffer *pb = new (addr) "
-        "::toolbelt::PayloadBuffer(static_cast<uint32_t>(size), tuning == "
+        "  ::phaser::PayloadBuffer *pb = new (addr) "
+        "::phaser::PayloadBuffer(static_cast<uint32_t>(size), tuning == "
         "::phaser::Tuning::kPerformance);\n"
-        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  ::phaser::InitializeRuntimeControl(&pb, "
@@ -1779,8 +1779,8 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "address with a size.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateReadonly(const void *addr, size_t size) {\n"
-        "  ::toolbelt::PayloadBuffer *pb ="
-        "reinterpret_cast<::toolbelt::PayloadBuffer "
+        "  ::phaser::PayloadBuffer *pb ="
+        "reinterpret_cast<::phaser::PayloadBuffer "
         "*>(const_cast<void*>(addr));\n"
         "  ::phaser::MessageRuntime runtime(pb, size);\n"
         "  // Reject payloads whose header is not structurally valid before "
@@ -1810,12 +1810,12 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc, "
         "::phaser::Tuning tuning) "
         "{\n"
-        "  absl::StatusOr<::toolbelt::PayloadBuffer *> pbs = "
+        "  absl::StatusOr<::phaser::PayloadBuffer *> pbs = "
         "::phaser::NewDynamicBuffer(initial_size, std::move(alloc), "
         "std::move(realloc), tuning);\n"
         "  if (!pbs.ok()) return pbs.status();\n"
-        "  ::toolbelt::PayloadBuffer *pb = *pbs;\n"
-        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  ::phaser::PayloadBuffer *pb = *pbs;\n"
+        "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  ::phaser::InitializeRuntimeControl(&pb, "
@@ -1858,9 +1858,9 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
 
   os << "void " << MessageName(message_)
      << "::InitDynamicMutable(size_t initial_size, ::phaser::Tuning tuning) {\n"
-        "  ::toolbelt::PayloadBuffer *pb = "
+        "  ::phaser::PayloadBuffer *pb = "
         "::phaser::NewDynamicBuffer(initial_size, tuning);\n"
-        "  ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb, "
+        "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
         "  ::phaser::InitializeRuntimeControl(&pb, "
@@ -1881,7 +1881,7 @@ void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
   os << "  void Finalize() const {\n"
         "    const auto* _phaser_runtime_control = "
         "runtime->GetRuntimeControl();\n"
-        "    const ::toolbelt::BufferOffset _phaser_user_metadata =\n"
+        "    const ::phaser::BufferOffset _phaser_user_metadata =\n"
         "        _phaser_runtime_control != nullptr\n"
         "            ? _phaser_runtime_control->user_metadata\n"
         "            : runtime->pb->metadata;\n"
@@ -2329,7 +2329,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "    " << member_name << ".Clear" << suffix << "();\n";
         os << "  }\n";
         os << "  void set_" << field_name
-           << "(toolbelt::BufferOffset offset) {\n";
+           << "(::phaser::BufferOffset offset) {\n";
         os << "    " << member_name << ".SetOffset" << suffix << "(offset);\n";
         os << "  }\n";
 
@@ -4500,7 +4500,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
 
   os << "static absl::Status " << MessageName(message_)
      << "SerializeAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, "
-        "::toolbelt::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
+        "::phaser::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
   os << "  const " << MessageName(message_) << " message(runtime, offset);\n";
   os << "  return message.Serialize(buffer);\n";
   os << "}\n\n";
@@ -4508,7 +4508,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "static absl::Status " << MessageName(message_)
      << "DeserializeAtOffset("
         "std::shared_ptr<::phaser::MessageRuntime> runtime, "
-        "::toolbelt::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
+        "::phaser::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
   os << "  " << MessageName(message_) << " message(runtime, offset);\n";
   os << "  message.InstallMetadata<" << MessageName(message_) << ">();\n";
   os << "  return message.Deserialize(buffer);\n";
@@ -4517,25 +4517,25 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "static size_t " << MessageName(message_)
      << "SerializedSizeAtOffset("
         "std::shared_ptr<::phaser::MessageRuntime> runtime, "
-        "::toolbelt::BufferOffset offset) {\n";
+        "::phaser::BufferOffset offset) {\n";
   os << "  const " << MessageName(message_) << " message(runtime, offset);\n";
   os << "  return message.SerializedSize();\n";
   os << "}\n\n";
 
   os << "static ::phaser::Message* " << MessageName(message_)
      << "AllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, "
-        "::toolbelt::BufferOffset offset) {\n";
+        "::phaser::BufferOffset offset) {\n";
   os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
   os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
   os << "  return msg;\n";
   os << "}\n\n";
 
-  os << "static std::pair<::phaser::Message *, toolbelt::BufferOffset>\n";
+  os << "static std::pair<::phaser::Message *, ::phaser::BufferOffset>\n";
   os << MessageName(message_)
      << "Allocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {\n";
-  os << "  void *addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb, "
+  os << "  void *addr = ::phaser::PayloadBuffer::Allocate(&runtime->pb, "
      << MessageName(message_) << "::BinarySize());\n";
-  os << "  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);\n";
+  os << "  ::phaser::BufferOffset offset = runtime->pb->ToOffset(addr);\n";
   os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
   os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
   os << "  return std::make_pair(msg, offset);\n";

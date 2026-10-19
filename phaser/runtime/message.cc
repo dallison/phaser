@@ -10,9 +10,9 @@
 
 namespace phaser {
 
-::toolbelt::PayloadBuffer* NewDynamicBuffer(size_t initial_size,
+::phaser::PayloadBuffer* NewDynamicBuffer(size_t initial_size,
                                             Tuning tuning) {
-  absl::StatusOr<::toolbelt::PayloadBuffer*> r = NewDynamicBuffer(
+  absl::StatusOr<::phaser::PayloadBuffer*> r = NewDynamicBuffer(
       initial_size, [](size_t size) -> void* { return ::malloc(size); },
       [](void* p, size_t /*old_size*/, size_t new_size) -> void* {
         return ::realloc(p, new_size);
@@ -26,7 +26,7 @@ namespace phaser {
   return *r;
 }
 
-absl::StatusOr<::toolbelt::PayloadBuffer*> NewDynamicBuffer(
+absl::StatusOr<::phaser::PayloadBuffer*> NewDynamicBuffer(
     size_t initial_size, std::function<absl::StatusOr<void*>(size_t)> alloc,
     std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc,
     Tuning tuning) {
@@ -38,10 +38,10 @@ absl::StatusOr<::toolbelt::PayloadBuffer*> NewDynamicBuffer(
   // initialized. This avoids spurious "uninitialised value" reports from tools
   // like valgrind when the allocator scans or copies free space.
   memset(*buffer, 0, initial_size);
-  ::toolbelt::PayloadBuffer* pb = new (*buffer)::toolbelt::PayloadBuffer(
+  ::phaser::PayloadBuffer* pb = new (*buffer)::phaser::PayloadBuffer(
       static_cast<uint32_t>(initial_size),
       [initial_size, realloc_fn = std::move(realloc)](
-          ::toolbelt::PayloadBuffer** p, size_t old_size, size_t new_size) {
+          ::phaser::PayloadBuffer** p, size_t old_size, size_t new_size) {
         absl::StatusOr<void*> r = realloc_fn(*p, old_size, new_size);
         if (!r.ok()) {
           std::cerr << "Failed to resize PayloadBuffer from " << initial_size
@@ -53,7 +53,7 @@ absl::StatusOr<::toolbelt::PayloadBuffer*> NewDynamicBuffer(
           memset(reinterpret_cast<char*>(*r) + old_size, 0,
                  new_size - old_size);
         }
-        *p = reinterpret_cast<::toolbelt::PayloadBuffer*>(*r);
+        *p = reinterpret_cast<::phaser::PayloadBuffer*>(*r);
       },
       tuning == Tuning::kPerformance);
   return pb;

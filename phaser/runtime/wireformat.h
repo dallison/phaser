@@ -15,7 +15,7 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
@@ -129,32 +129,32 @@ inline bool IsStructurallyValidProtobuf(absl::Span<const char> data) {
 
 inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
   constexpr size_t kMagicOffset =
-      offsetof(::toolbelt::PayloadBuffer, magic);
+      offsetof(::phaser::PayloadBuffer, magic);
   constexpr size_t kMessageOffset =
-      offsetof(::toolbelt::PayloadBuffer, message);
-  constexpr size_t kHwmOffset = offsetof(::toolbelt::PayloadBuffer, hwm);
+      offsetof(::phaser::PayloadBuffer, message);
+  constexpr size_t kHwmOffset = offsetof(::phaser::PayloadBuffer, hwm);
   constexpr size_t kFullSizeOffset =
-      offsetof(::toolbelt::PayloadBuffer, full_size);
+      offsetof(::phaser::PayloadBuffer, full_size);
   constexpr size_t kFreeListOffset =
-      offsetof(::toolbelt::PayloadBuffer, free_list);
+      offsetof(::phaser::PayloadBuffer, free_list);
   constexpr size_t kMetadataOffset =
-      offsetof(::toolbelt::PayloadBuffer, metadata);
+      offsetof(::phaser::PayloadBuffer, metadata);
   constexpr size_t kBitmapsOffset =
-      offsetof(::toolbelt::PayloadBuffer, bitmaps);
+      offsetof(::phaser::PayloadBuffer, bitmaps);
 
-  if (data.size() < sizeof(::toolbelt::PayloadBuffer)) {
+  if (data.size() < sizeof(::phaser::PayloadBuffer)) {
     return false;
   }
   const uint32_t magic = LoadWireUint32(data, kMagicOffset);
-  const uint32_t base_magic = magic & ::toolbelt::kBitMapMask;
-  const bool movable = base_magic == ::toolbelt::kMovableBufferMagic;
-  if (!movable && base_magic != ::toolbelt::kFixedBufferMagic) {
+  const uint32_t base_magic = magic & ::phaser::kBitMapMask;
+  const bool movable = base_magic == ::phaser::kMovableBufferMagic;
+  if (!movable && base_magic != ::phaser::kFixedBufferMagic) {
     return false;
   }
 
   const size_t minimum_header =
-      sizeof(::toolbelt::PayloadBuffer) +
-      (movable ? sizeof(::toolbelt::Resizer*) : 0);
+      sizeof(::phaser::PayloadBuffer) +
+      (movable ? sizeof(::phaser::Resizer*) : 0);
   const uint32_t message = LoadWireUint32(data, kMessageOffset);
   const uint32_t hwm = LoadWireUint32(data, kHwmOffset);
   const uint32_t full_size = LoadWireUint32(data, kFullSizeOffset);
@@ -168,15 +168,15 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
   }
   if (free_list != 0 &&
       (free_list < minimum_header ||
-       free_list > data.size() - sizeof(::toolbelt::FreeBlockHeader) ||
-       free_list > full_size - sizeof(::toolbelt::FreeBlockHeader))) {
+       free_list > data.size() - sizeof(::phaser::FreeBlockHeader) ||
+       free_list > full_size - sizeof(::phaser::FreeBlockHeader))) {
     return false;
   }
   if (metadata != 0 &&
       (metadata < minimum_header || metadata >= hwm)) {
     return false;
   }
-  for (size_t i = 0; i < ::toolbelt::kNumBitmapRuns; ++i) {
+  for (size_t i = 0; i < ::phaser::kNumBitmapRuns; ++i) {
     const uint32_t bitmap =
         LoadWireUint32(data, kBitmapsOffset + i * sizeof(uint32_t));
     if (bitmap != 0 && (bitmap < minimum_header || bitmap >= hwm)) {

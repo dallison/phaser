@@ -20,7 +20,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "toolbelt/hexdump.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
@@ -265,15 +265,15 @@ inline constexpr uint32_t kRuntimeControlMagic = 0x52544850;  // "PHTR"
 inline constexpr uint32_t kRuntimeControlVersion = 1;
 
 struct RuntimeMetadataEntry {
-  ::toolbelt::BufferOffset name = 0;
-  ::toolbelt::BufferOffset field_data = 0;
+  ::phaser::BufferOffset name = 0;
+  ::phaser::BufferOffset field_data = 0;
   uint32_t name_size = 0;
 };
 
 struct RuntimeControlBlock {
   uint32_t magic = kRuntimeControlMagic;
   uint32_t version = kRuntimeControlVersion;
-  ::toolbelt::BufferOffset user_metadata = 0;
+  ::phaser::BufferOffset user_metadata = 0;
   uint32_t count = 0;
   uint32_t capacity = 0;
   RuntimeMetadataEntry entries[1];
@@ -285,9 +285,9 @@ inline size_t RuntimeControlSize(size_t capacity) {
 }
 
 inline RuntimeControlBlock* InitializeRuntimeControl(
-    ::toolbelt::PayloadBuffer** pb, size_t capacity) {
+    ::phaser::PayloadBuffer** pb, size_t capacity) {
   capacity = std::max<size_t>(capacity, 1);
-  void* memory = ::toolbelt::PayloadBuffer::Allocate(
+  void* memory = ::phaser::PayloadBuffer::Allocate(
       pb, static_cast<uint32_t>(RuntimeControlSize(capacity)), true);
   auto* control = new (memory) RuntimeControlBlock;
   control->capacity = static_cast<uint32_t>(capacity);
@@ -305,12 +305,12 @@ enum class RuntimeHandleMode {
 };
 
 struct MessageRuntime {
-  MessageRuntime(::toolbelt::PayloadBuffer* p, bool is_mutable = false)
+  MessageRuntime(::phaser::PayloadBuffer* p, bool is_mutable = false)
       : pb(p),
         is_mutable_(is_mutable),
         mode_(is_mutable ? RuntimeHandleMode::kFixedMutable
                          : RuntimeHandleMode::kBorrowedReadonly) {}
-  MessageRuntime(::toolbelt::PayloadBuffer* p, size_t size,
+  MessageRuntime(::phaser::PayloadBuffer* p, size_t size,
                  bool is_mutable = false)
       : pb(p),
         buffer_size(size),
@@ -320,7 +320,7 @@ struct MessageRuntime {
   MessageRuntime(const MessageRuntime&) = default;
   MessageRuntime& operator=(const MessageRuntime&) = default;
   virtual ~MessageRuntime() = default;
-  ::toolbelt::PayloadBuffer* pb;
+  ::phaser::PayloadBuffer* pb;
 
   // This is the size of the buffer.  If it is zero, the size is inside
   // the payload buffer.  If it's non-zero, it's the size of the received
@@ -332,22 +332,22 @@ struct MessageRuntime {
   RuntimeHandleMode mode_ = RuntimeHandleMode::kBorrowedReadonly;
 
   virtual void AddMetadata(std::string_view name,
-                           ::toolbelt::BufferOffset offset) {
+                           ::phaser::BufferOffset offset) {
     RuntimeControlBlock* control = GetRuntimeControl();
     if (control == nullptr) {
       return;
     }
     if (control->count == control->capacity) {
-      const ::toolbelt::BufferOffset old_offset = pb->metadata;
+      const ::phaser::BufferOffset old_offset = pb->metadata;
       const uint32_t new_capacity = control->capacity * 2;
-      void* memory = ::toolbelt::PayloadBuffer::Realloc(
+      void* memory = ::phaser::PayloadBuffer::Realloc(
           &pb, pb->ToAddress(old_offset),
           static_cast<uint32_t>(RuntimeControlSize(new_capacity)), true);
       control = static_cast<RuntimeControlBlock*>(memory);
       control->capacity = new_capacity;
       pb->metadata = pb->ToOffset(control);
     }
-    void* name_memory = ::toolbelt::PayloadBuffer::Allocate(
+    void* name_memory = ::phaser::PayloadBuffer::Allocate(
         &pb, static_cast<uint32_t>(name.size()), false);
     if (!name.empty()) {
       memcpy(name_memory, name.data(), name.size());
@@ -358,7 +358,7 @@ struct MessageRuntime {
     entry.name_size = static_cast<uint32_t>(name.size());
     entry.field_data = offset;
   }
-  virtual ::toolbelt::BufferOffset GetMetadata(std::string_view name) {
+  virtual ::phaser::BufferOffset GetMetadata(std::string_view name) {
     RuntimeControlBlock* control = GetRuntimeControl();
     if (control == nullptr) {
       return 0;
@@ -393,12 +393,12 @@ struct MessageRuntime {
   }
 
   template <typename T = void>
-  T* ToAddress(toolbelt::BufferOffset offset) {
+  T* ToAddress(::phaser::BufferOffset offset) {
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
   template <typename T = void>
-  const T* ToAddress(toolbelt::BufferOffset offset) const {
+  const T* ToAddress(::phaser::BufferOffset offset) const {
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
@@ -414,21 +414,21 @@ struct MessageRuntime {
 
   // Size-aware string reader.  Uses the trusted buffer size so a hostile length
   // word in received data cannot cause an out-of-bounds read.
-  std::string_view GetStringView(toolbelt::BufferOffset header_offset) const {
+  std::string_view GetStringView(::phaser::BufferOffset header_offset) const {
     if (pb == nullptr) {
       return {};
     }
     return pb->GetStringView(header_offset, buffer_size);
   }
 
-  size_t StringSize(toolbelt::BufferOffset header_offset) const {
+  size_t StringSize(::phaser::BufferOffset header_offset) const {
     if (pb == nullptr) {
       return 0;
     }
     return pb->StringSize(header_offset, buffer_size);
   }
 
-  const char* StringData(toolbelt::BufferOffset header_offset) const {
+  const char* StringData(::phaser::BufferOffset header_offset) const {
     if (pb == nullptr) {
       return nullptr;
     }
@@ -453,7 +453,7 @@ struct MessageRuntime {
 
   // Clamps an attacker-influenced element count to the number of 'elem_size'
   // elements that actually fit in the buffer starting at 'data_offset'.
-  size_t ClampElementCount(toolbelt::BufferOffset data_offset, size_t claimed,
+  size_t ClampElementCount(::phaser::BufferOffset data_offset, size_t claimed,
                            size_t elem_size) const {
     if (data_offset == 0 || elem_size == 0) {
       return 0;
@@ -470,7 +470,7 @@ struct MessageRuntime {
   // starts at 'data_offset'.  The size word lives immediately before the
   // data; a hostile data_offset near the start of the buffer must not cause
   // an underflow read.
-  size_t AllocatedCapacity(toolbelt::BufferOffset data_offset,
+  size_t AllocatedCapacity(::phaser::BufferOffset data_offset,
                            size_t elem_size) const {
     if (elem_size == 0 || data_offset == 0 || pb == nullptr) {
       return 0;
@@ -479,16 +479,16 @@ struct MessageRuntime {
     if (block == nullptr) {
       return 0;
     }
-    return ::toolbelt::PayloadBuffer::DecodeSize(block) / elem_size;
+    return ::phaser::PayloadBuffer::DecodeSize(block) / elem_size;
   }
 
   template <typename T = void>
-  toolbelt::BufferOffset ToOffset(const T* addr) const {
+  ::phaser::BufferOffset ToOffset(const T* addr) const {
     return pb->ToOffset(addr, buffer_size);
   }
 
   template <typename T = void>
-  toolbelt::BufferOffset ToOffset(T* addr) {
+  ::phaser::BufferOffset ToOffset(T* addr) {
     return pb->ToOffset(addr, buffer_size);
   }
 };
@@ -496,14 +496,14 @@ struct MessageRuntime {
 // This is a message runtime for a message that is mutable.  It holds a mapping
 // for each message name to the offset of the metadata in the payload buffer.
 struct MutableMessageRuntime : public MessageRuntime {
-  MutableMessageRuntime(::toolbelt::PayloadBuffer* p)
+  MutableMessageRuntime(::phaser::PayloadBuffer* p)
       : MessageRuntime(p, true) {}
 };
 
 // Dynamically allocated payload buffer.  Must be allocated in memory
 // from malloc using the NewDynamicBuffer function.
 struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
-  DynamicMutableMessageRuntime(::toolbelt::PayloadBuffer* p,
+  DynamicMutableMessageRuntime(::phaser::PayloadBuffer* p,
                                std::function<void(void*)> free)
       : MutableMessageRuntime(p), free_(std::move(free)) {
     mode_ = RuntimeHandleMode::kOwnedDynamic;
@@ -569,7 +569,7 @@ struct Message {
 
  public:
   Message() : readonly_runtime_(nullptr, size_t{0}, false) {}
-  Message(RuntimeHandle rt, ::toolbelt::BufferOffset start)
+  Message(RuntimeHandle rt, ::phaser::BufferOffset start)
       : readonly_runtime_(nullptr, size_t{0}, false),
         absolute_binary_offset(start) {
     BindRuntime(std::move(rt));
@@ -612,19 +612,19 @@ struct Message {
   bool IsBound() const { return runtime != nullptr; }
 
   RuntimeHandle runtime;
-  ::toolbelt::BufferOffset absolute_binary_offset = 0;
+  ::phaser::BufferOffset absolute_binary_offset = 0;
 
   // 'field' is the offset from the start of the message to the field (positive)
   // Subtract the field offset from the field to get the address of the
-  // std::shared_ptr to the pointer to the ::toolbelt::PayloadBuffer.
-  static ::toolbelt::PayloadBuffer* GetBuffer(const void* field,
+  // std::shared_ptr to the pointer to the ::phaser::PayloadBuffer.
+  static ::phaser::PayloadBuffer* GetBuffer(const void* field,
                                               uint32_t offset) {
     const Message* msg = reinterpret_cast<const Message*>(
         reinterpret_cast<const char*>(field) - offset);
     return msg->runtime->pb;
   }
 
-  static ::toolbelt::PayloadBuffer** GetBufferAddr(const void* field,
+  static ::phaser::PayloadBuffer** GetBufferAddr(const void* field,
                                                    uint32_t offset) {
     const Message* msg = reinterpret_cast<const Message*>(
         reinterpret_cast<const char*>(field) - offset);
@@ -658,14 +658,14 @@ struct Message {
     return msg;
   }
 
-  static ::toolbelt::BufferOffset GetMessageBinaryStart(const void* field,
+  static ::phaser::BufferOffset GetMessageBinaryStart(const void* field,
                                                         uint32_t offset) {
     const Message* msg = reinterpret_cast<const Message*>(
         reinterpret_cast<const char*>(field) - offset);
     return msg->absolute_binary_offset;
   }
 
-  absl::Status SetUserMetadata(toolbelt::BufferOffset offset) {
+  absl::Status SetUserMetadata(::phaser::BufferOffset offset) {
     if (offset >= runtime->pb->hwm) {
       return absl::InternalError("Invalid metadata offset");
     }
@@ -679,7 +679,7 @@ struct Message {
   }
 
   void* GetUserMetadata() {
-    toolbelt::BufferOffset offset = runtime->pb->metadata;
+    ::phaser::BufferOffset offset = runtime->pb->metadata;
     if (RuntimeControlBlock* control = runtime->GetRuntimeControl();
         control != nullptr) {
       offset = control->user_metadata;
@@ -689,7 +689,7 @@ struct Message {
 
   void* Allocate(size_t size, size_t alignment = 4, bool clear = true) {
     (void)alignment;
-    return toolbelt::PayloadBuffer::Allocate(
+    return ::phaser::PayloadBuffer::Allocate(
         &runtime->pb, static_cast<uint32_t>(size), clear);
   }
 
@@ -698,16 +698,16 @@ struct Message {
   void* Realloc(void* ptr, size_t size, size_t alignment = 4,
                 bool clear = true) {
     (void)alignment;
-    return toolbelt::PayloadBuffer::Realloc(&runtime->pb, ptr,
+    return ::phaser::PayloadBuffer::Realloc(&runtime->pb, ptr,
                                             static_cast<uint32_t>(size), clear);
   }
 
-  toolbelt::BufferOffset ToOffset(void* addr) {
+  ::phaser::BufferOffset ToOffset(void* addr) {
     return runtime->pb->ToOffset(addr);
   }
 
   template <typename T>
-  T* ToAddress(toolbelt::BufferOffset offset) {
+  T* ToAddress(::phaser::BufferOffset offset) {
     return runtime->pb->ToAddress<T>(offset);
   }
 
@@ -715,19 +715,19 @@ struct Message {
   void InstallMetadata() {
     auto metadata = runtime->GetMetadata(MessageType::FullName());
     if (metadata != 0) {
-      ::toolbelt::BufferOffset* header =
-          runtime->pb->ToAddress<::toolbelt::BufferOffset>(
+      ::phaser::BufferOffset* header =
+          runtime->pb->ToAddress<::phaser::BufferOffset>(
               absolute_binary_offset);
       *header = metadata;
       return;
     }
 
     // Allocate space for field data in the payload buffer and copy it in.
-    void* fields = ::toolbelt::PayloadBuffer::Allocate(
+    void* fields = ::phaser::PayloadBuffer::Allocate(
         &runtime->pb, sizeof(MessageType::field_data), false);
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
-    ::toolbelt::BufferOffset* header =
-        runtime->pb->ToAddress<::toolbelt::BufferOffset>(
+    ::phaser::BufferOffset* header =
+        runtime->pb->ToAddress<::phaser::BufferOffset>(
             absolute_binary_offset);
     *header = runtime->pb->ToOffset(fields);
     runtime->AddMetadata(MessageType::FullName(), *header);
@@ -750,12 +750,12 @@ struct Message {
       return {};
     }
     // First 4 bytes of the message are the offset to the field data.
-    const ::toolbelt::BufferOffset* field_data =
-        runtime->ToAddress<::toolbelt::BufferOffset>(absolute_binary_offset);
+    const ::phaser::BufferOffset* field_data =
+        runtime->ToAddress<::phaser::BufferOffset>(absolute_binary_offset);
     if (field_data == nullptr) {
       return {};
     }
-    const ::toolbelt::BufferOffset metadata_offset = *field_data;
+    const ::phaser::BufferOffset metadata_offset = *field_data;
     const void* metadata = runtime->ToAddress<void>(metadata_offset);
     if (metadata == nullptr) {
       return {};
@@ -819,10 +819,10 @@ struct Message {
   }
 };
 
-::toolbelt::PayloadBuffer* NewDynamicBuffer(
+::phaser::PayloadBuffer* NewDynamicBuffer(
     size_t initial_size, Tuning tuning = Tuning::kPerformance);
 
-absl::StatusOr<::toolbelt::PayloadBuffer*> NewDynamicBuffer(
+absl::StatusOr<::phaser::PayloadBuffer*> NewDynamicBuffer(
     size_t initial_size, std::function<absl::StatusOr<void*>(size_t)> alloc,
     std::function<absl::StatusOr<void*>(void*, size_t, size_t)> realloc,
     Tuning tuning = Tuning::kPerformance);

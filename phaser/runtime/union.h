@@ -21,18 +21,18 @@
 #include "absl/types/span.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
 class UnionMemberField {
  protected:
-  ::toolbelt::PayloadBuffer* GetBuffer(
+  ::phaser::PayloadBuffer* GetBuffer(
       const std::shared_ptr<MessageRuntime>& runtime) const {
     return runtime->pb;
   }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr(
+  ::phaser::PayloadBuffer** GetBufferAddr(
       const std::shared_ptr<MessageRuntime>& runtime) const {
     return &runtime->pb;
   }
@@ -69,7 +69,7 @@ class UnionMemberField {
     }                                                                          \
     void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,         \
                    uint32_t /*abs_offset*/,                                    \
-                   toolbelt::BufferOffset /*msg_offset*/) {}                   \
+                   ::phaser::BufferOffset /*msg_offset*/) {}                   \
                                                                                \
     bool Equal(const Union##cname##Field& other,                               \
                const std::shared_ptr<MessageRuntime>& runtime,                 \
@@ -167,7 +167,7 @@ class UnionEnumField : public UnionMemberField {
 
   void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,
                  uint32_t /*abs_offset*/,
-                 toolbelt::BufferOffset /*msg_offset*/) {}
+                 ::phaser::BufferOffset /*msg_offset*/) {}
 
   void Set(Enum e, const std::shared_ptr<MessageRuntime>& runtime,
            uint32_t abs_offset) {
@@ -237,25 +237,25 @@ class UnionStringField : public UnionMemberField {
 
   bool IsPresent(const std::shared_ptr<MessageRuntime>& runtime,
                  uint32_t abs_offset) const {
-    const ::toolbelt::BufferOffset* addr =
-        runtime->ToAddress<const ::toolbelt::BufferOffset>(abs_offset);
+    const ::phaser::BufferOffset* addr =
+        runtime->ToAddress<const ::phaser::BufferOffset>(abs_offset);
     return addr != nullptr && *addr != 0;
   }
 
   void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,
                  uint32_t /*abs_offset*/,
-                 toolbelt::BufferOffset /*msg_offset*/) {}
+                 ::phaser::BufferOffset /*msg_offset*/) {}
 
   template <typename Str>
   void Set(Str s, const std::shared_ptr<MessageRuntime>& runtime,
            uint32_t abs_offset) {
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
   }
 
   absl::Span<char> Allocate(size_t size,
                             const std::shared_ptr<MessageRuntime>& runtime,
                             uint32_t abs_offset) {
-    return ::toolbelt::PayloadBuffer::AllocateString(GetBufferAddr(runtime),
+    return ::phaser::PayloadBuffer::AllocateString(GetBufferAddr(runtime),
                                                      size, abs_offset);
   }
 
@@ -276,7 +276,7 @@ class UnionStringField : public UnionMemberField {
   }
   void Clear(const std::shared_ptr<MessageRuntime>& runtime,
              uint32_t abs_offset) {
-    ::toolbelt::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
+    ::phaser::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
   }
 
   size_t SerializedSize(int number,
@@ -302,7 +302,7 @@ class UnionStringField : public UnionMemberField {
     if (!v.ok()) {
       return v.status();
     }
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(runtime), *v,
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(runtime), *v,
                                          abs_offset);
     return absl::OkStatus();
   }
@@ -317,7 +317,7 @@ class UnionMessageField : public UnionMemberField {
 
   const MessageType& Get(const std::shared_ptr<MessageRuntime>& runtime,
                          uint32_t abs_offset) const {
-    ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr == 0) {
       return DefaultMessage();
     }
@@ -342,13 +342,13 @@ class UnionMessageField : public UnionMemberField {
 
   bool IsPresent(const std::shared_ptr<MessageRuntime>& runtime,
                  uint32_t abs_offset) const {
-    ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     return addr != nullptr && *addr != 0;
   }
 
   MessageType* Mutable(const std::shared_ptr<MessageRuntime>& runtime,
                        uint32_t abs_offset) {
-    ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr != 0) {
       // Already allocated.
       if (addr != nullptr) {
@@ -357,9 +357,9 @@ class UnionMessageField : public UnionMemberField {
       return &msg_;
     }
     // Allocate a new message.
-    void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
+    void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
-    ::toolbelt::BufferOffset msg_offset =
+    ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
@@ -375,8 +375,8 @@ class UnionMessageField : public UnionMemberField {
   }
 
   void SetOffset(const std::shared_ptr<MessageRuntime>& runtime,
-                 uint32_t abs_offset, toolbelt::BufferOffset msg_offset) {
-    ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+                 uint32_t abs_offset, ::phaser::BufferOffset msg_offset) {
+    ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr) {
       return;
     }
@@ -396,20 +396,20 @@ class UnionMessageField : public UnionMemberField {
   void Set(const MessageType& msg,
            const std::shared_ptr<MessageRuntime>& runtime,
            uint32_t abs_offset) {
-    ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr) {
       return;
     }
     if (*addr != 0) {
-      const ::toolbelt::BufferOffset old_offset = *addr;
+      const ::phaser::BufferOffset old_offset = *addr;
       Bind(runtime, old_offset);
       msg_.Clear();
       GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
     }
     // Allocate a new message.
-    void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
+    void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
-    ::toolbelt::BufferOffset msg_offset =
+    ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
@@ -429,12 +429,12 @@ class UnionMessageField : public UnionMemberField {
 
   void Clear(const std::shared_ptr<MessageRuntime>& runtime,
              uint32_t abs_offset) {
-    ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr) {
       return;
     }
     if (*addr != 0) {
-      const ::toolbelt::BufferOffset old_offset = *addr;
+      const ::phaser::BufferOffset old_offset = *addr;
       Bind(runtime, old_offset);
       msg_.Clear();
       GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
@@ -473,9 +473,9 @@ class UnionMessageField : public UnionMemberField {
     if (!s.ok()) {
       return s.status();
     }
-    void* msg_addr = ::toolbelt::PayloadBuffer::Allocate(
+    void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
-    ::toolbelt::BufferOffset msg_offset =
+    ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.runtime = runtime;
@@ -483,7 +483,7 @@ class UnionMessageField : public UnionMemberField {
     msg_.template InstallMetadata<MessageType>();
 
     // Buffer might have moved, get address of indirect again.
-    ::toolbelt::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr) {
       return absl::OkStatus();
     }
@@ -499,18 +499,18 @@ class UnionMessageField : public UnionMemberField {
   }
 
   void Bind(const std::shared_ptr<MessageRuntime>& runtime,
-            ::toolbelt::BufferOffset offset) const {
+            ::phaser::BufferOffset offset) const {
     msg_.runtime = runtime;
     msg_.absolute_binary_offset = offset;
   }
 
-  ::toolbelt::BufferOffset* GetIndirectAddress(
+  ::phaser::BufferOffset* GetIndirectAddress(
       const std::shared_ptr<MessageRuntime>& runtime,
       uint32_t abs_offset) const {
     if (runtime == nullptr) {
       return nullptr;
     }
-    return runtime->template ToAddress<::toolbelt::BufferOffset>(abs_offset);
+    return runtime->template ToAddress<::phaser::BufferOffset>(abs_offset);
   }
 
   mutable MessageType msg_;
@@ -613,7 +613,7 @@ class UnionField : public Field {
     return std::get<Id>(value_).Get(
         GetRuntime(),
         GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
+            static_cast<::phaser::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id, typename F>
@@ -626,7 +626,7 @@ class UnionField : public Field {
     return std::get<Id>(value_).Get(
         GetRuntime(),
         GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
+            static_cast<::phaser::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id>
@@ -638,7 +638,7 @@ class UnionField : public Field {
     }
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() +
-        static_cast<::toolbelt::BufferOffset>(relative_offset));
+        static_cast<::phaser::BufferOffset>(relative_offset));
     if (discrim == nullptr ||
         *discrim != static_cast<int32_t>(field_numbers_[Id])) {
       return;
@@ -646,7 +646,7 @@ class UnionField : public Field {
     std::get<Id>(value_).Print(
         os, indent_, GetRuntime(),
         GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
+            static_cast<::phaser::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id, typename U>
@@ -717,7 +717,7 @@ class UnionField : public Field {
     }
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() +
-        static_cast<::toolbelt::BufferOffset>(relative_offset));
+        static_cast<::phaser::BufferOffset>(relative_offset));
     if (discrim == nullptr) {
       return 0;
     }
@@ -743,8 +743,8 @@ class UnionField : public Field {
     // store their value inline here and their Clear() is a no-op, so without
     // this a later switch to a variable-length arm (string/message) would
     // misread the leftover scalar bytes as an allocated buffer offset.
-    ::toolbelt::BufferOffset* slot =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+    ::phaser::BufferOffset* slot =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(
             GetMessageBinaryStart() + relative_binary_offset_ + 4);
     *slot = 0;
   }
@@ -759,7 +759,7 @@ class UnionField : public Field {
     return std::get<Id>(value_).SerializedSize(
         discriminator, GetRuntime(),
         GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
+            static_cast<::phaser::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id>
@@ -772,7 +772,7 @@ class UnionField : public Field {
     return std::get<Id>(value_).Serialize(
         discriminator, buffer, GetRuntime(),
         GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
+            static_cast<::phaser::BufferOffset>(relative_offset) + 4);
   }
 
   template <int Id>
@@ -786,7 +786,7 @@ class UnionField : public Field {
     if (absl::Status status = std::get<Id>(value_).Deserialize(
             buffer, GetRuntime(),
             GetMessageBinaryStart() +
-                static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
+                static_cast<::phaser::BufferOffset>(relative_offset) + 4);
         !status.ok()) {
       return status;
     }
@@ -812,7 +812,7 @@ class UnionField : public Field {
     std::get<Id>(value_).Set(
         other, GetRuntime(),
         GetMessageBinaryStart() +
-            static_cast<::toolbelt::BufferOffset>(relative_offset) + 4);
+            static_cast<::phaser::BufferOffset>(relative_offset) + 4);
     return absl::OkStatus();
   }
 
@@ -825,13 +825,13 @@ class UnionField : public Field {
     }
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() +
-        static_cast<::toolbelt::BufferOffset>(relative_offset));
+        static_cast<::phaser::BufferOffset>(relative_offset));
     return discrim != nullptr &&
            *discrim == static_cast<int32_t>(field_numbers_[Id]);
   }
 
   template <int Id>
-  void SetOffset(toolbelt::BufferOffset offset) {
+  void SetOffset(::phaser::BufferOffset offset) {
     PrepareArm<Id>();
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
         GetMessageBinaryStart() + relative_binary_offset_);
@@ -880,22 +880,22 @@ class UnionField : public Field {
       return;
     }
     ClearActive();
-    ::toolbelt::BufferOffset* slot =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+    ::phaser::BufferOffset* slot =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(
             GetMessageBinaryStart() + relative_binary_offset_ + 4);
     if (slot != nullptr) {
       *slot = 0;
     }
   }
 
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
+  ::phaser::PayloadBuffer* GetBuffer() const {
     return Message::GetBuffer(this, source_offset_);
   }
 
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
     return Message::GetBufferAddr(this, source_offset_);
   }
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
+  ::phaser::BufferOffset GetMessageBinaryStart() const {
     return Message::GetMessageBinaryStart(this, source_offset_);
   }
 
@@ -904,7 +904,7 @@ class UnionField : public Field {
   }
 
   uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
+  ::phaser::BufferOffset relative_binary_offset_;
   absl::Span<const uint32_t>
       field_numbers_;  // Static field number for each tuple type.
   mutable std::tuple<T...> value_;
