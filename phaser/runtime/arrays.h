@@ -152,7 +152,7 @@ class PrimitiveArrayField : public Field {
   explicit PrimitiveArrayField(uint32_t source_offset,
                                uint32_t relative_binary_offset, int id,
                                int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   PrimitiveArrayField(const PrimitiveArrayField&) = default;
@@ -549,7 +549,7 @@ class EnumArrayField : public Field {
   EnumArrayField() = default;
   explicit EnumArrayField(uint32_t source_offset,
                           uint32_t relative_binary_offset, int id, int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   EnumArrayField(const EnumArrayField&) = default;
@@ -1115,7 +1115,7 @@ class StringArrayField : public Field {
   explicit StringArrayField(uint32_t source_offset,
                             uint32_t relative_binary_offset, int id,
                             int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   StringArrayField(const StringArrayField&) = default;

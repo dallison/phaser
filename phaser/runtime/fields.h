@@ -39,6 +39,20 @@ class Field {
  public:
   Field() = default;
   Field(int id, int number) : id_(id), number_(number) {}
+  // The owning Message base is constructed before its fields, so its runtime
+  // is known here.  A mutable message always carries its own type's metadata
+  // (writes already use the compiled offset and id), so the field location can
+  // be cached without a metadata lookup.
+  Field(int id, int number, uint32_t source_offset,
+        uint32_t relative_binary_offset)
+      : id_(id), number_(number) {
+    const RuntimeHandle& runtime = Message::GetRuntime(this, source_offset);
+    if (runtime != nullptr && runtime->IsMutable()) {
+      cached_offset_ = static_cast<int32_t>(relative_binary_offset);
+      cached_field_id_ = id;
+      field_cache_resolved_ = true;
+    }
+  }
   Field(const Field&) = default;
   Field& operator=(const Field&) = default;
   virtual ~Field() = default;
@@ -367,7 +381,7 @@ class StringFieldFacade {
    public:                                                                    \
     cname##Field() = default;                                                 \
     explicit cname##Field(uint32_t boff, uint32_t offset, int id, int number) \
-        : Field(id, number),                                                  \
+        : Field(id, number, boff, offset),                                    \
           source_offset_(boff),                                               \
           relative_binary_offset_(offset) {}                                  \
     cname##Field(const cname##Field&) = default;                              \
@@ -500,7 +514,7 @@ class EnumField : public Field {
   using T = typename std::underlying_type<Enum>::type;
   EnumField() = default;
   explicit EnumField(uint32_t boff, uint32_t offset, int id, int number)
-      : Field(id, number),
+      : Field(id, number, boff, offset),
         source_offset_(boff),
         relative_binary_offset_(offset) {}
   EnumField(const EnumField&) = default;
@@ -619,7 +633,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   StringField() = default;
   explicit StringField(uint32_t source_offset, uint32_t relative_binary_offset,
                        int id, int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   StringField(const StringField&) = default;
@@ -932,7 +946,7 @@ class IndirectMessageField : public Field {
   explicit IndirectMessageField(uint32_t source_offset,
                                 uint32_t relative_binary_offset, int id,
                                 int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset),
         msg_(InternalDefault{}) {}

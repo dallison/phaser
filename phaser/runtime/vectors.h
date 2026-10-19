@@ -118,7 +118,7 @@ class PrimitiveVectorField : public Field {
   explicit PrimitiveVectorField(uint32_t source_offset,
                                 uint32_t relative_binary_offset, int id,
                                 int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   PrimitiveVectorField(const PrimitiveVectorField&) = default;
@@ -610,7 +610,7 @@ class EnumVectorField : public Field {
   EnumVectorField() = default;
   explicit EnumVectorField(uint32_t source_offset,
                            uint32_t relative_binary_offset, int id, int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   EnumVectorField(const EnumVectorField&) = default;
@@ -1063,7 +1063,7 @@ class MessageVectorField : public Field {
   explicit MessageVectorField(uint32_t source_offset,
                               uint32_t relative_binary_offset, int id,
                               int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   MessageVectorField(const MessageVectorField&) = default;
@@ -1622,7 +1622,7 @@ class StringVectorField : public Field {
   explicit StringVectorField(uint32_t source_offset,
                              uint32_t relative_binary_offset, int id,
                              int number)
-      : Field(id, number),
+      : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
         relative_binary_offset_(relative_binary_offset) {}
   StringVectorField(const StringVectorField&) = default;
