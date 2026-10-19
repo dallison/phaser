@@ -1078,7 +1078,7 @@ class MessageVectorField : public Field {
     if (element == 0) {
       return T(InternalDefault{});
     }
-    return T(GetRuntime(), element);
+    return T(BorrowedRuntime(GetRuntime()), element);
   }
 
   T operator[](int index) {
@@ -1206,7 +1206,7 @@ class MessageVectorField : public Field {
     memset(binary, 0, Stride());
     memcpy(binary, &block->metadata, sizeof(block->metadata));
     hdr->num_elements = index + 1;
-    return T(GetRuntime(), element);
+    return T(BorrowedRuntime(GetRuntime()), element);
   }
 
   T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
@@ -1219,7 +1219,7 @@ class MessageVectorField : public Field {
     if (element == 0) {
       return T(InternalDefault{});
     }
-    return T(GetRuntime(), element);
+    return T(BorrowedRuntime(GetRuntime()), element);
   }
 
   // Allocate a bunch of empty messages.

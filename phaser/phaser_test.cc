@@ -236,6 +236,45 @@ TEST(PhaserTest, RepeatedMessagesGrowAcrossChunks) {
   ExpectInnerMessages(copy, kCount);
 }
 
+TEST(PhaserTest, PartHandlesBorrowTheMessage) {
+  foo::bar::phaser::TestMessage msg;
+  const long owners = msg.runtime.use_count();
+  foo::bar::phaser::InnerMessage element = msg.add_vm();
+  foo::bar::phaser::InnerMessage* nested = msg.mutable_m();
+  foo::bar::phaser::InnerMessage* member = msg.mutable_u3b();
+  foo::bar::phaser::InnerMessage copy = element;
+  EXPECT_EQ(owners, msg.runtime.use_count());
+  EXPECT_EQ(0, element.runtime.use_count());
+  EXPECT_EQ(0, copy.runtime.use_count());
+
+  // The handles see the payload buffer after it grows.
+  ASSERT_NE(nullptr, msg.allocate_buffer(1 << 20).data());
+  element.set_f(1);
+  copy.set_str("copy");
+  nested->set_str("nested");
+  member->set_str("member");
+  EXPECT_EQ(1, msg.vm(0).f());
+  EXPECT_EQ("copy", msg.vm(0).str());
+  EXPECT_EQ("nested", msg.m().str());
+  EXPECT_EQ("member", msg.u3b().str());
+
+  // A received message's nested handles find their fields where they were
+  // compiled when the nested type's layout matches.
+  const char* base = static_cast<const char*>(msg.Data());
+  std::vector<char> recv(base, base + msg.Size());
+  auto readonly =
+      foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size());
+  EXPECT_TRUE(readonly.m().FieldLocationsKnown());
+  EXPECT_EQ("nested", readonly.m().str());
+  EXPECT_TRUE(readonly.u3b().FieldLocationsKnown());
+  EXPECT_EQ("member", readonly.u3b().str());
+  auto evolved = foo::bar::phaser::TestMessageNewFields::CreateReadonly(
+      recv.data(), recv.size());
+  EXPECT_FALSE(evolved.FieldLocationsKnown());
+  EXPECT_TRUE(evolved.m().FieldLocationsKnown());
+  EXPECT_EQ("nested", evolved.m().str());
+}
+
 TEST(PhaserTest, RepeatedMessagesResizeAndReserve) {
   foo::bar::phaser::TestMessage msg;
   for (int i = 0; i < 40; i++) {

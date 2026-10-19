@@ -591,6 +591,13 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
 
 using RuntimeHandle = std::shared_ptr<MessageRuntime>;
 
+// A handle for part of a message, such as an element or a nested message,
+// borrows the message's runtime instead of sharing its ownership, so it is
+// valid only while a handle that owns the runtime exists.
+inline RuntimeHandle BorrowedRuntime(const RuntimeHandle& runtime) {
+  return RuntimeHandle(RuntimeHandle(), runtime.get());
+}
+
 namespace internal {
 // Frees the payload memory owned by a field of a mutable message without
 // resetting the field, for use only when the message holding the field is
@@ -635,6 +642,12 @@ void ReleaseField(const RuntimeHandle& runtime, ::phaser::BufferOffset field) {
 }
 
 template <typename T, typename = void>
+struct HasFieldData : std::false_type {};
+template <typename T>
+struct HasFieldData<T, std::void_t<decltype(T::field_data)>> : std::true_type {
+};
+
+template <typename T, typename = void>
 struct HasReleaseAt : std::false_type {};
 template <typename T>
 struct HasReleaseAt<T, std::void_t<decltype(&T::PhaserReleaseAt)>>
@@ -649,7 +662,7 @@ void ReleaseMessageContents(const RuntimeHandle& runtime,
     if constexpr (HasReleaseAt<T>::value) {
       T::PhaserReleaseAt(runtime, offset);
     } else {
-      T(runtime, offset).Clear();
+      T(BorrowedRuntime(runtime), offset).Clear();
     }
   }
 }
@@ -890,16 +903,9 @@ struct Message {
  public:
   Message() : readonly_runtime_(nullptr, size_t{0}, false) {}
   Message(const RuntimeHandle& rt, ::phaser::BufferOffset start)
-      : readonly_runtime_(RuntimeToCopy(rt)),
-        runtime(IsBorrowed(rt) ? BorrowRuntime(readonly_runtime_) : rt),
-        absolute_binary_offset(start),
-        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
+      : Message(rt, start, CopiesRuntime(rt)) {}
   Message(RuntimeHandle&& rt, ::phaser::BufferOffset start)
-      : readonly_runtime_(RuntimeToCopy(rt)),
-        runtime(IsBorrowed(rt) ? BorrowRuntime(readonly_runtime_)
-                               : std::move(rt)),
-        absolute_binary_offset(start),
-        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
+      : Message(std::move(rt), start, CopiesRuntime(rt)) {}
   // For generated messages: 'field_data' is the message type's compiled field
   // metadata.  A readonly message whose metadata is identical has its fields
   // at their compiled locations.
@@ -1175,18 +1181,50 @@ struct Message {
     return RuntimeHandle(RuntimeHandle(), &runtime);
   }
 
- private:
-  // A borrowed runtime has no owner, so it lives in another handle that may
-  // be destroyed first; each handle keeps its own copy.
-  static bool IsBorrowed(const RuntimeHandle& rt) {
-    return rt != nullptr && rt.use_count() == 0;
-  }
-  static MessageRuntime RuntimeToCopy(const RuntimeHandle& rt) {
-    return IsBorrowed(rt) ? *rt : MessageRuntime(nullptr, size_t{0}, false);
+  // A borrowed runtime has no owner.  One that may live in another handle is
+  // copied, since that handle may move or be destroyed first.  A dynamic
+  // runtime is used in place because its buffer can move; the message that
+  // owns it keeps it alive.
+  static bool CopiesRuntime(const RuntimeHandle& rt) {
+    return rt != nullptr && rt.use_count() == 0 &&
+           rt->Mode() != RuntimeHandleMode::kOwnedDynamic;
   }
 
+ public:
+  // Points this handle, made for a message of type T inside another message,
+  // at the message at 'start' in that message's runtime 'rt'.  It borrows
+  // 'rt', which must outlive it.
+  template <typename T>
+  void BindBorrowed(const RuntimeHandle& rt, ::phaser::BufferOffset start) {
+    runtime = BorrowedRuntime(rt);
+    absolute_binary_offset = start;
+    field_locations_known_ = rt != nullptr && rt->IsMutable();
+    if constexpr (internal::HasFieldData<T>::value) {
+      if (!field_locations_known_ && rt != nullptr) {
+        field_locations_known_ =
+            MetadataIs(&T::field_data, sizeof(T::field_data));
+      }
+    }
+  }
+
+ private:
+  // 'copy' is CopiesRuntime(rt), computed once since copying the runtime
+  // could change what 'rt' points to as far as the compiler knows.
+  Message(const RuntimeHandle& rt, ::phaser::BufferOffset start, bool copy)
+      : readonly_runtime_(copy ? *rt
+                               : MessageRuntime(nullptr, size_t{0}, false)),
+        runtime(copy ? BorrowRuntime(readonly_runtime_) : rt),
+        absolute_binary_offset(start),
+        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
+  Message(RuntimeHandle&& rt, ::phaser::BufferOffset start, bool copy)
+      : readonly_runtime_(copy ? *rt
+                               : MessageRuntime(nullptr, size_t{0}, false)),
+        runtime(copy ? BorrowRuntime(readonly_runtime_) : std::move(rt)),
+        absolute_binary_offset(start),
+        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
+
   void BindRuntime(const RuntimeHandle& other) {
-    if (IsBorrowed(other)) {
+    if (CopiesRuntime(other)) {
       readonly_runtime_ = *other;
       runtime = BorrowRuntime(readonly_runtime_);
     } else {
@@ -1194,7 +1232,7 @@ struct Message {
     }
   }
   void BindRuntime(RuntimeHandle&& other) {
-    if (IsBorrowed(other)) {
+    if (CopiesRuntime(other)) {
       readonly_runtime_ = *other;
       runtime = BorrowRuntime(readonly_runtime_);
     } else {

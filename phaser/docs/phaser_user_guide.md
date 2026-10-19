@@ -319,7 +319,9 @@ non-const proxy operation requires a mutable message.
 Repeated strings index and iterate as `std::string_view`. Repeated and
 fixed-array messages index and iterate as generated message handles returned by
 value; `add_*` and `mutable_*` message accessors also return handles by value.
-The collection `Get()` helpers materialize owning vectors and may allocate.
+A handle to an element or a nested message borrows the message it came from:
+it stays valid when that message's payload buffer grows, but not after the
+message is destroyed. The collection `Get()` helpers materialize owning vectors and may allocate.
 
 ### ROS1 intrinsic types
 The ROS frontend recognizes three singular protobuf message declarations and
@@ -941,8 +943,9 @@ field:
 
 The `resize` and `reserve` functions operate similarly to `std::vector`.  The
 `allocate` function allocates `n` messages in a block and returns lightweight
-message handles by value. The handles retain the shared mutable runtime and
-remain valid if the payload buffer relocates. This is a performance enhancement
+message handles by value. The handles borrow the message, so they remain valid
+if the payload buffer relocates but not after the message is destroyed. This is
+a performance enhancement
 for a common protobuf message-building pattern.
 
 ### Oneof fields

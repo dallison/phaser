@@ -362,8 +362,7 @@ class UnionMessageField : public UnionMemberField {
     ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
-    msg_.runtime = runtime;
-    msg_.absolute_binary_offset = msg_offset;
+    msg_.template BindBorrowed<MessageType>(runtime, msg_offset);
     msg_.template InstallMetadata<MessageType>();
 
     // Buffer might have moved, get address of indirect again.
@@ -381,8 +380,7 @@ class UnionMessageField : public UnionMemberField {
       return;
     }
     *addr = msg_offset;
-    msg_.runtime = runtime;
-    msg_.absolute_binary_offset = msg_offset;
+    msg_.template BindBorrowed<MessageType>(runtime, msg_offset);
   }
 
   absl::Status SerializeToBuffer(ProtoBuffer& buffer) const {
@@ -412,8 +410,7 @@ class UnionMessageField : public UnionMemberField {
     ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
-    msg_.runtime = runtime;
-    msg_.absolute_binary_offset = msg_offset;
+    msg_.template BindBorrowed<MessageType>(runtime, msg_offset);
     msg_.template InstallMetadata<MessageType>();
 
     // Buffer might have moved, get address of indirect again.
@@ -478,8 +475,7 @@ class UnionMessageField : public UnionMemberField {
     ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
-    msg_.runtime = runtime;
-    msg_.absolute_binary_offset = msg_offset;
+    msg_.template BindBorrowed<MessageType>(runtime, msg_offset);
     msg_.template InstallMetadata<MessageType>();
 
     // Buffer might have moved, get address of indirect again.
@@ -500,8 +496,7 @@ class UnionMessageField : public UnionMemberField {
 
   void Bind(const std::shared_ptr<MessageRuntime>& runtime,
             ::phaser::BufferOffset offset) const {
-    msg_.runtime = runtime;
-    msg_.absolute_binary_offset = offset;
+    msg_.template BindBorrowed<MessageType>(runtime, offset);
   }
 
   ::phaser::BufferOffset* GetIndirectAddress(

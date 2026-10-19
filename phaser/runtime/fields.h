@@ -1015,8 +1015,7 @@ class IndirectMessageField : public Field {
       return DefaultMessage();
     }
     // Load up the message if it's already been allocated.
-    msg_.runtime = GetRuntime();
-    msg_.absolute_binary_offset = *addr;
+    msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
     return msg_;
   }
 
@@ -1035,8 +1034,7 @@ class IndirectMessageField : public Field {
         GetIndirectAddress(relative_binary_offset_);
     if (addr != nullptr && *addr != 0) {
       // Already allocated.
-      msg_.runtime = GetRuntime();
-      msg_.absolute_binary_offset = *addr;
+      msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
       return &msg_;
     }
     // Allocate a new message.
@@ -1044,8 +1042,7 @@ class IndirectMessageField : public Field {
         GetBufferAddr(), MessageType::BinarySize());
     ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
-    msg_.runtime = GetRuntime();
-    msg_.absolute_binary_offset = msg_offset;
+    msg_.template BindBorrowed<MessageType>(GetRuntime(), msg_offset);
 
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(relative_binary_offset_);
@@ -1067,8 +1064,7 @@ class IndirectMessageField : public Field {
       Clear();
     }
     *addr = offset;
-    msg_.runtime = GetRuntime();
-    msg_.absolute_binary_offset = offset;
+    msg_.template BindBorrowed<MessageType>(GetRuntime(), offset);
   }
 
   void Clear() {
@@ -1080,8 +1076,7 @@ class IndirectMessageField : public Field {
     const ::phaser::BufferOffset old_offset = *addr;
     if constexpr (!internal::ClearReleasesNothing<MessageType>::value) {
       // Clear the message.
-      msg_.runtime = GetRuntime();
-      msg_.absolute_binary_offset = old_offset;
+      msg_.template BindBorrowed<MessageType>(GetRuntime(), old_offset);
       msg_.Clear();
     }
     // Delete the memory in the payload buffer.
@@ -1109,8 +1104,7 @@ class IndirectMessageField : public Field {
         GetIndirectAddress(static_cast<uint32_t>(offset));
     if (addr != nullptr && *addr != 0) {
       // Load up the message if it's already been allocated.
-      msg_.runtime = GetRuntime();
-      msg_.absolute_binary_offset = *addr;
+      msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
     }
     return ProtoBuffer::LengthDelimitedSize(Number(), msg_.SerializedSize());
   }
@@ -1124,8 +1118,7 @@ class IndirectMessageField : public Field {
         GetIndirectAddress(static_cast<uint32_t>(offset));
     if (*addr != 0) {
       // Load up the message if it's already been allocated.
-      msg_.runtime = GetRuntime();
-      msg_.absolute_binary_offset = *addr;
+      msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
     }
 
     size_t size = msg_.SerializedSize();
@@ -1148,8 +1141,7 @@ class IndirectMessageField : public Field {
         GetBufferAddr(), MessageType::BinarySize());
     ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
-    msg_.runtime = GetRuntime();
-    msg_.absolute_binary_offset = msg_offset;
+    msg_.template BindBorrowed<MessageType>(GetRuntime(), msg_offset);
 
     // Buffer might have moved, get address of indirect again.
     ::phaser::BufferOffset* addr =

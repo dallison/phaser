@@ -1578,7 +1578,7 @@ void MessageGenerator::GenerateRosOwnerCopyMove(std::ostream& os, bool decl) {
      << "& other) : Message(other)\n";
   GenerateFieldInitializers(os, ", ");
   os << R"XXX({
-  if (other.runtime != nullptr && other.runtime.use_count() == 0) {
+  if (CopiesRuntime(other.runtime)) {
     return;
   }
   size_t initial_size = other.BinarySize() * 2;
@@ -2193,7 +2193,8 @@ void MessageGenerator::GenerateReleaseAt(std::ostream& os, bool decl) {
      << "::PhaserReleaseAt(const std::shared_ptr<::phaser::MessageRuntime>& "
         "_phaser_runtime, ::phaser::BufferOffset _phaser_offset) {\n";
   if (!unions_.empty()) {
-    os << "  " << name << "(_phaser_runtime, _phaser_offset).Clear();\n";
+    os << "  " << name << "(::phaser::BorrowedRuntime(_phaser_runtime), "
+          "_phaser_offset).Clear();\n";
     os << "}\n\n";
     return;
   }
@@ -2209,7 +2210,8 @@ void MessageGenerator::GenerateReleaseAt(std::ostream& os, bool decl) {
        << ")>(_phaser_runtime, _phaser_offset + " << field->offset << ");\n";
   }
   os << "  } else {\n";
-  os << "    " << name << "(_phaser_runtime, _phaser_offset).Clear();\n";
+  os << "    " << name << "(::phaser::BorrowedRuntime(_phaser_runtime), "
+          "_phaser_offset).Clear();\n";
   os << "  }\n";
   os << "}\n\n";
 }
