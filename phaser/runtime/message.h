@@ -341,9 +341,14 @@ inline size_t RuntimeControlSize(size_t capacity) {
          capacity * sizeof(RuntimeMetadataEntry);
 }
 
+// 'capacity' is the number of message types the message can reach, including
+// its own.  A message that reaches no other types installs its metadata only
+// once, so there is nothing to look up and it gets no control block.
 inline RuntimeControlBlock* InitializeRuntimeControl(
     ::phaser::PayloadBuffer** pb, size_t capacity) {
-  capacity = std::max<size_t>(capacity, 1);
+  if (capacity <= 1) {
+    return nullptr;
+  }
   void* memory = ::phaser::PayloadBuffer::Allocate(
       pb, static_cast<uint32_t>(RuntimeControlSize(capacity)), true);
   auto* control = new (memory) RuntimeControlBlock;
