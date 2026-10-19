@@ -262,12 +262,28 @@ struct MessageInfo {
 };
 
 inline constexpr uint32_t kRuntimeControlMagic = 0x52544850;  // "PHTR"
-inline constexpr uint32_t kRuntimeControlVersion = 1;
+inline constexpr uint32_t kRuntimeControlVersion = 2;
+
+// 64-bit FNV-1a hash of a message's full name, used to find the metadata
+// already installed for a message type without storing or comparing names.
+constexpr uint64_t MetadataKey(std::string_view full_name) {
+  uint64_t hash = 0xcbf29ce484222325ULL;
+  for (char c : full_name) {
+    hash ^= static_cast<uint8_t>(c);
+    hash *= 0x100000001b3ULL;
+  }
+  return hash;
+}
+
+template <typename MessageType>
+uint64_t MetadataKeyFor() {
+  static const uint64_t key = MetadataKey(MessageType::FullName());
+  return key;
+}
 
 struct RuntimeMetadataEntry {
-  ::phaser::BufferOffset name = 0;
+  uint64_t key = 0;
   ::phaser::BufferOffset field_data = 0;
-  uint32_t name_size = 0;
 };
 
 struct RuntimeControlBlock {
@@ -331,8 +347,7 @@ struct MessageRuntime {
   bool is_mutable_ = false;
   RuntimeHandleMode mode_ = RuntimeHandleMode::kBorrowedReadonly;
 
-  virtual void AddMetadata(std::string_view name,
-                           ::phaser::BufferOffset offset) {
+  void AddMetadata(uint64_t key, ::phaser::BufferOffset offset) {
     RuntimeControlBlock* control = GetRuntimeControl();
     if (control == nullptr) {
       return;
@@ -347,33 +362,27 @@ struct MessageRuntime {
       control->capacity = new_capacity;
       pb->metadata = pb->ToOffset(control);
     }
-    void* name_memory = ::phaser::PayloadBuffer::Allocate(
-        &pb, static_cast<uint32_t>(name.size()), false);
-    if (!name.empty()) {
-      memcpy(name_memory, name.data(), name.size());
-    }
-    control = GetRuntimeControl();
     RuntimeMetadataEntry& entry = control->entries[control->count++];
-    entry.name = pb->ToOffset(name_memory);
-    entry.name_size = static_cast<uint32_t>(name.size());
+    entry.key = key;
     entry.field_data = offset;
   }
-  virtual ::phaser::BufferOffset GetMetadata(std::string_view name) {
-    RuntimeControlBlock* control = GetRuntimeControl();
+  ::phaser::BufferOffset GetMetadata(uint64_t key) const {
+    const RuntimeControlBlock* control = GetRuntimeControl();
     if (control == nullptr) {
       return 0;
     }
     for (uint32_t i = 0; i < control->count; ++i) {
-      const RuntimeMetadataEntry& entry = control->entries[i];
-      if (entry.name_size != name.size()) {
-        continue;
-      }
-      const char* stored = pb->ToAddress<char>(entry.name);
-      if (name.empty() || memcmp(stored, name.data(), name.size()) == 0) {
-        return entry.field_data;
+      if (control->entries[i].key == key) {
+        return control->entries[i].field_data;
       }
     }
     return 0;
+  }
+  void AddMetadata(std::string_view name, ::phaser::BufferOffset offset) {
+    AddMetadata(MetadataKey(name), offset);
+  }
+  ::phaser::BufferOffset GetMetadata(std::string_view name) const {
+    return GetMetadata(MetadataKey(name));
   }
 
   bool IsMutable() const { return is_mutable_; }
@@ -713,7 +722,8 @@ struct Message {
 
   template <typename MessageType>
   void InstallMetadata() {
-    auto metadata = runtime->GetMetadata(MessageType::FullName());
+    const uint64_t key = MetadataKeyFor<MessageType>();
+    auto metadata = runtime->GetMetadata(key);
     if (metadata != 0) {
       ::phaser::BufferOffset* header =
           runtime->pb->ToAddress<::phaser::BufferOffset>(
@@ -730,7 +740,7 @@ struct Message {
         runtime->pb->ToAddress<::phaser::BufferOffset>(
             absolute_binary_offset);
     *header = runtime->pb->ToOffset(fields);
-    runtime->AddMetadata(MessageType::FullName(), *header);
+    runtime->AddMetadata(key, *header);
   }
 
   // Looks for the field number in the field data. Returns the offset of the
