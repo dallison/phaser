@@ -302,7 +302,7 @@ inline uint32_t AlignSize(uint32_t s,
   return (s + (alignment - 1)) & ~(alignment - 1);
 }
 
-void *PayloadBuffer::Allocate(PayloadBuffer **buffer, uint32_t n,
+void *PayloadBuffer::AllocateSlow(PayloadBuffer **buffer, uint32_t n,
                               bool clear,
                               bool enable_small_block) {
   if (n == 0) {
@@ -470,7 +470,7 @@ void PayloadBuffer::InsertNewFreeBlockAtEnd(FreeBlockHeader *free_block,
   }
 }
 
-void PayloadBuffer::Free(void *p) {
+void PayloadBuffer::FreeSlow(void *p) {
   if (p == nullptr) {
     return;
   }

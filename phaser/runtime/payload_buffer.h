@@ -306,10 +306,26 @@ struct PayloadBuffer {
   void InitFreeList();
   FreeBlockHeader *FreeList() { return ToAddress<FreeBlockHeader>(free_list); }
 
-  // Allocate some memory in the buffer.  The buffer might move.
+  // Allocate some memory in the buffer.  The buffer might move.  The common
+  // cases (reusing a free small block, or carving from the start of the first
+  // free block) are handled inline; everything else goes to AllocateSlow.
   static void *Allocate(PayloadBuffer **buffer, uint32_t n, bool clear = true,
                         bool enable_small_block = true);
+  static void *AllocateSlow(PayloadBuffer **buffer, uint32_t n, bool clear,
+                            bool enable_small_block);
   void Free(void *p);
+  void FreeSlow(void *p);
+
+  // Index of the small block class for an allocation of 'n' bytes, or -1 if
+  // it is too big for a small block.
+  static int SmallBlockIndex(uint32_t n) {
+    return n <= uint32_t(kBitmapRunSize1)   ? 0
+           : n <= uint32_t(kBitmapRunSize2) ? 1
+           : n <= uint32_t(kBitmapRunSize3) ? 2
+           : n <= uint32_t(kBitmapRunSize4) ? 3
+                                             : -1;
+  }
+  static uint32_t SmallBlockSize(int index) { return 16U << index; }
   static void *Realloc(PayloadBuffer **buffer, void *p, uint32_t n,
                        bool clear = true, bool enable_small_block = true);
   static void *AllocateSmallBlock(PayloadBuffer **pb, uint32_t size, int index,
@@ -475,6 +491,84 @@ template <>
 inline char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s,
                                       BufferOffset header_offset) {
   return SetString(self, s, strlen(s), header_offset);
+}
+
+inline void *PayloadBuffer::Allocate(PayloadBuffer **buffer, uint32_t n,
+                                     bool clear, bool enable_small_block) {
+  PayloadBuffer *pb = *buffer;
+  if (n == 0 || n > pb->full_size) {
+    return AllocateSlow(buffer, n, clear, enable_small_block);
+  }
+  char *base = reinterpret_cast<char *>(pb);
+  uint64_t size_word;
+  uint32_t block_size;
+  int index = -1;
+  if (enable_small_block && pb->BitmapsEnabled() &&
+      (index = SmallBlockIndex(n)) >= 0) {
+    block_size = SmallBlockSize(index);
+    size_word = kSmallBlockFlag | n;
+    const BufferOffset head = pb->bitmaps[index];
+    if (head != 0) {
+      if (head > pb->full_size - block_size) {
+        return AllocateSlow(buffer, n, clear, enable_small_block);
+      }
+      char *addr = base + head;
+      pb->bitmaps[index] = *reinterpret_cast<BufferOffset *>(addr);
+      *(reinterpret_cast<uint64_t *>(addr) - 1) = size_word;
+      if (clear) {
+        memset(addr, 0, block_size);
+      }
+      return addr;
+    }
+  } else {
+    block_size = (n + 7) & ~7U;
+    size_word = block_size;
+  }
+  // Carve from the start of the first free block, leaving room for the
+  // remainder's FreeBlockHeader.
+  const BufferOffset first = pb->free_list;
+  const uint32_t full_length = block_size + uint32_t(sizeof(uint64_t));
+  if (first == 0 ||
+      first > pb->full_size - uint32_t(sizeof(FreeBlockHeader))) {
+    return AllocateSlow(buffer, n, clear, enable_small_block);
+  }
+  FreeBlockHeader *free_block = reinterpret_cast<FreeBlockHeader *>(base + first);
+  const uint32_t length = free_block->length;
+  if (length < full_length + uint32_t(sizeof(FreeBlockHeader)) ||
+      length > pb->full_size - first) {
+    return AllocateSlow(buffer, n, clear, enable_small_block);
+  }
+  const BufferOffset rest_offset = first + full_length;
+  FreeBlockHeader *rest = reinterpret_cast<FreeBlockHeader *>(base + rest_offset);
+  rest->next = free_block->next;
+  rest->length = length - full_length;
+  pb->free_list = rest_offset;
+  pb->UpdateHWM(rest_offset + uint32_t(sizeof(FreeBlockHeader)));
+  uint64_t *header = reinterpret_cast<uint64_t *>(free_block);
+  *header = size_word;
+  void *addr = header + 1;
+  if (clear) {
+    memset(addr, 0, block_size);
+  }
+  return addr;
+}
+
+inline void PayloadBuffer::Free(void *p) {
+  if (p == nullptr) {
+    return;
+  }
+  const uint64_t size_word = *(reinterpret_cast<uint64_t *>(p) - 1);
+  if ((size_word & kSmallBlockFlag) != 0) {
+    const int index =
+        SmallBlockIndex(static_cast<uint32_t>(size_word & kBitmapRunSizeMask));
+    if (index >= 0) {
+      *reinterpret_cast<BufferOffset *>(p) = bitmaps[index];
+      bitmaps[index] = BufferOffset(reinterpret_cast<char *>(p) -
+                                    reinterpret_cast<char *>(this));
+      return;
+    }
+  }
+  FreeSlow(p);
 }
 
 template <typename T> inline void PayloadBuffer::Set(BufferOffset offset, T v) {
