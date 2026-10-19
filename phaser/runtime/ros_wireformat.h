@@ -43,34 +43,24 @@ class ROSReader {
   absl::StatusOr<T> Read() {
     static_assert(std::is_arithmetic_v<T>,
                   "ROSReader::Read only supports arithmetic types");
-    if (Remaining() < sizeof(T)) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
-          sizeof(T), Remaining()));
+    if (ABSL_PREDICT_FALSE(Remaining() < sizeof(T))) {
+      return TruncatedError(sizeof(T));
     }
 
+    const char* in = data_.data() + position_;
+    position_ += sizeof(T);
     if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
-      return data_[position_++] != 0;
-    } else if constexpr (std::is_integral_v<T>) {
-      using U = std::make_unsigned_t<T>;
-      U value = 0;
-      for (size_t i = 0; i < sizeof(U); ++i) {
-        const U byte = static_cast<U>(
-            static_cast<unsigned char>(data_[position_++]));
-        value |= static_cast<U>(static_cast<uint64_t>(byte)
-                                << static_cast<unsigned>(i * 8));
-      }
-      T result = 0;
-      memcpy(&result, &value, sizeof(result));
-      return result;
+      return *in != 0;
     } else {
-      using U = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t,
-                                   uint64_t>;
+      using U = std::conditional_t<
+          sizeof(T) == 1, uint8_t,
+          std::conditional_t<
+              sizeof(T) == 2, uint16_t,
+              std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>>>;
       static_assert(sizeof(U) == sizeof(T));
       U bits = 0;
       for (size_t i = 0; i < sizeof(U); ++i) {
-        const U byte = static_cast<U>(
-            static_cast<unsigned char>(data_[position_++]));
+        const U byte = static_cast<U>(static_cast<unsigned char>(in[i]));
         bits |= static_cast<U>(static_cast<uint64_t>(byte)
                                << static_cast<unsigned>(i * 8));
       }
@@ -161,9 +151,7 @@ class ROSReader {
 
   absl::StatusOr<absl::Span<const char>> ReadRaw(size_t length) {
     if (length > Remaining()) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
-          length, Remaining()));
+      return TruncatedError(length);
     }
     absl::Span<const char> value(data_.data() + position_, length);
     position_ += length;
@@ -171,6 +159,12 @@ class ROSReader {
   }
 
  private:
+  ABSL_ATTRIBUTE_NOINLINE absl::Status TruncatedError(size_t length) const {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
+        length, Remaining()));
+  }
+
   absl::Span<const char> data_;
   size_t position_ = 0;
 };

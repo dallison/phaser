@@ -3124,11 +3124,12 @@ void MessageGenerator::GenerateROSFieldRead(
         os << indent << "{\n";
         os << indent << "  auto _phaser_message = " << mutable_message()
            << ";\n";
-        os << indent
-           << "  if (absl::Status _phaser_status = "
-              "_phaser_message->DeserializeFromROS(_phaser_buffer); "
-              "!_phaser_status.ok()) "
-              "return _phaser_status;\n";
+        // An appended element is freshly allocated, so already clear.
+        os << indent << "  if (absl::Status _phaser_status = "
+           << "_phaser_message->"
+           << (append ? "DeserializeFromROSUncleared" : "DeserializeFromROS")
+           << "(_phaser_buffer); !_phaser_status.ok()) return "
+              "_phaser_status;\n";
         os << indent << "}\n";
       }
       return;
@@ -3831,6 +3832,9 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
           "::phaser::ROSBuffer& _phaser_buffer) const;\n";
     os << "  absl::Status DeserializeFromROS("
           "::phaser::ROSReader& _phaser_buffer);\n";
+    os << "  // DeserializeFromROS for a message that is already clear.\n";
+    os << "  absl::Status DeserializeFromROSUncleared("
+          "::phaser::ROSReader& _phaser_buffer);\n";
     os << "  absl::Status ParseFromROS(absl::Span<const char> input);\n";
     os << R"XXX(  absl::Status SerializeToROSArray(
       void* _phaser_data, size_t _phaser_size) const {
@@ -4051,6 +4055,12 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   os << "absl::Status " << name
      << "::DeserializeFromROS(::phaser::ROSReader& _phaser_buffer) {\n";
   os << "  Clear();\n";
+  os << "  return DeserializeFromROSUncleared(_phaser_buffer);\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::DeserializeFromROSUncleared(::phaser::ROSReader& _phaser_buffer) "
+        "{\n";
   if (IsRosTime(message_)) {
     os << "  absl::StatusOr<uint32_t> _phaser_sec = "
           "_phaser_buffer.Read<uint32_t>();\n";
