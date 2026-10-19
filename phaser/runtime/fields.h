@@ -39,15 +39,13 @@ class Field {
  public:
   Field() = default;
   Field(int id, int number) : id_(id), number_(number) {}
-  // The owning Message base is constructed before its fields, so its runtime
-  // is known here.  A mutable message always carries its own type's metadata
-  // (writes already use the compiled offset and id), so the field location can
-  // be cached without a metadata lookup.
+  // The owning Message base is constructed before its fields, so it already
+  // knows whether the fields are at their compiled locations.
   Field(int id, int number, uint32_t source_offset,
         uint32_t relative_binary_offset)
       : id_(id), number_(number) {
-    const RuntimeHandle& runtime = Message::GetRuntime(this, source_offset);
-    if (runtime != nullptr && runtime->IsMutable()) {
+    if (Message::GetMessage(static_cast<const void*>(this), source_offset)
+            ->FieldLocationsKnown()) {
       cached_offset_ = static_cast<int32_t>(relative_binary_offset);
       cached_field_id_ = id;
       field_cache_resolved_ = true;

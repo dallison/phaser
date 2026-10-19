@@ -1801,7 +1801,8 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
   os << "const std::shared_ptr<::phaser::MessageRuntime>& runtime_ptr, "
         "::phaser::BufferOffset "
-        "offset) : Message(runtime_ptr, offset)\n";
+        "offset) : Message(runtime_ptr, offset, &field_data, "
+        "sizeof(field_data))\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
   os << "{}\n\n";

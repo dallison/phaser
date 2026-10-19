@@ -627,12 +627,24 @@ struct Message {
   Message(const RuntimeHandle& rt, ::phaser::BufferOffset start)
       : readonly_runtime_(RuntimeToCopy(rt)),
         runtime(IsBorrowed(rt) ? BorrowRuntime(readonly_runtime_) : rt),
-        absolute_binary_offset(start) {}
+        absolute_binary_offset(start),
+        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
   Message(RuntimeHandle&& rt, ::phaser::BufferOffset start)
       : readonly_runtime_(RuntimeToCopy(rt)),
         runtime(IsBorrowed(rt) ? BorrowRuntime(readonly_runtime_)
                                : std::move(rt)),
-        absolute_binary_offset(start) {}
+        absolute_binary_offset(start),
+        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
+  // For generated messages: 'field_data' is the message type's compiled field
+  // metadata.  A readonly message whose metadata is identical has its fields
+  // at their compiled locations.
+  Message(const RuntimeHandle& rt, ::phaser::BufferOffset start,
+          const void* field_data, size_t field_data_size)
+      : Message(rt, start) {
+    if (!field_locations_known_ && runtime != nullptr) {
+      field_locations_known_ = MetadataIs(field_data, field_data_size);
+    }
+  }
   Message(const Message& other) : Message(other.runtime,
                                           other.absolute_binary_offset) {}
   Message(Message&& other) noexcept
@@ -666,6 +678,38 @@ struct Message {
 
   RuntimeHandle runtime;
   ::phaser::BufferOffset absolute_binary_offset = 0;
+
+  // True if each field is known to be at its compiled offset with its
+  // compiled presence id, so fields need not look themselves up.
+  bool FieldLocationsKnown() const { return field_locations_known_; }
+
+ private:
+  // Fields are constructed after this, so it is set in the constructor.
+  bool field_locations_known_ = false;
+
+  // Comparing larger tables would cost more than the lookups it saves.
+  static constexpr size_t kMaxComparedFieldDataSize = 256;
+
+  bool MetadataIs(const void* field_data, size_t field_data_size) const {
+    if (field_data_size > kMaxComparedFieldDataSize) {
+      return false;
+    }
+    const ::phaser::BufferOffset* metadata_word =
+        runtime->ToAddress<::phaser::BufferOffset>(absolute_binary_offset);
+    if (metadata_word == nullptr) {
+      return false;
+    }
+    const ::phaser::BufferOffset metadata_offset = *metadata_word;
+    if (!internal::MetadataRangeFits(metadata_offset, 1, field_data_size,
+                                     runtime->TrustedSize())) {
+      return false;
+    }
+    const void* metadata = runtime->ToAddress<void>(metadata_offset);
+    return metadata != nullptr &&
+           memcmp(metadata, field_data, field_data_size) == 0;
+  }
+
+ public:
 
   // 'field' is the offset from the start of the message to the field (positive)
   // Subtract the field offset from the field to get the address of the
