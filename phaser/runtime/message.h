@@ -597,7 +597,12 @@ struct Message {
 
  public:
   Message() : readonly_runtime_(nullptr, size_t{0}, false) {}
-  Message(RuntimeHandle rt, ::phaser::BufferOffset start)
+  Message(const RuntimeHandle& rt, ::phaser::BufferOffset start)
+      : readonly_runtime_(nullptr, size_t{0}, false),
+        absolute_binary_offset(start) {
+    BindRuntime(rt);
+  }
+  Message(RuntimeHandle&& rt, ::phaser::BufferOffset start)
       : readonly_runtime_(nullptr, size_t{0}, false),
         absolute_binary_offset(start) {
     BindRuntime(std::move(rt));
@@ -838,7 +843,15 @@ struct Message {
   }
 
  private:
-  void BindRuntime(RuntimeHandle other) {
+  void BindRuntime(const RuntimeHandle& other) {
+    if (other != nullptr && other.use_count() == 0) {
+      readonly_runtime_ = *other;
+      runtime = BorrowRuntime(readonly_runtime_);
+    } else {
+      runtime = other;
+    }
+  }
+  void BindRuntime(RuntimeHandle&& other) {
     if (other != nullptr && other.use_count() == 0) {
       readonly_runtime_ = *other;
       runtime = BorrowRuntime(readonly_runtime_);

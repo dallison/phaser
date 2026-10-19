@@ -1768,16 +1768,16 @@ void MessageGenerator::GenerateInternalDefaultConstructor(std::ostream& os,
 void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
   if (decl) {
     os << "  " << MessageName(message_)
-       << "(std::shared_ptr<::phaser::MessageRuntime> runtime, "
+       << "(const std::shared_ptr<::phaser::MessageRuntime>& runtime, "
           "::phaser::BufferOffset "
           "offset);\n";
     return;
   }
   GenerateInvalidOffsetofWarningPush(os);
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
-  os << "std::shared_ptr<::phaser::MessageRuntime> runtime_ptr, "
+  os << "const std::shared_ptr<::phaser::MessageRuntime>& runtime_ptr, "
         "::phaser::BufferOffset "
-        "offset) : Message(std::move(runtime_ptr), offset)\n";
+        "offset) : Message(runtime_ptr, offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
   os << "{}\n\n";
