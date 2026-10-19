@@ -6,6 +6,8 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -161,6 +163,15 @@ class MessageGenerator {
       const std::shared_ptr<FieldInfo>& field,
       const std::shared_ptr<UnionInfo>& union_field = nullptr,
       int union_index = -1) const;
+  // Generated message type whose PhaserROSFixedSize() gives the ROS size of
+  // one value of this field, if the field holds one.
+  std::optional<std::string> ROSFixedSizeMessageType(
+      const google::protobuf::FieldDescriptor* field);
+  // C++ constant expression for the ROS size of one value of the field, or
+  // nullopt if the size depends on the contents.
+  std::optional<std::string> ROSFixedElementSize(
+      const google::protobuf::FieldDescriptor* field);
+  void GenerateROSFixedSize(std::ostream& os);
 
   void GenerateProtobufSerialization(std::ostream& os);
   void GenerateIndent(std::ostream& os);

@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstring>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -292,6 +293,27 @@ template <typename T>
 struct HasSyncToPayloadWork<
     T, std::void_t<decltype(T::kPhaserHasSyncToPayloadWork)>>
     : std::bool_constant<T::kPhaserHasSyncToPayloadWork> {};
+}  // namespace internal
+
+// PhaserROSFixedSize() of a message whose ROS serialized size depends on its
+// contents.
+inline constexpr size_t kROSVariableSize = ~size_t{0};
+
+namespace internal {
+constexpr size_t ROSFixedSum(std::initializer_list<size_t> sizes) {
+  size_t total = 0;
+  for (size_t size : sizes) {
+    if (size == kROSVariableSize) {
+      return kROSVariableSize;
+    }
+    total += size;
+  }
+  return total;
+}
+
+constexpr size_t ROSFixedProduct(size_t count, size_t size) {
+  return size == kROSVariableSize ? kROSVariableSize : count * size;
+}
 }  // namespace internal
 
 template <typename MessageType>

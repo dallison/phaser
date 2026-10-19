@@ -16,6 +16,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "absl/base/attributes.h"
+#include "absl/base/optimization.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -358,6 +360,15 @@ class ROSBuffer {
 
  private:
   absl::Status EnsureSpace(size_t length) {
+    // size_ never exceeds capacity_, so the subtraction cannot wrap.
+    if (ABSL_PREDICT_TRUE(data_ != nullptr && !allocation_failed_ &&
+                          length <= capacity_ - size_)) {
+      return absl::OkStatus();
+    }
+    return EnsureSpaceSlow(length);
+  }
+
+  ABSL_ATTRIBUTE_NOINLINE absl::Status EnsureSpaceSlow(size_t length) {
     if (allocation_failed_) {
       return absl::ResourceExhaustedError(
           "Unable to allocate ROS serialization buffer");
@@ -400,12 +411,15 @@ class ROSBuffer {
   template <typename U>
   void WriteLittleEndianUnchecked(U value) {
     static_assert(std::is_unsigned_v<U>);
+    // Write through a local pointer: stores through data_ could alias size_.
+    char* out = data_ + size_;
     for (size_t i = 0; i < sizeof(U); ++i) {
-      data_[size_++] = static_cast<char>(value & static_cast<U>(0xff));
+      out[i] = static_cast<char>(value & static_cast<U>(0xff));
       if constexpr (sizeof(U) > 1) {
         value >>= 8;
       }
     }
+    size_ += sizeof(U);
   }
 
   void Release() {

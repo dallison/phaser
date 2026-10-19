@@ -51,6 +51,30 @@ static bool NeedsPayloadSync(const google::protobuf::Descriptor* desc) {
   return NeedsPayloadSync(desc, &visited);
 }
 
+// Whether 'target' can be reached from 'desc' through singular message fields.
+// A generated PhaserROSFixedSize() refers to those fields' types, so such a
+// cycle would make it recurse forever.
+static bool ReachesThroughSingularFields(
+    const google::protobuf::Descriptor* desc,
+    const google::protobuf::Descriptor* target,
+    absl::flat_hash_set<const google::protobuf::Descriptor*>* visited) {
+  if (!visited->insert(desc).second) {
+    return false;
+  }
+  for (int i = 0; i < desc->field_count(); ++i) {
+    const auto* field = desc->field(i);
+    if (field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+        field->is_repeated() || field->containing_oneof() != nullptr) {
+      continue;
+    }
+    if (field->message_type() == target ||
+        ReachesThroughSingularFields(field->message_type(), target, visited)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Whether the generated SyncToPayload for this message has any work to do.
 // This mirrors the field filtering in GenerateRosSyncToPayload.
 static bool HasSyncToPayloadWork(const google::protobuf::Descriptor* desc) {
@@ -2679,14 +2703,129 @@ void MessageGenerator::GenerateROSFieldSize(
         os << indent << "_phaser_serialized_size += 16 + (" << value_expression
            << ").frame_id.size();\n";
       } else {
-        os << indent << "_phaser_serialized_size += (" << value_expression
+        const std::string type = MessageName(field->message_type(), true);
+        os << indent << "if constexpr (" << type
+           << "::PhaserROSFixedSize() != ::phaser::kROSVariableSize) {\n";
+        os << indent << "  _phaser_serialized_size += " << type
+           << "::PhaserROSFixedSize();\n";
+        os << indent << "} else {\n";
+        os << indent << "  _phaser_serialized_size += (" << value_expression
            << ").ROSSerializedSize();\n";
+        os << indent << "}\n";
       }
       return;
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
       abort();
   }
   abort();
+}
+
+std::optional<std::string> MessageGenerator::ROSFixedSizeMessageType(
+    const google::protobuf::FieldDescriptor* field) {
+  if (field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+      IsAny(field)) {
+    return std::nullopt;
+  }
+  const auto* type = field->message_type();
+  if (IsRosFrontend() &&
+      (IsRosTime(type) || IsRosDuration(type) || IsRosHeader(type))) {
+    return std::nullopt;
+  }
+  return MessageName(type, true);
+}
+
+std::optional<std::string> MessageGenerator::ROSFixedElementSize(
+    const google::protobuf::FieldDescriptor* field) {
+  if (IsRosConstantOnlyMessageField(field)) {
+    return "0";
+  }
+  if (const std::string ros_type = ROSPrimitiveCppType(field);
+      !ros_type.empty()) {
+    return "sizeof(" + ros_type + ")";
+  }
+  switch (field->type()) {
+    case google::protobuf::FieldDescriptor::TYPE_INT32:
+    case google::protobuf::FieldDescriptor::TYPE_SINT32:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_UINT32:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+    case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+    case google::protobuf::FieldDescriptor::TYPE_ENUM:
+      return "4";
+    case google::protobuf::FieldDescriptor::TYPE_INT64:
+    case google::protobuf::FieldDescriptor::TYPE_SINT64:
+    case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_UINT64:
+    case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+    case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+      return "8";
+    case google::protobuf::FieldDescriptor::TYPE_BOOL:
+      return "1";
+    case google::protobuf::FieldDescriptor::TYPE_MESSAGE: {
+      if (IsAny(field)) {
+        return "8";
+      }
+      const auto* type = field->message_type();
+      if (IsRosFrontend() && (IsRosTime(type) || IsRosDuration(type))) {
+        return "8";
+      }
+      std::optional<std::string> message_type =
+          ROSFixedSizeMessageType(field);
+      if (!message_type.has_value()) {
+        return std::nullopt;
+      }
+      absl::flat_hash_set<const google::protobuf::Descriptor*> visited;
+      if (type == message_ ||
+          ReachesThroughSingularFields(type, message_, &visited)) {
+        return std::nullopt;
+      }
+      return *message_type + "::PhaserROSFixedSize()";
+    }
+    case google::protobuf::FieldDescriptor::TYPE_STRING:
+    case google::protobuf::FieldDescriptor::TYPE_BYTES:
+    case google::protobuf::FieldDescriptor::TYPE_GROUP:
+      return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+void MessageGenerator::GenerateROSFixedSize(std::ostream& os) {
+  os << "  static constexpr size_t PhaserROSFixedSize() {\n";
+  if (IsRosTime(message_) || IsRosDuration(message_)) {
+    os << "    return 8;\n  }\n";
+    return;
+  }
+  std::string terms;
+  for (const auto& item : fields_in_order_) {
+    std::optional<std::string> term;
+    if (!item->IsUnion()) {
+      const auto* field = item->field;
+      if (!field->is_repeated()) {
+        term = ROSFixedElementSize(field);
+      } else if (const int extent = GetArraySize(field); extent > 0) {
+        // Repeated enums are written as a bulk array of 32-bit values.
+        std::optional<std::string> element =
+            field->type() == google::protobuf::FieldDescriptor::TYPE_ENUM
+                ? std::optional<std::string>("4")
+                : ROSFixedElementSize(field);
+        if (element.has_value()) {
+          term = "::phaser::internal::ROSFixedProduct(" +
+                 std::to_string(extent) + ", " + *element + ")";
+        }
+      }
+    }
+    if (!term.has_value()) {
+      os << "    return ::phaser::kROSVariableSize;\n  }\n";
+      return;
+    }
+    terms += (terms.empty() ? "" : ", ") + *term;
+  }
+  if (terms.empty()) {
+    os << "    return 0;\n  }\n";
+    return;
+  }
+  os << "    return ::phaser::internal::ROSFixedSum({" << terms << "});\n";
+  os << "  }\n";
 }
 
 void MessageGenerator::GenerateROSFieldWrite(
@@ -3686,6 +3825,7 @@ void MessageGenerator::GenerateDirectROSToProtobuf(std::ostream& os) {
 void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   const std::string name = MessageName(message_);
   if (decl) {
+    GenerateROSFixedSize(os);
     os << "  size_t ROSSerializedSize() const;\n";
     os << "  absl::Status SerializeToROS("
           "::phaser::ROSBuffer& _phaser_buffer) const;\n";
@@ -3733,6 +3873,9 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   }
 
   os << "size_t " << name << "::ROSSerializedSize() const {\n";
+  os << "  if constexpr (PhaserROSFixedSize() != ::phaser::kROSVariableSize) {\n"
+        "    return PhaserROSFixedSize();\n"
+        "  }\n";
   os << "  SyncToPayload();\n";
   if (IsRosTime(message_) || IsRosDuration(message_)) {
     os << "  return 8;\n";
@@ -3781,11 +3924,27 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
         os << "  _phaser_serialized_size += " << count << " * sizeof("
            << bulk_type << ");\n";
       } else {
-        os << "  for (size_t _phaser_index = 0; _phaser_index < " << count
-           << "; ++_phaser_index) {\n";
+        std::string indent = "  ";
+        const std::optional<std::string> element_type =
+            ROSFixedSizeMessageType(descriptor);
+        if (element_type.has_value()) {
+          os << "  if constexpr (" << *element_type
+             << "::PhaserROSFixedSize() != ::phaser::kROSVariableSize) {\n";
+          os << "    _phaser_serialized_size += " << count << " * "
+             << *element_type << "::PhaserROSFixedSize();\n";
+          os << "  } else {\n";
+          indent = "    ";
+        }
+        os << indent
+           << "for (size_t _phaser_index = 0, _phaser_count = " << count
+           << "; _phaser_index < _phaser_count; ++_phaser_index) {\n";
         GenerateROSFieldSize(os, descriptor,
-                             item->member_name + ".Get(_phaser_index)", "    ");
-        os << "  }\n";
+                             item->member_name + ".Get(_phaser_index)",
+                             indent + "  ");
+        os << indent << "}\n";
+        if (element_type.has_value()) {
+          os << "  }\n";
+        }
       }
     }
     os << "  return _phaser_serialized_size;\n";
@@ -3878,8 +4037,8 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
              << ")); !_phaser_status.ok()) return _phaser_status;\n";
         }
       } else {
-        os << "  for (size_t _phaser_index = 0; _phaser_index < " << count
-           << "; ++_phaser_index) {\n";
+        os << "  for (size_t _phaser_index = 0, _phaser_count = " << count
+           << "; _phaser_index < _phaser_count; ++_phaser_index) {\n";
         GenerateROSFieldWrite(
             os, descriptor, item->member_name + ".Get(_phaser_index)", "    ");
         os << "  }\n";
