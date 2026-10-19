@@ -180,17 +180,34 @@ struct PayloadBuffer {
   // The small block allocator has no per-class setup cost so there is nothing
   // to prime.  Always returns true.
   static bool PrimeBitmapAllocator(PayloadBuffer **self, size_t size);
+
+  // Address and offset conversions without validation, for a buffer this
+  // process built and is mutating, whose offsets all came from the buffer.
+  template <typename T = void> T *UncheckedAddress(BufferOffset offset) {
+    return offset == 0 ? nullptr
+                       : reinterpret_cast<T *>(reinterpret_cast<char *>(this) +
+                                               offset);
+  }
+  template <typename T = void>
+  BufferOffset UncheckedOffset(const T *addr) const {
+    return addr == nullptr
+               ? 0
+               : BufferOffset(reinterpret_cast<const char *>(addr) -
+                              reinterpret_cast<const char *>(this));
+  }
+
+  // The writers below are only used on mutable buffers.
   void SetPresenceBit(uint32_t bit, uint32_t offset) {
     uint32_t word = bit / 32;
     bit %= 32;
-    uint32_t *p = ToAddress<uint32_t>(offset);
+    uint32_t *p = UncheckedAddress<uint32_t>(offset);
     p[word] |= (1 << bit);
   }
 
   void ClearPresenceBit(uint32_t bit, uint32_t offset) {
     uint32_t word = bit / 32;
     bit %= 32;
-    uint32_t *p = ToAddress<uint32_t>(offset);
+    uint32_t *p = UncheckedAddress<uint32_t>(offset);
     p[word] &= ~(1 << bit);
   }
 
@@ -208,9 +225,9 @@ struct PayloadBuffer {
     return (*p & (1U << bit)) != 0;
   }
 
-  static uint32_t DecodeSize(BufferOffset *addr) {
+  static uint32_t DecodeSize(const BufferOffset *addr) {
     // Length is 64 bits long but we only need the bottom 32 bits of it.
-    uint32_t *p = reinterpret_cast<uint32_t *>(addr) - 2;
+    const uint32_t *p = reinterpret_cast<const uint32_t *>(addr) - 2;
     if ((*p & kSmallBlockFlag) == 0) {
       return *p;
     }
@@ -262,6 +279,7 @@ struct PayloadBuffer {
     return *p == 0;
   }
 
+  // Only for a mutable buffer.
   template <typename T> void Set(BufferOffset offset, T v);
   template <typename T> T &Get(BufferOffset offset);
 
@@ -592,8 +610,7 @@ inline void PayloadBuffer::Free(void *p) {
 }
 
 template <typename T> inline void PayloadBuffer::Set(BufferOffset offset, T v) {
-  T *addr = ToAddress<T>(offset);
-  *addr = v;
+  memcpy(UncheckedAddress<T>(offset), &v, sizeof(T));
 }
 
 template <typename T> inline T &PayloadBuffer::Get(BufferOffset offset) {

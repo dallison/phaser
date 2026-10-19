@@ -447,13 +447,21 @@ struct MessageRuntime {
     return control;
   }
 
+  // A mutable buffer was built by this process, so only received buffers need
+  // their offsets validated.
   template <typename T = void>
   T* ToAddress(::phaser::BufferOffset offset) {
+    if (is_mutable_) {
+      return pb->UncheckedAddress<T>(offset);
+    }
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
   template <typename T = void>
   const T* ToAddress(::phaser::BufferOffset offset) const {
+    if (is_mutable_) {
+      return pb->UncheckedAddress<const T>(offset);
+    }
     return pb->ToAddress<T>(offset, buffer_size);
   }
 
@@ -527,10 +535,10 @@ struct MessageRuntime {
   // an underflow read.
   size_t AllocatedCapacity(::phaser::BufferOffset data_offset,
                            size_t elem_size) const {
-    if (elem_size == 0 || data_offset == 0 || pb == nullptr) {
+    if (elem_size == 0 || data_offset < sizeof(uint64_t) || pb == nullptr) {
       return 0;
     }
-    uint32_t* block = pb->ToAddress<uint32_t>(data_offset);
+    const uint32_t* block = ToAddress<uint32_t>(data_offset);
     if (block == nullptr) {
       return 0;
     }
@@ -539,11 +547,17 @@ struct MessageRuntime {
 
   template <typename T = void>
   ::phaser::BufferOffset ToOffset(const T* addr) const {
+    if (is_mutable_) {
+      return pb->UncheckedOffset(addr);
+    }
     return pb->ToOffset(addr, buffer_size);
   }
 
   template <typename T = void>
   ::phaser::BufferOffset ToOffset(T* addr) {
+    if (is_mutable_) {
+      return pb->UncheckedOffset<T>(addr);
+    }
     return pb->ToOffset(addr, buffer_size);
   }
 };

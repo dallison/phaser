@@ -1193,7 +1193,7 @@ class MessageVectorField : public Field {
   T Add() {
     ::phaser::PayloadBuffer** buffer = GetBufferAddr();
     void* binary = ::phaser::PayloadBuffer::Allocate(buffer, T::BinarySize());
-    const ::phaser::BufferOffset element = (*buffer)->ToOffset(binary);
+    const ::phaser::BufferOffset element = (*buffer)->UncheckedOffset(binary);
     ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
     const ::phaser::BufferOffset metadata = FirstElementMetadata(hdr);
     ::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(buffer, hdr,
@@ -1201,7 +1201,7 @@ class MessageVectorField : public Field {
     T result(GetRuntime(), element);
     // The push can move the buffer, so find the element again.
     ::phaser::BufferOffset* element_metadata =
-        (*buffer)->template ToAddress<::phaser::BufferOffset>(element);
+        (*buffer)->template UncheckedAddress<::phaser::BufferOffset>(element);
     if (metadata != 0 && element_metadata != nullptr) {
       *element_metadata = metadata;
     } else {

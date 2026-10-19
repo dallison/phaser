@@ -874,6 +874,9 @@ class UnionField : public Field {
   void PrepareArm() {
     static_assert(Id >= 0 && Id < static_cast<int>(sizeof...(T)),
                   "oneof arm index is out of range");
+    if (!GetRuntime()->IsMutable()) {
+      throw std::logic_error("cannot mutate a readonly Phaser message");
+    }
     const int32_t desired = static_cast<int32_t>(field_numbers_[Id]);
     const int32_t current = Discriminator();
     if (current == desired) {

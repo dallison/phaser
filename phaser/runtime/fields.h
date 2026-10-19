@@ -590,17 +590,22 @@ class EnumField : public Field {
   }
 
   void Set(Enum e) {
+    RequireMutable(source_offset_);
     GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_,
                      static_cast<typename std::underlying_type<Enum>::type>(e));
     SetPresence(GetBuffer(), GetPresenceMaskStart());
   }
 
   void Set(T e) {
+    RequireMutable(source_offset_);
     GetBuffer()->Set(GetMessageBinaryStart() + relative_binary_offset_, e);
     SetPresence(GetBuffer(), GetPresenceMaskStart());
   }
 
-  void Clear() { ClearPresence(GetBuffer(), GetPresenceMaskStart()); }
+  void Clear() {
+    RequireMutable(source_offset_);
+    ClearPresence(GetBuffer(), GetPresenceMaskStart());
+  }
 
   bool operator==(const EnumField& other) const {
     return static_cast<Enum>(*this) == static_cast<Enum>(other);
