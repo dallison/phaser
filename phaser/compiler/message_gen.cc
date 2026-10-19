@@ -20,6 +20,37 @@
 
 namespace phaser {
 
+// Whether SyncToPayload on a message of this type can have any effect.  Only
+// the ROS intrinsic fields (time, duration and header) cache values outside
+// the payload.  Any is treated as needing a sync since its contents are not
+// known statically.
+static bool NeedsPayloadSync(
+    const google::protobuf::Descriptor* desc,
+    absl::flat_hash_set<const google::protobuf::Descriptor*>* visited) {
+  const std::string_view name = desc->full_name();
+  if (name == "google.protobuf.Timestamp" ||
+      name == "google.protobuf.Duration" || name == "std_msgs.Header" ||
+      name == "google.protobuf.Any") {
+    return true;
+  }
+  if (!visited->insert(desc).second) {
+    return false;
+  }
+  for (int i = 0; i < desc->field_count(); ++i) {
+    const auto* field = desc->field(i);
+    if (field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+        NeedsPayloadSync(field->message_type(), visited)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool NeedsPayloadSync(const google::protobuf::Descriptor* desc) {
+  absl::flat_hash_set<const google::protobuf::Descriptor*> visited;
+  return NeedsPayloadSync(desc, &visited);
+}
+
 static bool IsCppReservedWord(const std::string& s) {
   static absl::flat_hash_set<std::string> reserved_words = {
       "alignas",
@@ -1425,7 +1456,8 @@ void MessageGenerator::GenerateRosSyncToPayload(std::ostream& os) {
   for (const auto& field : fields_) {
     if (field->field->type() !=
             google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
-        (!field->field->is_repeated() && IsAny(field->field))) {
+        (!field->field->is_repeated() && IsAny(field->field)) ||
+        !NeedsPayloadSync(field->field->message_type())) {
       continue;
     }
     os << "    " << field->member_name << ".SyncToPayload();\n";
@@ -1435,7 +1467,8 @@ void MessageGenerator::GenerateRosSyncToPayload(std::ostream& os) {
     for (size_t i = 0; i < union_info->members.size(); ++i) {
       const auto& member = union_info->members[i];
       if (member->field->type() !=
-          google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+          !NeedsPayloadSync(member->field->message_type())) {
         continue;
       }
       os << "      case " << member->field->number() << ":\n";
