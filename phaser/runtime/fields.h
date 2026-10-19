@@ -1139,8 +1139,10 @@ class IndirectMessageField : public Field {
   }
 
   void SyncToPayload() const {
-    if (IsPresent()) {
-      Get().SyncToPayload();
+    if constexpr (internal::HasSyncToPayloadWork<MessageType>::value) {
+      if (IsPresent()) {
+        Get().SyncToPayload();
+      }
     }
   }
 

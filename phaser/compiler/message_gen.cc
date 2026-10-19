@@ -51,6 +51,26 @@ static bool NeedsPayloadSync(const google::protobuf::Descriptor* desc) {
   return NeedsPayloadSync(desc, &visited);
 }
 
+// Whether the generated SyncToPayload for this message has any work to do.
+// This mirrors the field filtering in GenerateRosSyncToPayload.
+static bool HasSyncToPayloadWork(const google::protobuf::Descriptor* desc) {
+  for (int i = 0; i < desc->field_count(); ++i) {
+    const auto* field = desc->field(i);
+    if (field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+      continue;
+    }
+    const bool in_oneof = field->containing_oneof() != nullptr;
+    if (!in_oneof && !field->is_repeated() &&
+        field->message_type()->full_name() == "google.protobuf.Any") {
+      continue;
+    }
+    if (NeedsPayloadSync(field->message_type())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Whether Clear() on a message of this type only resets inline values and
 // never releases payload buffer memory, so it can be skipped when the
 // message's own memory is about to be freed.
@@ -1359,6 +1379,9 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
      << ReachableMessageTypeCount() << "; }\n";
   os << "  static constexpr bool kPhaserClearReleasesNothing = "
      << (ClearReleasesNothing(message_) ? "true" : "false") << ";\n";
+  os << "  static constexpr bool kPhaserHasSyncToPayloadWork = "
+     << (IsRosFrontend() && HasSyncToPayloadWork(message_) ? "true" : "false")
+     << ";\n";
 
   os << "  static constexpr std::string_view FullName() { return \""
      << message_->full_name() << "\"; }\n";

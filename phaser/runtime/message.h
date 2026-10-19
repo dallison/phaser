@@ -284,6 +284,14 @@ template <typename T>
 struct ClearReleasesNothing<T,
                             std::void_t<decltype(T::kPhaserClearReleasesNothing)>>
     : std::bool_constant<T::kPhaserClearReleasesNothing> {};
+
+// False for generated messages whose SyncToPayload() does nothing.
+template <typename T, typename = void>
+struct HasSyncToPayloadWork : std::true_type {};
+template <typename T>
+struct HasSyncToPayloadWork<
+    T, std::void_t<decltype(T::kPhaserHasSyncToPayloadWork)>>
+    : std::bool_constant<T::kPhaserHasSyncToPayloadWork> {};
 }  // namespace internal
 
 template <typename MessageType>

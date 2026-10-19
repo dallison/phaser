@@ -192,9 +192,7 @@ class RosMessageField : public IndirectMessageField<Backend> {
 
   void SyncToPayload() const {
     if (!dirty_) {
-      if (Base::IsPresent()) {
-        Base::Get().SyncToPayload();
-      }
+      Base::SyncToPayload();
       return;
     }
     Backend* backend = const_cast<RosMessageField*>(this)->Base::Mutable();
@@ -608,11 +606,7 @@ class RosHeaderField : public IndirectMessageField<Backend> {
 
   void Clear() { Base::Clear(); }
 
-  void SyncToPayload() const {
-    if (Base::IsPresent()) {
-      Base::Get().SyncToPayload();
-    }
-  }
+  void SyncToPayload() const { Base::SyncToPayload(); }
 
   size_t SerializedSize() const {
     SyncToPayload();

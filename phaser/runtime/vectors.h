@@ -1522,8 +1522,10 @@ class MessageVectorField : public Field {
   }
 
   void SyncToPayload() const {
-    for (size_t i = 0; i < size(); ++i) {
-      Get(i).SyncToPayload();
+    if constexpr (internal::HasSyncToPayloadWork<T>::value) {
+      for (size_t i = 0; i < size(); ++i) {
+        Get(i).SyncToPayload();
+      }
     }
   }
 
