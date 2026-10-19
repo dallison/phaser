@@ -1053,10 +1053,12 @@ class IndirectMessageField : public Field {
       return;
     }
     const ::phaser::BufferOffset old_offset = *addr;
-    // Clear the message.
-    msg_.runtime = GetRuntime();
-    msg_.absolute_binary_offset = old_offset;
-    msg_.Clear();
+    if constexpr (!internal::ClearReleasesNothing<MessageType>::value) {
+      // Clear the message.
+      msg_.runtime = GetRuntime();
+      msg_.absolute_binary_offset = old_offset;
+      msg_.Clear();
+    }
     // Delete the memory in the payload buffer.
     GetBuffer()->Free(GetRuntime()->ToAddress(old_offset));
     // Zero out the offset to the message.

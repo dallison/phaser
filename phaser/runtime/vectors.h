@@ -1199,7 +1199,7 @@ class MessageVectorField : public Field {
     ::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(
         GetBufferAddr(), ResolvedVectorHeader(), absolute_binary_offset);
     T result(GetRuntime(), absolute_binary_offset);
-    result.template InstallMetadata<T>();
+    InstallElementMetadata(result);
     return result;
   }
 
@@ -1225,7 +1225,7 @@ class MessageVectorField : public Field {
           GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
       data[index] = absolute_binary_offset;
       T result(GetRuntime(), absolute_binary_offset);
-      result.template InstallMetadata<T>();
+      InstallElementMetadata(result);
       return result;
     }
     return T(GetRuntime(), data[index]);
@@ -1377,7 +1377,9 @@ class MessageVectorField : public Field {
       if (data[i] == 0) {
         continue;
       }
-      T(GetRuntime(), data[i]).Clear();
+      if constexpr (!internal::ClearReleasesNothing<T>::value) {
+        T(GetRuntime(), data[i]).Clear();
+      }
       GetBuffer()->Free(GetRuntime()->ToAddress(data[i]));
     }
     ::phaser::PayloadBuffer::VectorClear<::phaser::BufferOffset>(
@@ -1535,6 +1537,25 @@ class MessageVectorField : public Field {
       result.push_back(std::move(copy));
     }
     return result;
+  }
+
+  // Every element of a mutable vector carries T's metadata, so a new element
+  // can share the first element's metadata instead of looking it up.
+  void InstallElementMetadata(T& element) {
+    const ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+    const ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+    if (data != nullptr && hdr->num_elements > 0 && data[0] != 0 &&
+        data[0] != element.absolute_binary_offset) {
+      const ::phaser::BufferOffset* first =
+          GetRuntime()->template ToAddress<::phaser::BufferOffset>(data[0]);
+      if (first != nullptr && *first != 0) {
+        *GetRuntime()->template ToAddress<::phaser::BufferOffset>(
+            element.absolute_binary_offset) = *first;
+        return;
+      }
+    }
+    element.template InstallMetadata<T>();
   }
 
   friend FieldIterator<MessageVectorField, T>;

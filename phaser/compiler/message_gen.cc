@@ -51,6 +51,28 @@ static bool NeedsPayloadSync(const google::protobuf::Descriptor* desc) {
   return NeedsPayloadSync(desc, &visited);
 }
 
+// Whether Clear() on a message of this type only resets inline values and
+// never releases payload buffer memory, so it can be skipped when the
+// message's own memory is about to be freed.
+static bool ClearReleasesNothing(const google::protobuf::Descriptor* desc) {
+  for (int i = 0; i < desc->field_count(); ++i) {
+    const auto* field = desc->field(i);
+    if (field->is_repeated() || field->real_containing_oneof() != nullptr) {
+      return false;
+    }
+    switch (field->type()) {
+      case google::protobuf::FieldDescriptor::TYPE_STRING:
+      case google::protobuf::FieldDescriptor::TYPE_BYTES:
+      case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+      case google::protobuf::FieldDescriptor::TYPE_GROUP:
+        return false;
+      default:
+        break;
+    }
+  }
+  return true;
+}
+
 static bool IsCppReservedWord(const std::string& s) {
   static absl::flat_hash_set<std::string> reserved_words = {
       "alignas",
@@ -1335,6 +1357,8 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateFieldMetadata(os);
   os << "  static constexpr size_t MetadataTypeCount() { return "
      << ReachableMessageTypeCount() << "; }\n";
+  os << "  static constexpr bool kPhaserClearReleasesNothing = "
+     << (ClearReleasesNothing(message_) ? "true" : "false") << ";\n";
 
   os << "  static constexpr std::string_view FullName() { return \""
      << message_->full_name() << "\"; }\n";
@@ -1730,7 +1754,7 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
   os << MessageName(message_) << "::" << MessageName(message_) << "(";
   os << "std::shared_ptr<::phaser::MessageRuntime> runtime_ptr, "
         "::phaser::BufferOffset "
-        "offset) : Message(runtime_ptr, offset)\n";
+        "offset) : Message(std::move(runtime_ptr), offset)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os, ", ");
   os << "{}\n\n";

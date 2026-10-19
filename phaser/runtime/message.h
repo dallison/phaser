@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -274,6 +275,16 @@ constexpr uint64_t MetadataKey(std::string_view full_name) {
   }
   return hash;
 }
+
+namespace internal {
+// True for generated messages whose Clear() releases no payload memory.
+template <typename T, typename = void>
+struct ClearReleasesNothing : std::false_type {};
+template <typename T>
+struct ClearReleasesNothing<T,
+                            std::void_t<decltype(T::kPhaserClearReleasesNothing)>>
+    : std::bool_constant<T::kPhaserClearReleasesNothing> {};
+}  // namespace internal
 
 template <typename MessageType>
 uint64_t MetadataKeyFor() {
