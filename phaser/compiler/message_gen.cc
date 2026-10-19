@@ -3880,7 +3880,8 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   os << "  if constexpr (PhaserROSFixedSize() != ::phaser::kROSVariableSize) {\n"
         "    return PhaserROSFixedSize();\n"
         "  }\n";
-  os << "  SyncToPayload();\n";
+  // ROS sizing and writing read cached ROS values through the field
+  // accessors, so they do not need the payload to be synced first.
   if (IsRosTime(message_) || IsRosDuration(message_)) {
     os << "  return 8;\n";
   } else {
@@ -3957,7 +3958,6 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
 
   os << "absl::Status " << name
      << "::SerializeToROS(::phaser::ROSBuffer& _phaser_buffer) const {\n";
-  os << "  SyncToPayload();\n";
   if (IsRosTime(message_)) {
     os << "  if (absl::Status _phaser_status = _phaser_buffer.Write("
           "static_cast<uint32_t>(seconds())); !_phaser_status.ok()) "
