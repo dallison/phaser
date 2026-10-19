@@ -22,8 +22,8 @@ namespace phaser {
 
 // Whether SyncToPayload on a message of this type can have any effect.  Only
 // the ROS intrinsic fields (time, duration and header) cache values outside
-// the payload.  Any is treated as needing a sync since its contents are not
-// known statically.
+// the payload, and repeated elements sync themselves.  Any is treated as
+// needing a sync since its contents are not known statically.
 static bool NeedsPayloadSync(
     const google::protobuf::Descriptor* desc,
     absl::flat_hash_set<const google::protobuf::Descriptor*>* visited) {
@@ -39,6 +39,7 @@ static bool NeedsPayloadSync(
   for (int i = 0; i < desc->field_count(); ++i) {
     const auto* field = desc->field(i);
     if (field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+        !field->is_repeated() &&
         NeedsPayloadSync(field->message_type(), visited)) {
       return true;
     }
@@ -76,11 +77,14 @@ static bool ReachesThroughSingularFields(
 }
 
 // Whether the generated SyncToPayload for this message has any work to do.
-// This mirrors the field filtering in GenerateRosSyncToPayload.
+// This mirrors the field filtering in GenerateRosSyncToPayload.  Repeated
+// elements are reached only through temporary handles, which sync themselves,
+// so repeated fields never have work.
 static bool HasSyncToPayloadWork(const google::protobuf::Descriptor* desc) {
   for (int i = 0; i < desc->field_count(); ++i) {
     const auto* field = desc->field(i);
-    if (field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
+    if (field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+        field->is_repeated()) {
       continue;
     }
     const bool in_oneof = field->containing_oneof() != nullptr;
@@ -1528,7 +1532,7 @@ void MessageGenerator::GenerateRosSyncToPayload(std::ostream& os) {
   for (const auto& field : fields_) {
     if (field->field->type() !=
             google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
-        (!field->field->is_repeated() && IsAny(field->field)) ||
+        field->field->is_repeated() || IsAny(field->field) ||
         !NeedsPayloadSync(field->field->message_type())) {
       continue;
     }

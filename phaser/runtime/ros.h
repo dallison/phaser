@@ -126,16 +126,40 @@ struct RosHeaderTraits {
 
 }  // namespace internal
 
+// A changed value is cached until SyncToPayload() or the handle's destruction,
+// so it also reaches the payload through a temporary handle such as a repeated
+// element.  ROS serialization reads the cache and needs no payload copy.
 template <typename Backend, typename Traits>
 class RosMessageField : public IndirectMessageField<Backend> {
  public:
   using Base = IndirectMessageField<Backend>;
   using RosType = typename Traits::RosType;
-  using Base::Base;
 
   RosMessageField() = default;
-  RosMessageField(const RosMessageField&) = default;
-  RosMessageField(RosMessageField&&) = default;
+  explicit RosMessageField(uint32_t source_offset,
+                           uint32_t relative_binary_offset, int id, int number)
+      : Base(source_offset, relative_binary_offset, id, number),
+        in_message_(true) {}
+  // Generated messages never copy their fields, so a copy is not inside a
+  // message and has no payload to write to.
+  RosMessageField(const RosMessageField& other)
+      : Base(other),
+        cache_(other.cache_),
+        cache_loaded_(other.cache_loaded_),
+        dirty_(other.dirty_) {}
+  RosMessageField(RosMessageField&& other) noexcept
+      : Base(std::move(other)),
+        cache_(other.cache_),
+        cache_loaded_(other.cache_loaded_),
+        dirty_(other.dirty_),
+        in_message_(other.in_message_) {
+    other.dirty_ = false;
+  }
+  ~RosMessageField() {
+    if (dirty_ && CanWriteToPayload()) {
+      SyncToPayload();
+    }
+  }
 
   RosMessageField& operator=(const RosMessageField& other) {
     if (this != &other) {
@@ -238,9 +262,18 @@ class RosMessageField : public IndirectMessageField<Backend> {
     cache_loaded_ = true;
   }
 
+  bool CanWriteToPayload() const {
+    if (!in_message_) {
+      return false;
+    }
+    const RuntimeHandle& runtime = Base::GetRuntime();
+    return runtime != nullptr && runtime->IsMutable();
+  }
+
   mutable RosType cache_;
   mutable bool cache_loaded_ = false;
   mutable bool dirty_ = false;
+  bool in_message_ = false;
 };
 
 template <typename Backend>

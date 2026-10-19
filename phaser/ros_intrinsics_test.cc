@@ -196,6 +196,44 @@ TEST(RosIntrinsicsTest, RepeatedIntrinsicsUseEightRosBytesPerElement) {
   EXPECT_EQ(populated.ROSSerializedSize(), empty.ROSSerializedSize() + 3 * 8);
 }
 
+TEST(RosIntrinsicsTest, IntrinsicsChangedThroughElementHandlesReachThePayload) {
+  StampedChildren message;
+  for (uint32_t i = 0; i < 3; i++) {
+    auto child = message.children.Add();
+    child.stamp = ::ros::Time(10 + i, 20 + i);
+    MutateHeader(child.header);
+  }
+  message.children[1].stamp = ::ros::Time(40, 50);
+  MutateTime(message.children[2].stamp);
+  {
+    auto child = message.children.Add();
+    child.stamp->sec = 70;
+    child.stamp->nsec = 80;
+  }
+
+  auto expect = [](const StampedChildren& m) {
+    ASSERT_EQ(m.children.size(), 4u);
+    EXPECT_EQ(m.children.Get(0).stamp.Get(), ::ros::Time(10, 20));
+    EXPECT_EQ(m.children.Get(1).stamp.Get(), ::ros::Time(40, 50));
+    EXPECT_EQ(m.children.Get(2).stamp.Get(), ::ros::Time(12, 345));
+    EXPECT_EQ(m.children.Get(3).stamp.Get(), ::ros::Time(70, 80));
+    for (size_t i = 0; i < 3; i++) {
+      EXPECT_EQ(m.children.Get(i).header->seq, 9u);
+      EXPECT_EQ(m.children.Get(i).header->stamp, ::ros::Time(21, 654));
+    }
+  };
+  expect(message);
+
+  std::string ros_wire;
+  ASSERT_TRUE(message.SerializeToROSString(&ros_wire).ok());
+  StampedChildren parsed;
+  ASSERT_TRUE(parsed
+                  .ParseFromROS(absl::Span<const char>(ros_wire.data(),
+                                                       ros_wire.size()))
+                  .ok());
+  expect(parsed);
+}
+
 TEST(RosIntrinsicsTest, RepeatedIntrinsicsClone) {
   RosIntrinsicMessage source;
   FillRepeated(source);

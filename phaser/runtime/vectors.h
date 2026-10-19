@@ -1522,13 +1522,9 @@ class MessageVectorField : public Field {
     return absl::OkStatus();
   }
 
-  void SyncToPayload() const {
-    if constexpr (internal::HasSyncToPayloadWork<T>::value) {
-      for (size_t i = 0; i < size(); ++i) {
-        Get(i).SyncToPayload();
-      }
-    }
-  }
+  // Every element handle is a temporary that writes its cached values to the
+  // payload when it is destroyed, so no element has anything left to sync.
+  void SyncToPayload() const {}
 
  private:
   std::vector<T> CopyValues() const {

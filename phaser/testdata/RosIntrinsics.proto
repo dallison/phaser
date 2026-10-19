@@ -12,6 +12,15 @@ message WireChild {
   string label = 2;
 }
 
+message StampedChild {
+  google.protobuf.Timestamp stamp = 1;
+  std_msgs.Header header = 2;
+}
+
+message StampedChildren {
+  repeated StampedChild children = 1;
+}
+
 message RosIntrinsicMessage {
   google.protobuf.Timestamp stamp = 1;
   google.protobuf.Duration timeout = 2;
