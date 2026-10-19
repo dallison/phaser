@@ -382,7 +382,9 @@ struct MessageRuntime {
                          : RuntimeHandleMode::kBorrowedReadonly) {}
   MessageRuntime(const MessageRuntime&) = default;
   MessageRuntime& operator=(const MessageRuntime&) = default;
-  virtual ~MessageRuntime() = default;
+  // Not virtual: a derived runtime is owned by a shared_ptr made for its own
+  // type, which destroys it as that type.
+  ~MessageRuntime() = default;
   ::phaser::PayloadBuffer* pb;
 
   // This is the size of the buffer.  If it is zero, the size is inside
@@ -578,7 +580,7 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
       : MutableMessageRuntime(p), free_(std::move(free)) {
     mode_ = RuntimeHandleMode::kOwnedDynamic;
   }
-  ~DynamicMutableMessageRuntime() override {
+  ~DynamicMutableMessageRuntime() {
     if (free_ != nullptr) {
       pb->~PayloadBuffer();
       free_(pb);

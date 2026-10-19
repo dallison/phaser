@@ -1470,6 +1470,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   }
   os << "};\n\n";
 
+  GenerateMainConstructor(os, false);
   // Steamer outside the class.
   GenerateStreamer(os);
   GenerateCopy(os, false);
@@ -1751,8 +1752,10 @@ void MessageGenerator::GenerateConstructors(std::ostream& os, bool decl) {
   // Generate default constructor.
   GenerateDefaultConstructor(os, decl);
   GenerateInternalDefaultConstructor(os, decl);
-  // Generate main constructor.
-  GenerateMainConstructor(os, decl);
+  // The main constructor is defined inline in the header, after the class.
+  if (decl) {
+    GenerateMainConstructor(os, decl);
+  }
 }
 
 void MessageGenerator::GenerateDefaultConstructor(std::ostream& os, bool decl) {
@@ -1803,8 +1806,11 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
           "offset);\n";
     return;
   }
+  // Inline so that a handle made for an element or a field can be built in
+  // place, with its field offsets known to the code that uses it.
   GenerateInvalidOffsetofWarningPush(os);
-  os << MessageName(message_) << "::" << MessageName(message_) << "(";
+  os << "inline " << MessageName(message_) << "::" << MessageName(message_)
+     << "(";
   os << "const std::shared_ptr<::phaser::MessageRuntime>& runtime_ptr, "
         "::phaser::BufferOffset "
         "offset) : Message(runtime_ptr, offset, &field_data, "

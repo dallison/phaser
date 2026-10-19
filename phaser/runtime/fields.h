@@ -53,7 +53,9 @@ class Field {
   }
   Field(const Field&) = default;
   Field& operator=(const Field&) = default;
-  virtual ~Field() = default;
+  // Fields are only destroyed as members of their message, so the
+  // destructor is not virtual.
+  ~Field() = default;
 
   // The presence bit is in a set of words immediately after
   // the metadata at the start of the message.
