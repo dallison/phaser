@@ -242,12 +242,10 @@ inline absl::Status DeserializeMessageVectorFromROS(
         // input.
         constexpr size_t kSize = ROSParseMinSize<T>();
         const char* input = reader.ReadRawUnchecked(size_t{count} * kSize);
-        vector.AddElementsInPlace(
-            count, [input](::phaser::PayloadBuffer* pb,
-                           ::phaser::BufferOffset element, uint32_t i) {
-              T::PhaserDeserializeFromROSUncheckedAt(pb, element,
-                                                     input + size_t{i} * kSize);
-            });
+        vector.AddElementsInPlace(count, [input](char* element, uint32_t i) {
+          T::PhaserDeserializeFromROSUncheckedAt(element,
+                                                 input + size_t{i} * kSize);
+        });
         return absl::OkStatus();
       } else {
         return vector.AddElements(count, [&](::phaser::BufferOffset element) {

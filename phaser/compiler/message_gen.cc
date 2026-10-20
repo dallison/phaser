@@ -4290,13 +4290,11 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
     }
     os << "  // PhaserDeserializeFromROSAt() for the PhaserROSMinSize() bytes "
           "at\n"
-          "  // '_phaser_input'.  The payload stores could alias the input, so "
-          "they\n"
-          "  // follow all the reads.\n";
+          "  // '_phaser_input', into the empty message at '_phaser_element'.  "
+          "The\n"
+          "  // stores could alias the input, so they follow all the reads.\n";
     os << "  static void PhaserDeserializeFromROSUncheckedAt("
-          "::phaser::PayloadBuffer* _phaser_payload, "
-          "::phaser::BufferOffset _phaser_offset, "
-          "const char* _phaser_input) {\n";
+          "char* _phaser_element, const char* _phaser_input) {\n";
     size_t input_offset = 0;
     for (size_t i = 0; i < values.size(); ++i) {
       os << "    const " << values[i].ros_type << " _phaser_value" << i
@@ -4307,15 +4305,25 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
     std::map<uint32_t, uint32_t> presence;
     for (size_t i = 0; i < values.size(); ++i) {
       const Value& value = values[i];
-      os << "    _phaser_payload->Set<" << value.storage_type
-         << ">(_phaser_offset + " << FieldOffset(*value.field)
-         << ", static_cast<" << value.storage_type << ">(_phaser_value" << i
-         << "));\n";
+      os << "    {\n";
+      os << "      const " << value.storage_type
+         << " _phaser_stored = static_cast<" << value.storage_type
+         << ">(_phaser_value" << i << ");\n";
+      os << "      memcpy(_phaser_element + " << FieldOffset(*value.field)
+         << ", &_phaser_stored, sizeof(_phaser_stored));\n";
+      os << "    }\n";
       presence[value.field->id / 32] |= uint32_t{1} << (value.field->id % 32);
     }
     for (const auto& [word, bits] : presence) {
-      os << "    _phaser_payload->SetPresenceBits(" << word << ", " << bits
-         << "u, _phaser_offset + ::phaser::Field::kPresenceMaskOffset);\n";
+      os << "    {\n";
+      os << "      char* _phaser_mask = _phaser_element + "
+            "::phaser::Field::kPresenceMaskOffset + "
+         << word * sizeof(uint32_t) << ";\n";
+      os << "      uint32_t _phaser_bits;\n";
+      os << "      memcpy(&_phaser_bits, _phaser_mask, sizeof(_phaser_bits));\n";
+      os << "      _phaser_bits |= " << bits << "u;\n";
+      os << "      memcpy(_phaser_mask, &_phaser_bits, sizeof(_phaser_bits));\n";
+      os << "    }\n";
     }
     os << "  }\n";
     return;
@@ -4333,8 +4341,8 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
     // Short input falls through to the checked reads, for their error.
     os << "  static_assert(PhaserROSFixedSize() == PhaserROSMinSize());\n";
     os << "  if (_phaser_buffer.Remaining() >= PhaserROSMinSize()) {\n";
-    os << "    PhaserDeserializeFromROSUncheckedAt(*_phaser_pb, "
-          "_phaser_offset, "
+    os << "    PhaserDeserializeFromROSUncheckedAt("
+          "(*_phaser_pb)->AddressOf<char>(_phaser_offset), "
           "_phaser_buffer.ReadRawUnchecked(PhaserROSMinSize()));\n";
     os << "    return absl::OkStatus();\n";
     os << "  }\n";

@@ -222,11 +222,6 @@ struct PayloadBuffer {
     p[word] |= (1 << bit);
   }
 
-  // Sets the bits of 'mask' in word 'word' of the presence mask at 'offset'.
-  void SetPresenceBits(uint32_t word, uint32_t mask, uint32_t offset) {
-    AddressOf<uint32_t>(offset)[word] |= mask;
-  }
-
   void ClearPresenceBit(uint32_t bit, uint32_t offset) {
     uint32_t word = bit / 32;
     bit %= 32;

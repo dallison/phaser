@@ -1221,7 +1221,8 @@ class MessageVectorField : public Field {
   }
 
   // AddElements() for an 'f' that neither fails nor allocates, called with
-  // the buffer, the offset of the element and its index among the 'n'.
+  // a copy of 'f' with the address of each element and its index among the
+  // 'n'.  The size includes the new elements only once all are added.
   template <typename F>
   void AddElementsInPlace(uint32_t n, F&& f) {
     (void)AppendElements<true>(n, f);
@@ -1545,7 +1546,11 @@ class MessageVectorField : public Field {
     uint32_t capacity = block.first_capacity;
     ::phaser::BufferOffset chunk = static_cast<::phaser::BufferOffset>(
         block_offset + sizeof(::phaser::MessageVectorBlock));
-    for (uint32_t index = old_size; index < end; ++index) {
+    // In place, a local copy of 'f' keeps its state in registers across the
+    // element stores, which could otherwise alias it.
+    [[maybe_unused]] F local_f = f;
+    uint32_t index = old_size;
+    while (index < end) {
       if constexpr (!kInPlace) {
         pb = *buffer;
       }
@@ -1557,18 +1562,36 @@ class MessageVectorField : public Field {
             static_cast<::phaser::BufferOffset>(
                 block.directory + k * sizeof(::phaser::BufferOffset)));
       }
-      const ::phaser::BufferOffset element = static_cast<::phaser::BufferOffset>(
-          chunk + (index - chunk_begin) * Stride());
-      char* binary = pb->template AddressOf<char>(element);
-      memset(binary, 0, Stride());
-      memcpy(binary, &block.metadata, sizeof(block.metadata));
-      pb->template AddressOf<::phaser::VectorHeader>(header)->num_elements =
-          index + 1;
+      const uint32_t chunk_end = static_cast<uint32_t>(
+          std::min<uint64_t>(end, uint64_t(chunk_begin) + capacity));
       if constexpr (kInPlace) {
-        f(pb, element, index - old_size);
-      } else if (absl::Status status = f(element); !status.ok()) {
-        return status;
+        char* binary = pb->template AddressOf<char>(chunk) +
+                       size_t{index - chunk_begin} * Stride();
+        for (; index < chunk_end; ++index, binary += Stride()) {
+          memset(binary, 0, Stride());
+          memcpy(binary, &block.metadata, sizeof(block.metadata));
+          local_f(binary, index - old_size);
+        }
+      } else {
+        for (; index < chunk_end; ++index) {
+          pb = *buffer;
+          const ::phaser::BufferOffset element =
+              static_cast<::phaser::BufferOffset>(
+                  chunk + (index - chunk_begin) * Stride());
+          char* binary = pb->template AddressOf<char>(element);
+          memset(binary, 0, Stride());
+          memcpy(binary, &block.metadata, sizeof(block.metadata));
+          pb->template AddressOf<::phaser::VectorHeader>(header)->num_elements =
+              index + 1;
+          if (absl::Status status = f(element); !status.ok()) {
+            return status;
+          }
+        }
       }
+    }
+    if constexpr (kInPlace) {
+      pb->template AddressOf<::phaser::VectorHeader>(header)->num_elements =
+          static_cast<uint32_t>(end);
     }
     return absl::OkStatus();
   }
