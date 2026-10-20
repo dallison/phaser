@@ -1207,6 +1207,10 @@ class IndirectMessageField : public Field {
     }
   }
 
+  // Clear() of the handle alone, for when the buffer holding the message is
+  // reset.
+  void ClearHandle() { msg_.PhaserClearHandles(); }
+
   void Indent(int indent) const {
     Field::Indent(indent);
     msg_.Indent(indent);
@@ -1296,22 +1300,16 @@ struct FieldRelease<IndirectMessageField<MessageType, true>>
 template <>
 struct FieldResetClear<StringField> : NoResetClear {};
 
-// Clear() clears the handle of a message that holds values outside the
-// payload or that it releases memory from.
-template <typename MessageType>
-struct FieldResetClear<IndirectMessageField<MessageType, false>>
-    : std::integral_constant<ResetClear,
-                             ClearReleasesNothing<MessageType>::value &&
-                                     !HasSyncToPayloadWork<MessageType>::value
-                                 ? ResetClear::kNone
-                                 : ResetClear::kBefore> {};
-
-template <typename MessageType>
-struct FieldResetClear<IndirectMessageField<MessageType, true>>
-    : std::integral_constant<ResetClear,
-                             HasSyncToPayloadWork<MessageType>::value
-                                 ? ResetClear::kBefore
-                                 : ResetClear::kNone> {};
+// Clear() clears the handle of a message whose fields' handles hold values
+// from outside the payload.  The reset frees everything else.
+template <typename MessageType, bool kInline>
+struct FieldResetClear<IndirectMessageField<MessageType, kInline>>
+    : std::integral_constant<
+          ResetClear, !HasSyncToPayloadWork<MessageType>::value
+                          ? ResetClear::kNone
+                      : ClearsHandlesAlone<MessageType>::value
+                          ? ResetClear::kHandle
+                          : ResetClear::kBefore> {};
 }  // namespace internal
 
 template <typename MessageType>

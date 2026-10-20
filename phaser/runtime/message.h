@@ -305,6 +305,15 @@ template <typename T>
 struct HasSyncToPayloadWork<
     T, std::void_t<decltype(T::kPhaserHasSyncToPayloadWork)>>
     : std::bool_constant<T::kPhaserHasSyncToPayloadWork> {};
+
+// True for generated messages whose PhaserClearHandles() is all that is left
+// to clear when the buffer holding them is reset.
+template <typename T, typename = void>
+struct ClearsHandlesAlone : std::false_type {};
+template <typename T>
+struct ClearsHandlesAlone<T,
+                          std::void_t<decltype(T::PhaserClearsHandlesAlone())>>
+    : std::bool_constant<T::PhaserClearsHandlesAlone()> {};
 }  // namespace internal
 
 // PhaserROSFixedSize() of a message whose ROS serialized size depends on its

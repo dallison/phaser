@@ -2280,9 +2280,36 @@ void MessageGenerator::GenerateClearByReset(std::ostream& os) {
 }
 
 void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
+  // Only a message whose fields' handles hold values from outside the
+  // payload has anything to clear in them alone.
+  const bool clears_handles =
+      IsRosFrontend() && HasSyncToPayloadWork(message_) && unions_.empty();
   if (decl) {
     os << "  void Clear() override;\n";
+    if (clears_handles) {
+      os << "  // Clears what the fields' handles hold, for when the buffer "
+            "holding the\n"
+            "  // message is reset.  Only when PhaserClearsHandlesAlone().\n"
+            "  void PhaserClearHandles();\n"
+            "  // Whether that is all a reset leaves to clear.\n"
+            "  static constexpr bool PhaserClearsHandlesAlone() {\n"
+            "    return true";
+      for (auto& field : fields_) {
+        os << " &&\n           ::phaser::internal::FieldResetClear<decltype("
+           << field->member_name
+           << ")>::value != ::phaser::internal::ResetClear::kBefore";
+      }
+      os << ";\n  }\n";
+    }
     return;
+  }
+  if (clears_handles) {
+    os << "void " << MessageName(message_) << "::PhaserClearHandles() {\n";
+    for (auto& field : fields_) {
+      os << "  ::phaser::internal::ClearBeforeReset(" << field->member_name
+         << ");\n";
+    }
+    os << "}\n\n";
   }
   os << "void " << MessageName(message_) << "::Clear() {\n";
   // Freeing one block outside the message's body costs less than resetting
@@ -3309,12 +3336,10 @@ void MessageGenerator::GenerateROSFieldRead(
         os << indent << "{\n";
         os << indent << "  auto _phaser_message = " << mutable_message()
            << ";\n";
-        // An appended element is freshly allocated, so already clear.
+        // The message being read is clear, so the messages in it are too.
         os << indent << "  if (absl::Status _phaser_status = "
-           << "_phaser_message->"
-           << (append ? "DeserializeFromROSUncleared" : "DeserializeFromROS")
-           << "(_phaser_buffer); !_phaser_status.ok()) return "
-              "_phaser_status;\n";
+           << "_phaser_message->DeserializeFromROSUncleared(_phaser_buffer); "
+              "!_phaser_status.ok()) return _phaser_status;\n";
         os << indent << "}\n";
       }
       return;

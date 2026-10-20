@@ -213,6 +213,10 @@ class RosMessageField : public IndirectMessageField<Backend, kInline> {
   }
 
   void ClearHandle() {
+    if constexpr (internal::FieldResetClear<Base>::value ==
+                  internal::ResetClear::kHandle) {
+      Base::ClearHandle();
+    }
     cache_ = RosType();
     cache_loaded_ = false;
     dirty_ = false;

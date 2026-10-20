@@ -1226,6 +1226,25 @@ TEST(ROSWireConversionTest, ClearingAMainMessageResetsItsCachedROSValues) {
   EXPECT_EQ(message.stamp.Get().nsec, 4u);
 }
 
+TEST(ROSWireConversionTest,
+     ClearingAMainMessageResetsTheCachedROSValuesOfItsMessages) {
+  DirectBranch expected;
+  expected.header->seq = 1;
+  std::string expected_ros;
+  ASSERT_TRUE(expected.SerializeToROSString(&expected_ros).ok());
+
+  DirectBranch message;
+  for (int round = 0; round < 2; ++round) {
+    message.header->stamp = ::ros::Time(7, 8);
+    message.Clear();
+    message.header->seq = 1;
+    EXPECT_EQ(message.header->stamp.sec, 0u);
+    std::string message_ros;
+    ASSERT_TRUE(message.SerializeToROSString(&message_ros).ok());
+    EXPECT_EQ(message_ros, expected_ros);
+  }
+}
+
 TEST(ROSWireConversionTest, ClearingAMainMessageRemakesItsFixedArrays) {
   // User metadata allocated after the message was made keeps it from
   // resetting its buffer, so it clears field by field.
