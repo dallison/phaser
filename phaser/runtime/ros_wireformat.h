@@ -151,17 +151,15 @@ class ROSReader {
   }
 
   absl::StatusOr<std::string_view> ReadString() {
-    absl::StatusOr<uint32_t> length = Read<uint32_t>();
-    if (!length.ok()) {
-      return length.status();
+    if (ABSL_PREDICT_FALSE(Remaining() < sizeof(uint32_t))) {
+      return TruncatedError(sizeof(uint32_t));
     }
-    if (*length > Remaining()) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Truncated ROS string at byte %d: length %d exceeds remaining %d",
-          position_, *length, Remaining()));
+    const uint32_t length = ReadUnchecked<uint32_t>();
+    if (ABSL_PREDICT_FALSE(length > Remaining())) {
+      return TruncatedStringError(length);
     }
-    const std::string_view value(data_.data() + position_, *length);
-    position_ += *length;
+    const std::string_view value(data_.data() + position_, length);
+    position_ += length;
     return value;
   }
 
@@ -183,6 +181,13 @@ class ROSReader {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
         length, Remaining()));
+  }
+
+  ABSL_ATTRIBUTE_NOINLINE absl::Status TruncatedStringError(
+      uint32_t length) const {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Truncated ROS string at byte %d: length %d exceeds remaining %d",
+        position_, length, Remaining()));
   }
 
   absl::Span<const char> data_;

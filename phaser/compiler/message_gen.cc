@@ -4347,7 +4347,8 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
       os << "    absl::StatusOr<std::string_view> _phaser_value = "
             "_phaser_buffer.ReadString();\n";
       os << "    if (!_phaser_value.ok()) return _phaser_value.status();\n";
-      os << "    ::phaser::PayloadBuffer::SetString(_phaser_pb, *_phaser_value, "
+      os << "    ::phaser::PayloadBuffer::SetNewString(_phaser_pb, "
+            "*_phaser_value, "
          << location << ");\n";
     } else {
       os << "    absl::StatusOr<" << value.ros_type

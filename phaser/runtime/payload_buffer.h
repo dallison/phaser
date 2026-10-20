@@ -8,6 +8,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -272,6 +273,23 @@ struct PayloadBuffer {
   static char *SetString(PayloadBuffer **self, Str s,
                          BufferOffset header_offset) {
     return SetString(self, s.data(), s.size(), header_offset);
+  }
+
+  // SetString() for a StringHeader that holds no string yet.
+  static void SetNewString(PayloadBuffer **self, std::string_view s,
+                           BufferOffset header_offset) {
+    if (s.size() > UINT32_MAX - sizeof(uint32_t)) {
+      throw std::bad_alloc();
+    }
+    const uint32_t length = uint32_t(s.size());
+    char *block = static_cast<char *>(
+        Allocate(self, length + uint32_t(sizeof(uint32_t)), false));
+    if (block == nullptr) {
+      throw std::bad_alloc();
+    }
+    memcpy(block, &length, sizeof(length));
+    memcpy(block + sizeof(length), s.data(), length);
+    (*self)->Set<BufferOffset>(header_offset, (*self)->UncheckedOffset(block));
   }
 
   static void ClearString(PayloadBuffer **self, BufferOffset header_offset) {
