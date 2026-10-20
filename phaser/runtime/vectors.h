@@ -1186,8 +1186,23 @@ class MessageVectorField : public Field {
 
   // Add() without the handle: appends an empty element and returns its offset.
   ::phaser::BufferOffset AddElement() {
-    ::phaser::PayloadBuffer** buffer = GetBufferAddr();
-    ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+    return AddElementAt(GetRuntime(), VectorHeaderOffset());
+  }
+
+  // The offset of the VectorHeader in a mutable message.
+  ::phaser::BufferOffset VectorHeaderOffset() const {
+    return (*GetBufferAddr())->UncheckedOffset(ResolvedVectorHeader());
+  }
+
+  // The static forms below work on the vector of T whose VectorHeader is at
+  // 'header' in the mutable buffer of 'runtime', which this process built.
+
+  // AddElement() for the vector at 'header'.
+  static ::phaser::BufferOffset AddElementAt(const RuntimeHandle& runtime,
+                                             ::phaser::BufferOffset header) {
+    ::phaser::PayloadBuffer** buffer = &runtime->pb;
+    ::phaser::VectorHeader* hdr =
+        (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header);
     const uint32_t index = hdr->num_elements;
     const ::phaser::MessageVectorBlock* block =
         (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
@@ -1197,8 +1212,7 @@ class MessageVectorField : public Field {
       element = static_cast<::phaser::BufferOffset>(
           hdr->data + sizeof(::phaser::MessageVectorBlock) + index * Stride());
     } else {
-      const ::phaser::BufferOffset header = (*buffer)->UncheckedOffset(hdr);
-      element = GrowForAdd(buffer, header, index);
+      element = GrowForAdd(runtime, header, index);
       hdr = (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header);
       block =
           (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
@@ -1212,20 +1226,33 @@ class MessageVectorField : public Field {
     return element;
   }
 
-  // Appends 'n' elements, calling 'f' with the offset of each after adding
-  // it, as AddElement() would, and stops at the first error 'f' returns.
-  // 'f' may allocate in the buffer but must not change this vector.
+  // Appends 'n' elements to the vector at 'header', calling 'f' with the
+  // offset of each after adding it, as AddElementAt() would, and stops at the
+  // first error 'f' returns.  'f' may allocate in the buffer but must not
+  // change this vector.
   template <typename F>
-  absl::Status AddElements(uint32_t n, F&& f) {
-    return AppendElements<false>(n, f);
+  static absl::Status AddElementsAt(const RuntimeHandle& runtime,
+                                    ::phaser::BufferOffset header, uint32_t n,
+                                    F&& f) {
+    return AppendElements<false>(runtime, header, n, f);
   }
 
-  // AddElements() for an 'f' that neither fails nor allocates, called with
+  // AddElementsAt() for an 'f' that neither fails nor allocates, called with
   // a copy of 'f' with the address of each element and its index among the
   // 'n'.  The size includes the new elements only once all are added.
   template <typename F>
-  void AddElementsInPlace(uint32_t n, F&& f) {
-    (void)AppendElements<true>(n, f);
+  static void AddElementsInPlaceAt(const RuntimeHandle& runtime,
+                                   ::phaser::BufferOffset header, uint32_t n,
+                                   F&& f) {
+    (void)AppendElements<true>(runtime, header, n, f);
+  }
+
+  // reserve() for the vector at 'header'.
+  static void ReserveAt(const RuntimeHandle& runtime,
+                        ::phaser::BufferOffset header, size_t n) {
+    if (n != 0) {
+      Grow(runtime, header, n, n);
+    }
   }
 
   T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
@@ -1267,9 +1294,10 @@ class MessageVectorField : public Field {
   }
 
   void reserve(size_t n) {
-    ::phaser::PayloadBuffer** buffer = GetBufferAddr();
+    // Throws for a readonly message even when there is room.
+    (void)GetBufferAddr();
     if (n > capacity()) {
-      Grow(buffer, (*buffer)->UncheckedOffset(ResolvedVectorHeader()), n, n);
+      Grow(GetRuntime(), VectorHeaderOffset(), n, n);
     }
   }
 
@@ -1518,13 +1546,13 @@ class MessageVectorField : public Field {
   }
 
   template <bool kInPlace, typename F>
-  absl::Status AppendElements(uint32_t n, F& f) {
+  static absl::Status AppendElements(const RuntimeHandle& runtime,
+                                     ::phaser::BufferOffset header, uint32_t n,
+                                     F& f) {
     if (n == 0) {
       return absl::OkStatus();
     }
-    ::phaser::PayloadBuffer** buffer = GetBufferAddr();
-    const ::phaser::BufferOffset header =
-        (*buffer)->UncheckedOffset(ResolvedVectorHeader());
+    ::phaser::PayloadBuffer** buffer = &runtime->pb;
     const uint32_t old_size =
         (*buffer)->template AddressOf<::phaser::VectorHeader>(header)
             ->num_elements;
@@ -1532,7 +1560,7 @@ class MessageVectorField : public Field {
     if (end > UINT32_MAX) {
       throw std::bad_alloc();
     }
-    reserve(end);
+    ReserveAt(runtime, header, end);
     // Only an allocation by 'f' can move the buffer.
     ::phaser::PayloadBuffer* pb = *buffer;
     const ::phaser::BufferOffset block_offset =
@@ -1612,26 +1640,27 @@ class MessageVectorField : public Field {
 
   // Makes room for element 'index', which Add() is about to append to the
   // vector whose VectorHeader is at 'header', and returns its offset.
-  ABSL_ATTRIBUTE_NOINLINE ::phaser::BufferOffset GrowForAdd(
-      ::phaser::PayloadBuffer** buffer, ::phaser::BufferOffset header,
+  ABSL_ATTRIBUTE_NOINLINE static ::phaser::BufferOffset GrowForAdd(
+      const RuntimeHandle& runtime, ::phaser::BufferOffset header,
       uint32_t index) {
-    Grow(buffer, header, size_t(index) + 1, DefaultFirstCapacity());
+    Grow(runtime, header, size_t(index) + 1, DefaultFirstCapacity());
     const ::phaser::BufferOffset block =
-        (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header)->data;
-    const MessageRuntime& runtime = *GetRuntime();
+        runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header)
+            ->data;
     return internal::MessageVectorElement(
-        runtime, internal::LoadMessageVectorLayout(runtime, block), index);
+        *runtime, internal::LoadMessageVectorLayout(*runtime, block), index);
   }
 
   // Grows the storage of the vector whose VectorHeader is at 'header' to
   // hold at least 'n' elements.  If there is no storage yet, its first chunk
   // holds 'first_capacity' elements.
-  void Grow(::phaser::PayloadBuffer** buffer, ::phaser::BufferOffset header,
-            size_t n, size_t first_capacity) {
+  static void Grow(const RuntimeHandle& runtime,
+                   ::phaser::BufferOffset header, size_t n,
+                   size_t first_capacity) {
+    ::phaser::PayloadBuffer** buffer = &runtime->pb;
     if ((*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header)
             ->data == 0) {
-      const ::phaser::BufferOffset metadata =
-          Message::MetadataFor<T>(GetRuntime());
+      const ::phaser::BufferOffset metadata = Message::MetadataFor<T>(runtime);
       const uint64_t bytes = sizeof(::phaser::MessageVectorBlock) +
                              uint64_t(first_capacity) * Stride();
       void* memory = bytes > UINT32_MAX ? nullptr

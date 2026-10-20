@@ -682,6 +682,8 @@ using DirectLeaf = ::foo::bar::phaser::DirectLeaf;
 using ProtobufDirectFixedLeaf =
     ::foo::bar::pb::protobuf_phaser::DirectFixedLeaf;
 using ProtobufDirectLeaf = ::foo::bar::pb::protobuf_phaser::DirectLeaf;
+using DirectBranch = ::foo::bar::phaser::DirectBranch;
+using ProtobufDirectBranch = ::foo::bar::pb::protobuf_phaser::DirectBranch;
 
 // Every third element leaves its singular messages unset.
 bool HasMessages(int i) { return i % 3 != 0; }
@@ -791,6 +793,7 @@ void PopulateFixedLeaf(DirectFixedLeaf& leaf, int i) {
   leaf.level = -100 * i;
   leaf.ratio = static_cast<float>(i) / 4;
   leaf.kind = static_cast<DirectKind>(i % 3);
+  leaf.marker = DirectKind::DIRECT_KIND_UNSPECIFIED;
   leaf.delta = -(int64_t{i} << 33);
 }
 
@@ -803,6 +806,7 @@ void PopulateProtobufFixedLeaf(ProtobufDirectFixedLeaf& leaf, int i) {
   leaf.set_level(-100 * i);
   leaf.set_ratio(static_cast<float>(i) / 4);
   leaf.set_kind(static_cast<ProtobufDirectKind>(i % 3));
+  leaf.set_marker(ProtobufDirectKind::DIRECT_KIND_UNSPECIFIED);
   leaf.set_delta(-(int64_t{i} << 33));
 }
 
@@ -818,6 +822,74 @@ void PopulateProtobufLeaf(ProtobufDirectLeaf& leaf, int i) {
   leaf.set_count(static_cast<uint32_t>(i));
   leaf.set_payload(std::string(static_cast<size_t>(i % 3), '\xff'));
   leaf.set_kind(static_cast<ProtobufDirectKind>(i % 3));
+}
+
+// Branch 0 holds only zeros, empty strings and empty vectors.
+void PopulateBranch(DirectBranch& branch, int i, int depth) {
+  branch.id = i;
+  branch.label = i == 0 ? std::string() : "branch " + std::to_string(i);
+  branch.stamp = ::ros::Time(static_cast<uint32_t>(i), 7);
+  branch.timeout = ::ros::Duration(-i, 8);
+  branch.header->seq = static_cast<uint32_t>(i);
+  branch.header->stamp = ::ros::Time(9, static_cast<uint32_t>(i));
+  branch.header->frame_id = i == 0 ? "" : "frame";
+  PopulateLeaf(*branch.leaf, i);
+  PopulateDirectElement(*branch.element, i, 0);
+  for (int j = 0; j < i % 4; ++j) {
+    branch.samples.push_back(i * 100 + j);
+    branch.octets.push_back(static_cast<uint32_t>(250 + j));
+    branch.flags.push_back(j % 2 == 1);
+    branch.kinds.push_back(static_cast<DirectKind>(j % 3));
+    auto fixed_leaf = branch.fixed_leaves.Add();
+    PopulateFixedLeaf(fixed_leaf, j);
+    branch.stamps.Add(::ros::Time(static_cast<uint32_t>(j), 1));
+  }
+  if (i % 4 == 1) {
+    auto element = branch.elements.Add();
+    PopulateDirectElement(element, i + 1, 0);
+  }
+  if (depth > 0) {
+    for (int j = 0; j < 2; ++j) {
+      auto nested = branch.branches.Add();
+      PopulateBranch(nested, i * 10 + j + 1, depth - 1);
+    }
+  }
+}
+
+void PopulateProtobufBranch(ProtobufDirectBranch& branch, int i, int depth) {
+  branch.set_id(i);
+  branch.set_label(i == 0 ? std::string() : "branch " + std::to_string(i));
+  branch.mutable_stamp()->set_seconds(i);
+  branch.mutable_stamp()->set_nanos(7);
+  branch.mutable_timeout()->set_seconds(-i);
+  branch.mutable_timeout()->set_nanos(8);
+  branch.mutable_header()->set_seq(static_cast<uint32_t>(i));
+  branch.mutable_header()->mutable_stamp()->set_seconds(9);
+  branch.mutable_header()->mutable_stamp()->set_nanos(i);
+  branch.mutable_header()->set_frame_id(i == 0 ? "" : "frame");
+  PopulateProtobufLeaf(*branch.mutable_leaf(), i);
+  PopulateProtobufDirectElement(*branch.mutable_element(), i, 0);
+  for (int j = 0; j < i % 4; ++j) {
+    branch.add_samples(i * 100 + j);
+    branch.add_octets(static_cast<uint32_t>(250 + j));
+    branch.add_flags(j % 2 == 1);
+    branch.add_kinds(static_cast<ProtobufDirectKind>(j % 3));
+    auto fixed_leaf = branch.add_fixed_leaves();
+    PopulateProtobufFixedLeaf(fixed_leaf, j);
+    auto stamp = branch.add_stamps();
+    stamp.set_seconds(j);
+    stamp.set_nanos(1);
+  }
+  if (i % 4 == 1) {
+    auto element = branch.add_elements();
+    PopulateProtobufDirectElement(element, i + 1, 0);
+  }
+  if (depth > 0) {
+    for (int j = 0; j < 2; ++j) {
+      auto nested = branch.add_branches();
+      PopulateProtobufBranch(nested, i * 10 + j + 1, depth - 1);
+    }
+  }
 }
 
 // Enough elements to fill several chunks of the vector.
@@ -860,6 +932,20 @@ TEST(ROSWireConversionTest, MutableVectorElementsMatchTheHandlePath) {
       DirectElements::ProtobufToROS(message.SerializeAsString(), protobuf_output)
           .ok());
   EXPECT_EQ(protobuf_output.AsString(), expected);
+
+  std::vector<char> protobuf_wire(expected.size() * 4 + 4096);
+  ::phaser::ProtoBuffer protobuf_wire_output(protobuf_wire.data(),
+                                             protobuf_wire.size());
+  ASSERT_TRUE(DirectElements::ROSToProtobuf(
+                  absl::Span<const char>(expected.data(), expected.size()),
+                  protobuf_wire_output)
+                  .ok());
+  DirectElements from_protobuf;
+  ASSERT_TRUE(from_protobuf.ParseFromArray(protobuf_wire.data(),
+                                           protobuf_wire_output.Size()));
+  ::phaser::ROSBuffer from_protobuf_output;
+  ASSERT_TRUE(from_protobuf.SerializeToROS(from_protobuf_output).ok());
+  EXPECT_EQ(from_protobuf_output.AsString(), expected);
 
   // The protobuf frontend stores its nested messages through offsets.
   ProtobufDirectElements protobuf_message;
@@ -976,6 +1062,68 @@ TEST(ROSWireConversionTest, ParsedLeavesAppendAfterExistingChunks) {
   ASSERT_TRUE(expected.SerializeToROSString(&want).ok());
   EXPECT_EQ(actual, want);
   EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
+}
+
+TEST(ROSWireConversionTest, BranchElementsParseLikeTheHandlePath) {
+  constexpr int kBranchCount = 6;
+  DirectElements message;
+  ProtobufDirectElements protobuf_message;
+  for (int i = 0; i < kBranchCount; ++i) {
+    auto branch = message.branches.Add();
+    PopulateBranch(branch, i, 1);
+    auto protobuf_branch = protobuf_message.add_branches();
+    PopulateProtobufBranch(protobuf_branch, i, 1);
+  }
+  std::string ros;
+  ASSERT_TRUE(message.SerializeToROSString(&ros).ok());
+  std::string protobuf_ros;
+  ASSERT_TRUE(protobuf_message.SerializeToROSString(&protobuf_ros).ok());
+  ASSERT_EQ(protobuf_ros, ros);
+
+  const absl::Span<const char> input(ros.data(), ros.size());
+  DirectElements decoded;
+  ASSERT_TRUE(decoded.ParseFromROS(input).ok());
+  ASSERT_EQ(decoded.branches.size(), size_t{kBranchCount});
+  std::string reencoded;
+  ASSERT_TRUE(decoded.SerializeToROSString(&reencoded).ok());
+  EXPECT_EQ(reencoded, ros);
+  ProtobufDirectElements protobuf_decoded;
+  ASSERT_TRUE(protobuf_decoded.ParseFromROS(input).ok());
+  std::string protobuf_reencoded;
+  ASSERT_TRUE(protobuf_decoded.SerializeToROSString(&protobuf_reencoded).ok());
+  EXPECT_EQ(protobuf_reencoded, ros);
+
+  // A root message reads its own fields through handles, so it stores each
+  // as the field setters do.
+  for (int i = 0; i < kBranchCount; ++i) {
+    std::string branch_ros;
+    ASSERT_TRUE(message.branches[i].SerializeToROSString(&branch_ros).ok());
+    const absl::Span<const char> branch_input(branch_ros.data(),
+                                              branch_ros.size());
+    DirectBranch root;
+    ASSERT_TRUE(root.ParseFromROS(branch_input).ok());
+    EXPECT_EQ(decoded.branches[i].SerializeAsString(), root.SerializeAsString())
+        << i;
+    ProtobufDirectBranch protobuf_root;
+    ASSERT_TRUE(protobuf_root.ParseFromROS(branch_input).ok());
+    EXPECT_EQ(protobuf_decoded.branches(static_cast<size_t>(i))
+                  .SerializeAsString(),
+              protobuf_root.SerializeAsString())
+        << i;
+  }
+
+  // Each truncation is in its own allocation, so a read past it is caught
+  // under ASan.
+  for (size_t size = 0; size < ros.size(); ++size) {
+    const std::vector<char> truncated(
+        ros.begin(), ros.begin() + static_cast<std::ptrdiff_t>(size));
+    const absl::Span<const char> partial_input(truncated.data(),
+                                               truncated.size());
+    DirectElements partial;
+    EXPECT_FALSE(partial.ParseFromROS(partial_input).ok()) << size;
+    ProtobufDirectElements protobuf_partial;
+    EXPECT_FALSE(protobuf_partial.ParseFromROS(partial_input).ok()) << size;
+  }
 }
 
 TEST(ROSWireConversionTest, MutableVectorElementsReportShortOutput) {

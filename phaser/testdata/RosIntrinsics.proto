@@ -93,6 +93,11 @@ message DirectFixedLeaf {
   int32 level = 6 [(phaser.ros_field) = { type: "int16" }];
   float ratio = 7;
   DirectKind kind = 8;
+  DirectKind marker = 10 [(phaser.ros_field) = {
+    type: "example_msgs/Marker"
+    nested_data_type: "example_msgs/Marker"
+    nested_md5_text: "uint8 FIRST=1\nuint8 SECOND=2"
+  }];
   sint64 delta = 9;
 }
 
@@ -103,10 +108,36 @@ message DirectLeaf {
   DirectKind kind = 4;
 }
 
+// An element with nested messages and vectors, which ROS parsing also
+// writes straight into the payload.  Its DirectElements take the handle path.
+message DirectBranch {
+  int32 id = 1;
+  string label = 2;
+  DirectKind marker = 16 [(phaser.ros_field) = {
+    type: "example_msgs/Marker"
+    nested_data_type: "example_msgs/Marker"
+    nested_md5_text: "uint8 FIRST=1\nuint8 SECOND=2"
+  }];
+  google.protobuf.Timestamp stamp = 3;
+  google.protobuf.Duration timeout = 4;
+  std_msgs.Header header = 5;
+  DirectLeaf leaf = 6;
+  DirectElement element = 7;
+  repeated int32 samples = 8;
+  repeated uint32 octets = 9 [(phaser.ros_field) = { type: "uint8" }];
+  repeated bool flags = 10;
+  repeated DirectKind kinds = 11;
+  repeated DirectFixedLeaf fixed_leaves = 12;
+  repeated google.protobuf.Timestamp stamps = 13;
+  repeated DirectElement elements = 14;
+  repeated DirectBranch branches = 15;
+}
+
 message DirectElements {
   repeated DirectElement elements = 1;
   // A oneof and fixed arrays keep these elements on the handle path.
   repeated RosIntrinsicMessage handled = 2;
   repeated DirectFixedLeaf fixed_leaves = 3;
   repeated DirectLeaf leaves = 4;
+  repeated DirectBranch branches = 5;
 }
