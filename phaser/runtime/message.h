@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <functional>
@@ -604,6 +605,25 @@ struct MessageRuntime {
     }
     for (uint32_t i = 0; i < control->count; ++i) {
       if (control->entries[i].key == key) {
+        return control->entries[i].field_data;
+      }
+    }
+    return 0;
+  }
+  // 'hint' is the index at which 'key' was last found, in any buffer.
+  ::phaser::BufferOffset GetMetadata(uint64_t key,
+                                     std::atomic<uint32_t>& hint) const {
+    const RuntimeControlBlock* control = GetRuntimeControl();
+    if (control == nullptr) {
+      return 0;
+    }
+    const uint32_t guess = hint.load(std::memory_order_relaxed);
+    if (guess < control->count && control->entries[guess].key == key) {
+      return control->entries[guess].field_data;
+    }
+    for (uint32_t i = 0; i < control->count; ++i) {
+      if (control->entries[i].key == key) {
+        hint.store(i, std::memory_order_relaxed);
         return control->entries[i].field_data;
       }
     }
@@ -1326,8 +1346,9 @@ struct Message {
   // buffer, copying it in if it is not there yet.  This can move the buffer.
   template <typename MessageType>
   static ::phaser::BufferOffset MetadataFor(const RuntimeHandle& runtime) {
+    static std::atomic<uint32_t> hint{0};
     const uint64_t key = MetadataKeyFor<MessageType>();
-    ::phaser::BufferOffset metadata = runtime->GetMetadata(key);
+    ::phaser::BufferOffset metadata = runtime->GetMetadata(key, hint);
     if (metadata != 0) {
       return metadata;
     }
