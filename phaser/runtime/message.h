@@ -19,6 +19,7 @@
 #include <string_view>
 #include <type_traits>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -446,7 +447,7 @@ void InitializeMetadata(::phaser::PayloadBuffer** pb) {
 // Mutable messages share one of these through an owning shared_ptr. Read-only
 // messages copy this small runtime into the generated handle and use a
 // non-owning shared_ptr alias without allocating a control block.
-enum class RuntimeHandleMode {
+enum class RuntimeHandleMode : uint8_t {
   kBorrowedReadonly,
   kFixedMutable,
   kOwnedDynamic,
@@ -480,6 +481,93 @@ struct MessageRuntime {
   size_t buffer_size = 0;
   bool is_mutable_ = false;
   RuntimeHandleMode mode_ = RuntimeHandleMode::kBorrowedReadonly;
+  // The start of the free memory of a new buffer holding only its main
+  // message and its metadata, or 0.  Everything allocated past it belongs
+  // to the main message, so clearing that can free it all at once.  It fits
+  // in what would be padding, as readonly handles copy the runtime.
+  ::phaser::BufferOffset reset_mark_ = 0;
+
+  // Records that the buffer holds only a new main message and its metadata.
+  void MarkNewBuffer() {
+    reset_mark_ = 0;
+    if (pb == nullptr || !is_mutable_) {
+      return;
+    }
+    for (const ::phaser::BufferOffset head : pb->bitmaps) {
+      if (head != 0) {
+        return;
+      }
+    }
+    const ::phaser::BufferOffset free = pb->free_list;
+    const auto* block = pb->UncheckedAddress<::phaser::FreeBlockHeader>(free);
+    if (block == nullptr || block->next != 0 ||
+        block->length != pb->full_size - free ||
+        pb->hwm != free + sizeof(::phaser::FreeBlockHeader)) {
+      return;
+    }
+    reset_mark_ = free;
+  }
+
+  // Whether clearing the main message at 'message' may free everything
+  // allocated since the buffer was new.  ResetFor() decides.
+  bool MayResetFor(::phaser::BufferOffset message) const {
+    return reset_mark_ != 0 && message == pb->message;
+  }
+
+  // Frees everything allocated since the buffer was new and empties the
+  // main message, of 'binary_size' bytes at 'message', but for its
+  // metadata.  Not if the metadata or anything it refers to has reached
+  // past the mark, or after Finalize().  Returns whether it did.
+  bool ResetFor(::phaser::BufferOffset message, size_t binary_size) {
+    if (!MayResetFor(message)) {
+      return false;
+    }
+    // Nothing allocated since the last reset leaves nothing to free, as
+    // nothing is allocated below the mark.
+    if ((pb->free_list != reset_mark_ ||
+         pb->hwm != reset_mark_ + sizeof(::phaser::FreeBlockHeader)) &&
+        !FreeSinceMark()) {
+      return false;
+    }
+    memset(pb->AddressOf<char>(message) + sizeof(::phaser::BufferOffset), 0,
+           binary_size - sizeof(::phaser::BufferOffset));
+    return true;
+  }
+
+  // Frees everything allocated since the mark, if nothing that stays has
+  // reached past it.  Returns whether it did.
+  ABSL_ATTRIBUTE_NOINLINE bool FreeSinceMark() {
+    if (pb->free_list == 0 || pb->metadata >= reset_mark_ ||
+        pb->full_size - sizeof(::phaser::FreeBlockHeader) < reset_mark_) {
+      return false;
+    }
+    RuntimeControlBlock* control = GetRuntimeControl();
+    if (control != nullptr) {
+      // Growing in place can take the control block past the mark.
+      if (pb->metadata + RuntimeControlSize(control->capacity) > reset_mark_ ||
+          control->user_metadata >= reset_mark_) {
+        return false;
+      }
+      // The metadata of types first used after the mark is freed with the
+      // rest.
+      uint32_t kept = 0;
+      for (uint32_t i = 0; i < control->count; ++i) {
+        if (control->entries[i].field_data < reset_mark_) {
+          control->entries[kept++] = control->entries[i];
+        }
+      }
+      control->count = kept;
+    }
+    auto* block = pb->AddressOf<::phaser::FreeBlockHeader>(reset_mark_);
+    block->length = pb->full_size - reset_mark_;
+    block->next = 0;
+    pb->free_list = reset_mark_;
+    pb->hwm = reset_mark_ + sizeof(::phaser::FreeBlockHeader);
+    for (::phaser::BufferOffset& head : pb->bitmaps) {
+      head = 0;
+    }
+    return true;
+  }
 
   void AddMetadata(uint64_t key, ::phaser::BufferOffset offset) {
     RuntimeControlBlock* control = GetRuntimeControl();
@@ -697,6 +785,34 @@ struct FieldRelease : std::false_type {};
 struct NoFieldRelease : std::true_type {
   static void Release(const RuntimeHandle&, ::phaser::BufferOffset) {}
 };
+
+// What a field's Clear() becomes when the buffer of the main message holding
+// it is reset: nothing if Clear() only changes the payload, which the reset
+// does, or Clear() before the reset if it also changes the field's handle
+// using the payload, or after it if it allocates, or ClearHandle() if it
+// also changes the handle without the payload.
+enum class ResetClear { kNone, kBefore, kAfter, kHandle };
+template <typename F>
+struct FieldResetClear
+    : std::integral_constant<ResetClear, ResetClear::kBefore> {};
+using NoResetClear = std::integral_constant<ResetClear, ResetClear::kNone>;
+using ResetClearAfter = std::integral_constant<ResetClear, ResetClear::kAfter>;
+
+template <typename F>
+void ClearBeforeReset(F& field) {
+  if constexpr (FieldResetClear<F>::value == ResetClear::kBefore) {
+    field.Clear();
+  } else if constexpr (FieldResetClear<F>::value == ResetClear::kHandle) {
+    field.ClearHandle();
+  }
+}
+
+template <typename F>
+void ClearAfterReset(F& field) {
+  if constexpr (FieldResetClear<F>::value == ResetClear::kAfter) {
+    field.Clear();
+  }
+}
 
 // The 'count' values of type T at 'offset', or nullptr if they don't fit in
 // the buffer.

@@ -209,6 +209,10 @@ class RosMessageField : public IndirectMessageField<Backend, kInline> {
 
   void Clear() {
     Base::Clear();
+    ClearHandle();
+  }
+
+  void ClearHandle() {
     cache_ = RosType();
     cache_loaded_ = false;
     dirty_ = false;
@@ -672,6 +676,25 @@ struct FieldRelease<RosHeaderField<Backend, kInline>>
 template <typename Sequence, typename Traits>
 struct FieldRelease<RosRepeatedMessageField<Sequence, Traits>>
     : FieldRelease<Sequence> {};
+
+// Clear() resets the cached ROS value, which needs nothing from the payload
+// unless clearing the backend does.
+template <typename Backend, typename Traits, bool kInline>
+struct FieldResetClear<RosMessageField<Backend, Traits, kInline>>
+    : std::integral_constant<
+          ResetClear,
+          FieldResetClear<IndirectMessageField<Backend, kInline>>::value ==
+                  ResetClear::kBefore
+              ? ResetClear::kBefore
+              : ResetClear::kHandle> {};
+
+template <typename Backend, bool kInline>
+struct FieldResetClear<RosHeaderField<Backend, kInline>>
+    : FieldResetClear<IndirectMessageField<Backend, kInline>> {};
+
+template <typename Sequence, typename Traits>
+struct FieldResetClear<RosRepeatedMessageField<Sequence, Traits>>
+    : FieldResetClear<Sequence> {};
 }  // namespace internal
 
 }  // namespace phaser

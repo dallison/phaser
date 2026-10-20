@@ -1376,9 +1376,37 @@ bool MessageGenerator::StoresMessageInline(
   // A type that can reach this one through singular fields would have to
   // contain itself.
   const auto* type = field->message_type();
+  const auto* container = field->containing_type();
   absl::flat_hash_set<const google::protobuf::Descriptor*> visited;
-  return type != message_ &&
-         !ReachesThroughSingularFields(type, message_, &visited);
+  return type != container &&
+         !ReachesThroughSingularFields(type, container, &visited);
+}
+
+bool MessageGenerator::OwnsAtMostBlocks(
+    const google::protobuf::Descriptor* type, int& blocks) {
+  for (int i = 0; i < type->field_count(); ++i) {
+    const auto* field = type->field(i);
+    if (field->is_repeated() || field->containing_oneof() != nullptr) {
+      return false;
+    }
+    switch (field->type()) {
+      case google::protobuf::FieldDescriptor::TYPE_STRING:
+      case google::protobuf::FieldDescriptor::TYPE_BYTES:
+        if (--blocks < 0) {
+          return false;
+        }
+        break;
+      case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+        if (!StoresMessageInline(field) ||
+            !OwnsAtMostBlocks(field->message_type(), blocks)) {
+          return false;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return true;
 }
 
 std::string MessageGenerator::FieldOffset(const FieldInfo& field) const {
@@ -1944,6 +1972,7 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
      << "::BinarySize());\n"
      << InitializeMetadataCall("&pb")
      << "  ::phaser::MessageRuntime runtime(pb, true);\n"
+        "  runtime.MarkNewBuffer();\n"
         "  return "
      << MessageName(message_)
      << "(BorrowRuntime(runtime), pb->message);\n"
@@ -1997,7 +2026,8 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
         "std::move(free));\n"
      << InitializeMetadataCall("&runtime->pb")
-     << "  return "
+     << "  runtime->MarkNewBuffer();\n"
+        "  return "
      << MessageName(message_)
      << "(runtime, runtime->pb->message);\n"
         "}\n\n";
@@ -2034,7 +2064,9 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
      << "::BinarySize());\n"
         "  BindNewMutable(std::make_shared<"
         "::phaser::DynamicMutableMessageRuntime>(pb, ::free), pb->message);\n"
-     << InitializeMetadataCall("&runtime->pb") << "}\n\n";
+     << InitializeMetadataCall("&runtime->pb")
+     << "  runtime->MarkNewBuffer();\n"
+        "}\n\n";
 }
 
 void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
@@ -2221,12 +2253,44 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {
   os << "  };\n";
 }
 
+void MessageGenerator::GenerateClearByReset(std::ostream& os) {
+  // The main message owns everything allocated after it was made, so its
+  // fields need only clear what they hold outside the payload.
+  os << "  if (runtime != nullptr && "
+        "runtime->MayResetFor(absolute_binary_offset)) {\n";
+  for (auto& field : fields_) {
+    os << "    ::phaser::internal::ClearBeforeReset(" << field->member_name
+       << ");\n";
+  }
+  for (auto& [oneof, u] : unions_) {
+    for (size_t i = 0; i < u->members.size(); i++) {
+      os << "    " << u->member_name << ".Clear<" << i << ">();\n";
+    }
+  }
+  // Clearing those fields can allocate, so only then is it known whether
+  // the buffer can be reset.  If not, clearing them again does nothing.
+  os << "    if (runtime->ResetFor(absolute_binary_offset, BinarySize())) {\n";
+  for (auto& field : fields_) {
+    os << "      ::phaser::internal::ClearAfterReset(" << field->member_name
+       << ");\n";
+  }
+  os << "      return;\n";
+  os << "    }\n";
+  os << "  }\n";
+}
+
 void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
   if (decl) {
     os << "  void Clear() override;\n";
     return;
   }
   os << "void " << MessageName(message_) << "::Clear() {\n";
+  // Freeing one block outside the message's body costs less than resetting
+  // its buffer.
+  int blocks = 1;
+  if (!OwnsAtMostBlocks(message_, blocks)) {
+    GenerateClearByReset(os);
+  }
   for (auto& field : fields_) {
     os << "  " << field->member_name << ".Clear();\n";
   }

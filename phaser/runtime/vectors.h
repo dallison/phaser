@@ -319,7 +319,11 @@ class PrimitiveVectorField : public Field {
   size_t size() const { return NumElements(); }
   T* data() { return GetRuntime()->template ToAddress<T>(BaseOffset()); }
   const T* data() const {
-    return GetRuntime()->template ToAddress<const T>(BaseOffset());
+    // A default message has no runtime.
+    const RuntimeHandle& runtime = GetRuntime();
+    return runtime == nullptr
+               ? nullptr
+               : runtime->template ToAddress<const T>(BaseOffset());
   }
   size_t Size() const { return NumElements(); }
 
@@ -842,7 +846,11 @@ class EnumVectorField : public Field {
   size_t size() const { return NumElements(); }
   Enum* data() { return GetRuntime()->template ToAddress<Enum>(BaseOffset()); }
   const Enum* data() const {
-    return GetRuntime()->template ToAddress<const Enum>(BaseOffset());
+    // A default message has no runtime.
+    const RuntimeHandle& runtime = GetRuntime();
+    return runtime == nullptr
+               ? nullptr
+               : runtime->template ToAddress<const Enum>(BaseOffset());
   }
   bool empty() const { return size() == 0; }
   size_t Size() const { return NumElements(); }
@@ -2369,6 +2377,20 @@ struct FieldRelease<EnumVectorField<Enum, Stringizer, Parser, Packed>>
 
 template <typename T>
 struct FieldRelease<MessageVectorField<T>> : MessageVectorRelease<T> {};
+
+template <typename T, bool FixedSize, bool Signed, bool Packed>
+struct FieldResetClear<PrimitiveVectorField<T, FixedSize, Signed, Packed>>
+    : NoResetClear {};
+
+template <typename Enum, typename Stringizer, typename Parser, bool Packed>
+struct FieldResetClear<EnumVectorField<Enum, Stringizer, Parser, Packed>>
+    : NoResetClear {};
+
+template <typename T>
+struct FieldResetClear<MessageVectorField<T>> : NoResetClear {};
+
+template <>
+struct FieldResetClear<StringVectorField> : NoResetClear {};
 
 template <>
 struct FieldRelease<StringVectorField> : std::true_type {

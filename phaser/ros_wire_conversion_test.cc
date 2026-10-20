@@ -1143,4 +1143,151 @@ TEST(ROSWireConversionTest, MutableVectorElementsReportShortOutput) {
   }
 }
 
+// A main message owns everything allocated in its buffer after it was made,
+// so clearing it frees all of that at once.
+TEST(ROSWireConversionTest, ClearingAMainMessageResetsItsBuffer) {
+  DirectBranch fresh;
+  ::phaser::ROSBuffer fresh_ros;
+  ASSERT_TRUE(fresh.SerializeToROS(fresh_ros).ok());
+
+  DirectBranch message;
+  const size_t made_size = message.Size();
+  for (int round = 0; round < 3; ++round) {
+    PopulateBranch(message, round + 1, 2);
+    DirectBranch expected;
+    PopulateBranch(expected, round + 1, 2);
+    EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
+    EXPECT_GT(message.Size(), made_size);
+
+    // Receiving clears twice, the second time with nothing to free.
+    for (int clear = 0; clear < 2; ++clear) {
+      message.Clear();
+      EXPECT_EQ(message.Size(), made_size);
+      EXPECT_EQ(message.SerializeAsString(), fresh.SerializeAsString());
+      ::phaser::ROSBuffer cleared_ros;
+      ASSERT_TRUE(message.SerializeToROS(cleared_ros).ok());
+      EXPECT_EQ(cleared_ros.AsString(), fresh_ros.AsString());
+    }
+  }
+
+  // A message inside the main message frees only what it owns.
+  PopulateBranch(message, 1, 1);
+  DirectBranch expected;
+  PopulateBranch(expected, 1, 1);
+  expected.element.Clear();
+  (void)expected.element.Mutable();
+  message.element->Clear();
+  EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
+}
+
+TEST(ROSWireConversionTest, ClearingAMainMessageThatAllocatedNothingEmptiesIt) {
+  DirectBranch fresh;
+  DirectBranch message;
+  const size_t made_size = message.Size();
+  for (int round = 0; round < 2; ++round) {
+    message.id = 3;
+    message.timeout = ::ros::Duration(4, 5);
+    message.header->seq = 6;
+    ASSERT_EQ(message.Size(), made_size);
+    message.Clear();
+    EXPECT_EQ(message.id, 0);
+    EXPECT_FALSE(message.timeout.IsPresent());
+    EXPECT_FALSE(message.header.IsPresent());
+    EXPECT_EQ(message.SerializeAsString(), fresh.SerializeAsString());
+  }
+}
+
+TEST(ROSWireConversionTest, ClearingAMainMessageResetsItsCachedROSValues) {
+  DirectBranch message;
+  message.stamp = ::ros::Time(5, 6);
+  message.Clear();
+  EXPECT_FALSE(message.stamp.IsPresent());
+  EXPECT_EQ(message.stamp.Get().sec, 0u);
+
+  DirectBranch first;
+  first.stamp = ::ros::Time(1, 2);
+  DirectBranch second;
+  second.stamp = ::ros::Time(3, 4);
+  std::string first_ros;
+  ASSERT_TRUE(first.SerializeToROSString(&first_ros).ok());
+  std::string second_ros;
+  ASSERT_TRUE(second.SerializeToROSString(&second_ros).ok());
+
+  ASSERT_TRUE(message
+                  .ParseFromROS(absl::Span<const char>(first_ros.data(),
+                                                       first_ros.size()))
+                  .ok());
+  EXPECT_EQ(message.stamp.Get().sec, 1u);
+  ASSERT_TRUE(message
+                  .ParseFromROS(absl::Span<const char>(second_ros.data(),
+                                                       second_ros.size()))
+                  .ok());
+  EXPECT_EQ(message.stamp.Get().sec, 3u);
+  EXPECT_EQ(message.stamp.Get().nsec, 4u);
+}
+
+TEST(ROSWireConversionTest, ClearingAMainMessageRemakesItsFixedArrays) {
+  // User metadata allocated after the message was made keeps it from
+  // resetting its buffer, so it clears field by field.
+  RosCompileMessage field_by_field;
+  ASSERT_TRUE(field_by_field
+                  .SetUserMetadata(field_by_field.ToOffset(
+                      field_by_field.Allocate(sizeof(uint32_t))))
+                  .ok());
+  RosCompileMessage message;
+  RosCompileMessage fresh;
+  std::string fresh_ros;
+  ASSERT_TRUE(fresh.SerializeToROSString(&fresh_ros).ok());
+
+  size_t cleared_size = 0;
+  for (int round = 0; round < 3; ++round) {
+    PopulatePhaserMessage(message);
+    PopulatePhaserMessage(field_by_field);
+    EXPECT_EQ(message.SerializeAsString(), field_by_field.SerializeAsString());
+    message.Clear();
+    field_by_field.Clear();
+    EXPECT_EQ(message.SerializeAsString(), field_by_field.SerializeAsString());
+    EXPECT_EQ(message.choice.index(), std::variant_npos);
+    EXPECT_EQ(message.fixed_names[0].Get(), "");
+    EXPECT_EQ(message.fixed_names[1].Get(), "");
+    std::string cleared_ros;
+    ASSERT_TRUE(message.SerializeToROSString(&cleared_ros).ok());
+    EXPECT_EQ(cleared_ros, fresh_ros);
+    if (round == 0) {
+      cleared_size = message.Size();
+    }
+    EXPECT_EQ(message.Size(), cleared_size);
+  }
+}
+
+TEST(ROSWireConversionTest, ClearingAMainMessageDropsMetadataInstalledLater) {
+  auto populate = [](DirectElements& message) {
+    for (int i = 0; i < 3; ++i) {
+      auto element = message.elements.Add();
+      PopulateDirectElement(element, i, 1);
+      auto fixed_leaf = message.fixed_leaves.Add();
+      PopulateFixedLeaf(fixed_leaf, i);
+      auto branch = message.branches.Add();
+      PopulateBranch(branch, i, 1);
+    }
+  };
+  DirectElements message;
+  const auto* control = message.runtime->GetRuntimeControl();
+  ASSERT_NE(control, nullptr);
+  const uint32_t made_count = control->count;
+  ASSERT_LT(made_count, DirectElements::MetadataTypeCount());
+  const size_t made_size = message.Size();
+
+  DirectElements expected;
+  populate(expected);
+  for (int round = 0; round < 2; ++round) {
+    populate(message);
+    EXPECT_GT(message.runtime->GetRuntimeControl()->count, made_count);
+    EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
+    message.Clear();
+    EXPECT_EQ(message.runtime->GetRuntimeControl()->count, made_count);
+    EXPECT_EQ(message.Size(), made_size);
+  }
+}
+
 }  // namespace

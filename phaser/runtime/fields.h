@@ -525,6 +525,21 @@ template <bool F, bool S>
 struct FieldRelease<FloatField<F, S>> : NoFieldRelease {};
 template <bool F, bool S>
 struct FieldRelease<BoolField<F, S>> : NoFieldRelease {};
+
+template <bool F, bool S>
+struct FieldResetClear<Int32Field<F, S>> : NoResetClear {};
+template <bool F, bool S>
+struct FieldResetClear<Uint32Field<F, S>> : NoResetClear {};
+template <bool F, bool S>
+struct FieldResetClear<Int64Field<F, S>> : NoResetClear {};
+template <bool F, bool S>
+struct FieldResetClear<Uint64Field<F, S>> : NoResetClear {};
+template <bool F, bool S>
+struct FieldResetClear<DoubleField<F, S>> : NoResetClear {};
+template <bool F, bool S>
+struct FieldResetClear<FloatField<F, S>> : NoResetClear {};
+template <bool F, bool S>
+struct FieldResetClear<BoolField<F, S>> : NoResetClear {};
 }  // namespace internal
 
 struct InternalIntStringizer {
@@ -653,6 +668,8 @@ class EnumField : public Field {
 namespace internal {
 template <typename Enum, typename Stringizer, typename Parser>
 struct FieldRelease<EnumField<Enum, Stringizer, Parser>> : NoFieldRelease {};
+template <typename Enum, typename Stringizer, typename Parser>
+struct FieldResetClear<EnumField<Enum, Stringizer, Parser>> : NoResetClear {};
 }  // namespace internal
 
 // String field with an offset inline in the message.
@@ -1081,7 +1098,13 @@ class IndirectMessageField : public Field {
                ->template AddressOf<::phaser::BufferOffset>(message) == 0) {
         return;
       }
-      internal::ReleaseMessageContents<MessageType>(GetRuntime(), message);
+      if constexpr (internal::HasSyncToPayloadWork<MessageType>::value) {
+        // The handle holds values of the message's fields too.
+        msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
+        msg_.Clear();
+      } else {
+        internal::ReleaseMessageContents<MessageType>(GetRuntime(), message);
+      }
       // Releasing can move the buffer.
       memset(GetRuntime()->pb->template AddressOf<char>(message), 0,
              MessageType::BinarySize());
@@ -1093,7 +1116,8 @@ class IndirectMessageField : public Field {
       return;
     }
     const ::phaser::BufferOffset old_offset = *addr;
-    if constexpr (!internal::ClearReleasesNothing<MessageType>::value) {
+    if constexpr (!internal::ClearReleasesNothing<MessageType>::value ||
+                  internal::HasSyncToPayloadWork<MessageType>::value) {
       // Clear the message.
       msg_.template BindBorrowed<MessageType>(GetRuntime(), old_offset);
       msg_.Clear();
@@ -1268,6 +1292,26 @@ struct FieldRelease<IndirectMessageField<MessageType, false>>
 template <typename MessageType>
 struct FieldRelease<IndirectMessageField<MessageType, true>>
     : InlineMessageRelease<MessageType> {};
+
+template <>
+struct FieldResetClear<StringField> : NoResetClear {};
+
+// Clear() clears the handle of a message that holds values outside the
+// payload or that it releases memory from.
+template <typename MessageType>
+struct FieldResetClear<IndirectMessageField<MessageType, false>>
+    : std::integral_constant<ResetClear,
+                             ClearReleasesNothing<MessageType>::value &&
+                                     !HasSyncToPayloadWork<MessageType>::value
+                                 ? ResetClear::kNone
+                                 : ResetClear::kBefore> {};
+
+template <typename MessageType>
+struct FieldResetClear<IndirectMessageField<MessageType, true>>
+    : std::integral_constant<ResetClear,
+                             HasSyncToPayloadWork<MessageType>::value
+                                 ? ResetClear::kBefore
+                                 : ResetClear::kNone> {};
 }  // namespace internal
 
 template <typename MessageType>

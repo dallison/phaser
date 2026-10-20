@@ -97,6 +97,9 @@ class MessageGenerator {
   // Whether the singular message 'field' is stored inside this message
   // rather than through an offset.
   bool StoresMessageInline(const google::protobuf::FieldDescriptor* field);
+  // Whether a message of 'type' can own no more than 'blocks' blocks outside
+  // its body, which it takes from 'blocks'.
+  bool OwnsAtMostBlocks(const google::protobuf::Descriptor* type, int& blocks);
   // C++ constant expressions for the field's offset in this message and its
   // id in the field metadata.
   std::string FieldOffset(const FieldInfo& field) const;
@@ -120,6 +123,8 @@ class MessageGenerator {
   void GenerateFieldMetadata(std::ostream& os);
   void GenerateCreators(std::ostream& os, bool decl);
   void GenerateClear(std::ostream& os, bool decl);
+  // The fast path of Clear() for a main message: resetting its buffer.
+  void GenerateClearByReset(std::ostream& os);
   void GenerateReleaseAt(std::ostream& os, bool decl);
 
   void GeneratePublicFieldDeclarations(std::ostream& os);

@@ -425,6 +425,40 @@ TEST(OutputAllocationTest, RuntimeControlPreservesUserMetadataAndHandleLifetime)
   EXPECT_TRUE(moved.runtime->GetRuntimeControl() != nullptr);
 }
 
+TEST(OutputAllocationTest, ClearKeepsUserMetadataAllocatedAfterTheMessage) {
+  alignas(std::max_align_t) std::array<std::byte, 32768> storage{};
+  auto message = foo::bar::phaser::TestMessage::CreateMutable(
+      storage.data(), storage.size());
+  void* user_data = message.Allocate(sizeof(uint32_t));
+  *static_cast<uint32_t*>(user_data) = 0x12345678;
+  ASSERT_TRUE(message.SetUserMetadata(message.ToOffset(user_data)).ok());
+  for (int round = 0; round < 3; ++round) {
+    message.add_vm()->set_str("first string that needs a block");
+    message.add_vm()->set_str("second string that needs a block");
+    message.Clear();
+  }
+  EXPECT_EQ(*static_cast<uint32_t*>(message.GetUserMetadata()), 0x12345678u);
+}
+
+TEST(OutputAllocationTest, ClearAfterAnyGrowsTheMetadataTable) {
+  foo::bar::phaser::TestMessage message;
+  for (int round = 0; round < 2; ++round) {
+    message.mutable_any()
+        ->MutableAny<foo::bar::phaser::RosCompileMessage>()
+        .name = "first-any-type";
+    message.mutable_any()
+        ->MutableAny<foo::bar::phaser::RosIntrinsicMessage>()
+        .name = "second-any-type";
+    message.mutable_any()
+        ->MutableAny<foo::bar::phaser::HybridLookupMessage>()
+        .set_dense_10(1);
+    message.add_vm()->set_str("after any");
+    EXPECT_EQ(message.vm(0).str(), "after any");
+    message.Clear();
+    EXPECT_EQ(message.vm_size(), 0u);
+  }
+}
+
 TEST(OutputAllocationTest, MetadataEntriesAreReusedAndTypedAnyCanGrowTable) {
   alignas(std::max_align_t) std::array<std::byte, 32768> storage{};
   auto fixed = foo::bar::phaser::TestMessage::CreateMutable(

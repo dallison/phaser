@@ -1372,11 +1372,19 @@ class StringArrayField : public Field {
     Header()->num_elements = static_cast<uint32_t>(count);
   }
 
+  // The slots it adds hold no string.
   void EnsureStorage(size_t count) {
+    const size_t current = NumElements();
     ::phaser::PayloadBuffer::VectorReserve<::phaser::BufferOffset>(
         GetBufferAddr(), Header(), count);
     ::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
         GetBufferAddr(), Header(), count);
+    if (count > current) {
+      ::phaser::BufferOffset* data =
+          GetRuntime()->template ToAddress<::phaser::BufferOffset>(
+              Header()->data);
+      memset(data + current, 0, (count - current) * sizeof(*data));
+    }
   }
 
   size_t parsed_count_for_serialize() const {
@@ -1536,6 +1544,22 @@ struct FieldRelease<EnumArrayField<Enum, N, Stringizer, Parser, Packed>>
 
 template <typename T, size_t N>
 struct FieldRelease<MessageArrayField<T, N>> : MessageVectorRelease<T> {};
+
+// Clearing an array makes its N elements again.
+template <typename T, size_t N, bool FixedSize, bool Signed, bool Packed>
+struct FieldResetClear<PrimitiveArrayField<T, N, FixedSize, Signed, Packed>>
+    : ResetClearAfter {};
+
+template <typename Enum, size_t N, typename Stringizer, typename Parser,
+          bool Packed>
+struct FieldResetClear<EnumArrayField<Enum, N, Stringizer, Parser, Packed>>
+    : ResetClearAfter {};
+
+template <typename T, size_t N>
+struct FieldResetClear<MessageArrayField<T, N>> : ResetClearAfter {};
+
+template <size_t N>
+struct FieldResetClear<StringArrayField<N>> : ResetClearAfter {};
 }  // namespace internal
 
 }  // namespace phaser
