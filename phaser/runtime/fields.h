@@ -1038,11 +1038,15 @@ class IndirectMessageField : public Field {
   bool IsPresent() const { return MessageAt(Locate()) != 0; }
 
   MessageType* Mutable() {
+    if (ABSL_PREDICT_FALSE(
+            !Message::GetMessage(this, source_offset_)->IsMutable())) {
+      return ReadonlyMutable();
+    }
     if constexpr (kInline) {
       const ::phaser::BufferOffset message =
           GetMessageBinaryStart() + relative_binary_offset_;
-      if (*MutableBuffer(source_offset_)
-               ->template AddressOf<::phaser::BufferOffset>(message) == 0) {
+      if (*GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(
+              message) == 0) {
         // Finding the metadata can move the buffer.
         const ::phaser::BufferOffset metadata =
             Message::MetadataFor<MessageType>(GetRuntime());
@@ -1232,6 +1236,17 @@ class IndirectMessageField : public Field {
     int32_t offset;
     bool is_inline;
   };
+  // Mutable() of a readonly message still reaches a message that is there,
+  // through a readonly handle.  Only making one needs a mutable message.
+  MessageType* ReadonlyMutable() {
+    const ::phaser::BufferOffset message = MessageAt(Locate());
+    if (message == 0) {
+      ThrowReadonlyMessage();
+    }
+    msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
+    return &msg_;
+  }
+
   Location Locate() const {
     const Message* message = Message::GetMessage(this, source_offset_);
     if (message->FieldLocationsKnown()) {

@@ -569,6 +569,24 @@ TEST(OutputAllocationTest, AssignedHandlesTakeTheSourceMutability) {
   EXPECT_THROW(writable = readonly_source, std::logic_error);
 }
 
+TEST(ReceiveAllocationTest, NonConstAccessReachesPresentNestedMessages) {
+  foo::bar::phaser::RosCompileMessage source;
+  source.inner->id = 23;
+  std::vector<char> payload = CopyPayload(source);
+  auto received = foo::bar::phaser::RosCompileMessage::CreateReadonly(
+      payload.data(), payload.size());
+  EXPECT_EQ(received.inner->id.Get(), 23);
+  EXPECT_THROW(received.inner->id = 24, std::logic_error);
+  EXPECT_EQ(received.inner->id.Get(), 23);
+
+  foo::bar::phaser::RosCompileMessage without_inner;
+  without_inner.x = 1;
+  std::vector<char> bare = CopyPayload(without_inner);
+  auto bare_received = foo::bar::phaser::RosCompileMessage::CreateReadonly(
+      bare.data(), bare.size());
+  EXPECT_THROW((void)bare_received.inner->id.Get(), std::logic_error);
+}
+
 TEST(ReceiveAllocationTest, ReturnedViewsDependOnlyOnReceiveBuffer) {
   foo::bar::phaser::RosCompileMessage source;
   source.names.push_back("borrowed-name");
