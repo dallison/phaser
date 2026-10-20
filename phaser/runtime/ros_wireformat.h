@@ -270,12 +270,7 @@ class ROSBuffer {
       static_assert(sizeof(U) == sizeof(T));
       U bits;
       memcpy(&bits, &value, sizeof(bits));
-      for (size_t i = 0; i < sizeof(U); ++i) {
-        out[i] = static_cast<char>(bits & static_cast<U>(0xff));
-        if constexpr (sizeof(U) > 1) {
-          bits >>= 8;
-        }
-      }
+      StoreLittleEndian(out, bits);
     }
   }
 
@@ -465,16 +460,27 @@ class ROSBuffer {
 
   template <typename U>
   void WriteLittleEndianUnchecked(U value) {
-    static_assert(std::is_unsigned_v<U>);
     // Write through a local pointer: stores through data_ could alias size_.
-    char* out = data_ + size_;
+    StoreLittleEndian(data_ + size_, value);
+    size_ += sizeof(U);
+  }
+
+  // Compilers do not always merge the byte stores, so a little-endian host
+  // copies the value whole.
+  template <typename U>
+  static void StoreLittleEndian(char* out, U value) {
+    static_assert(std::is_unsigned_v<U>);
+    const uint16_t endian_marker = 1;
+    if (*reinterpret_cast<const uint8_t*>(&endian_marker) == 1) {
+      memcpy(out, &value, sizeof(value));
+      return;
+    }
     for (size_t i = 0; i < sizeof(U); ++i) {
       out[i] = static_cast<char>(value & static_cast<U>(0xff));
       if constexpr (sizeof(U) > 1) {
         value >>= 8;
       }
     }
-    size_ += sizeof(U);
   }
 
   void Release() {

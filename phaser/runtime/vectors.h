@@ -1222,9 +1222,7 @@ class MessageVectorField : public Field {
         const auto element = static_cast<::phaser::BufferOffset>(
             hdr->data + sizeof(::phaser::MessageVectorBlock) +
             index * Stride());
-        char* binary = pb->template AddressOf<char>(element);
-        memset(binary, 0, Stride());
-        memcpy(binary, &block->metadata, sizeof(block->metadata));
+        StartElement(pb->template AddressOf<char>(element), block->metadata);
         hdr->num_elements = index + 1;
         return element;
       }
@@ -1618,8 +1616,7 @@ class MessageVectorField : public Field {
         char* binary = pb->template AddressOf<char>(chunk) +
                        size_t{index - chunk_begin} * Stride();
         for (; index < chunk_end; ++index, binary += Stride()) {
-          memset(binary, 0, Stride());
-          memcpy(binary, &block.metadata, sizeof(block.metadata));
+          StartElement(binary, block.metadata);
           local_f(binary, index - old_size);
         }
       } else {
@@ -1628,9 +1625,7 @@ class MessageVectorField : public Field {
           const ::phaser::BufferOffset element =
               static_cast<::phaser::BufferOffset>(
                   chunk + (index - chunk_begin) * Stride());
-          char* binary = pb->template AddressOf<char>(element);
-          memset(binary, 0, Stride());
-          memcpy(binary, &block.metadata, sizeof(block.metadata));
+          StartElement(pb->template AddressOf<char>(element), block.metadata);
           pb->template AddressOf<::phaser::VectorHeader>(header)->num_elements =
               index + 1;
           if (absl::Status status = f(element); !status.ok()) {
@@ -1648,6 +1643,12 @@ class MessageVectorField : public Field {
 
   static uint32_t Stride() {
     return static_cast<uint32_t>((T::BinarySize() + 7) & ~size_t(7));
+  }
+
+  // Makes the empty element at 'binary'.
+  static void StartElement(char* binary, ::phaser::BufferOffset metadata) {
+    memset(binary, 0, Stride());
+    memcpy(binary, &metadata, sizeof(metadata));
   }
 
   // The first chunk of a vector that was not reserved holds about this many
@@ -1682,9 +1683,8 @@ class MessageVectorField : public Field {
               hdr->data);
     }
     // This process wrote the block, so its stride is T's.
-    char* binary = (*buffer)->template UncheckedAddress<char>(element);
-    memset(binary, 0, Stride());
-    memcpy(binary, &block->metadata, sizeof(block->metadata));
+    StartElement((*buffer)->template UncheckedAddress<char>(element),
+                 block->metadata);
     hdr->num_elements = index + 1;
     return element;
   }
