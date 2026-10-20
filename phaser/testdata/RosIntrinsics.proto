@@ -82,8 +82,31 @@ message DirectElement {
   repeated DirectElement nested = 24;
 }
 
+// Elements that ROS parsing writes straight into the payload: one with only
+// fixed-size fields and one with strings.
+message DirectFixedLeaf {
+  int32 id = 1;
+  bool flag = 2;
+  double value = 3;
+  uint64 big = 4;
+  uint32 small = 5 [(phaser.ros_field) = { type: "uint8" }];
+  int32 level = 6 [(phaser.ros_field) = { type: "int16" }];
+  float ratio = 7;
+  DirectKind kind = 8;
+  sint64 delta = 9;
+}
+
+message DirectLeaf {
+  string name = 1;
+  uint32 count = 2;
+  bytes payload = 3;
+  DirectKind kind = 4;
+}
+
 message DirectElements {
   repeated DirectElement elements = 1;
   // A oneof and fixed arrays keep these elements on the handle path.
   repeated RosIntrinsicMessage handled = 2;
+  repeated DirectFixedLeaf fixed_leaves = 3;
+  repeated DirectLeaf leaves = 4;
 }

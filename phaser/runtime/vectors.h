@@ -1182,7 +1182,10 @@ class MessageVectorField : public Field {
 
   T emplace_back() { return Add(); }
 
-  T Add() {
+  T Add() { return T(BorrowedRuntime(GetRuntime()), AddElement()); }
+
+  // Add() without the handle: appends an empty element and returns its offset.
+  ::phaser::BufferOffset AddElement() {
     ::phaser::PayloadBuffer** buffer = GetBufferAddr();
     ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
     const uint32_t index = hdr->num_elements;
@@ -1206,7 +1209,22 @@ class MessageVectorField : public Field {
     memset(binary, 0, Stride());
     memcpy(binary, &block->metadata, sizeof(block->metadata));
     hdr->num_elements = index + 1;
-    return T(BorrowedRuntime(GetRuntime()), element);
+    return element;
+  }
+
+  // Appends 'n' elements, calling 'f' with the offset of each after adding
+  // it, as AddElement() would, and stops at the first error 'f' returns.
+  // 'f' may allocate in the buffer but must not change this vector.
+  template <typename F>
+  absl::Status AddElements(uint32_t n, F&& f) {
+    return AppendElements<false>(n, f);
+  }
+
+  // AddElements() for an 'f' that neither fails nor allocates, called with
+  // the buffer, the offset of the element and its index among the 'n'.
+  template <typename F>
+  void AddElementsInPlace(uint32_t n, F&& f) {
+    (void)AppendElements<true>(n, f);
   }
 
   T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
@@ -1496,6 +1514,63 @@ class MessageVectorField : public Field {
       result.push_back(std::move(copy));
     }
     return result;
+  }
+
+  template <bool kInPlace, typename F>
+  absl::Status AppendElements(uint32_t n, F& f) {
+    if (n == 0) {
+      return absl::OkStatus();
+    }
+    ::phaser::PayloadBuffer** buffer = GetBufferAddr();
+    const ::phaser::BufferOffset header =
+        (*buffer)->UncheckedOffset(ResolvedVectorHeader());
+    const uint32_t old_size =
+        (*buffer)->template AddressOf<::phaser::VectorHeader>(header)
+            ->num_elements;
+    const uint64_t end = uint64_t(old_size) + n;
+    if (end > UINT32_MAX) {
+      throw std::bad_alloc();
+    }
+    reserve(end);
+    // Only an allocation by 'f' can move the buffer.
+    ::phaser::PayloadBuffer* pb = *buffer;
+    const ::phaser::BufferOffset block_offset =
+        pb->template AddressOf<::phaser::VectorHeader>(header)->data;
+    const ::phaser::MessageVectorBlock block =
+        *pb->template AddressOf<::phaser::MessageVectorBlock>(block_offset);
+    // Chunk 0 holds first_capacity elements.  Chunk k > 0 holds
+    // first_capacity << (k - 1) of them, from element first_capacity << (k - 1).
+    uint32_t k = 0;
+    uint32_t chunk_begin = 0;
+    uint32_t capacity = block.first_capacity;
+    ::phaser::BufferOffset chunk = static_cast<::phaser::BufferOffset>(
+        block_offset + sizeof(::phaser::MessageVectorBlock));
+    for (uint32_t index = old_size; index < end; ++index) {
+      if constexpr (!kInPlace) {
+        pb = *buffer;
+      }
+      while (index - chunk_begin >= capacity) {
+        chunk_begin += capacity;
+        capacity = block.first_capacity << k;
+        ++k;
+        chunk = *pb->template AddressOf<::phaser::BufferOffset>(
+            static_cast<::phaser::BufferOffset>(
+                block.directory + k * sizeof(::phaser::BufferOffset)));
+      }
+      const ::phaser::BufferOffset element = static_cast<::phaser::BufferOffset>(
+          chunk + (index - chunk_begin) * Stride());
+      char* binary = pb->template AddressOf<char>(element);
+      memset(binary, 0, Stride());
+      memcpy(binary, &block.metadata, sizeof(block.metadata));
+      pb->template AddressOf<::phaser::VectorHeader>(header)->num_elements =
+          index + 1;
+      if constexpr (kInPlace) {
+        f(pb, element, index - old_size);
+      } else if (absl::Status status = f(element); !status.ok()) {
+        return status;
+      }
+    }
+    return absl::OkStatus();
   }
 
   static uint32_t Stride() {

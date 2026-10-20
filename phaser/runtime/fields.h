@@ -145,6 +145,7 @@ class Field {
                                kPresenceMaskOffset);
   }
 
+ public:
   // The presence mask follows the metadata offset at the start of a message.
   static constexpr uint32_t kPresenceMaskOffset = 4;
 

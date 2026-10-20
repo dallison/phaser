@@ -1517,6 +1517,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateProtobufSerialization(os);
   GenerateROSSerialization(os, true);
   GenerateROSDirectSerialization(os, true);
+  GenerateROSDirectDeserialization(os, true);
 
   // Generate serialized size.
   GenerateSerializedSize(os, true);
@@ -1737,6 +1738,7 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
   GenerateDeserializer(os, false);
   GenerateROSSerialization(os, false);
   GenerateROSDirectSerialization(os, false);
+  GenerateROSDirectDeserialization(os, false);
 
   // Phaser bank
   GeneratePhaserBank(os);
@@ -2749,6 +2751,21 @@ static std::string ProtobufPrimitiveCppType(
       return "";
   }
   return "";
+}
+
+// The size of a C++ type that ROSPrimitiveCppType() or
+// ProtobufPrimitiveCppType() returns.
+static size_t ROSCppTypeSize(const std::string& type) {
+  static const absl::flat_hash_map<std::string, size_t> kSizes = {
+      {"bool", 1},     {"int8_t", 1},   {"uint8_t", 1},  {"int16_t", 2},
+      {"uint16_t", 2}, {"int32_t", 4},  {"uint32_t", 4}, {"float", 4},
+      {"int64_t", 8},  {"uint64_t", 8}, {"double", 8},
+  };
+  const auto it = kSizes.find(type);
+  if (it == kSizes.end()) {
+    abort();
+  }
+  return it->second;
 }
 
 static std::string ROSBulkPrimitiveType(
@@ -4178,6 +4195,176 @@ void MessageGenerator::GenerateROSDirectSerialization(std::ostream& os,
   os << "}\n\n";
 }
 
+bool MessageGenerator::CanDeserializeROSDirectly() {
+  if (IsRosTime(message_) || IsRosDuration(message_)) {
+    return true;
+  }
+  for (const auto& item : fields_in_order_) {
+    if (item->IsUnion()) {
+      return false;
+    }
+    const auto* field = item->field;
+    if (field->is_repeated() || IsRosConstantOnlyMessageField(field) ||
+        field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+        field->type() == google::protobuf::FieldDescriptor::TYPE_GROUP) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
+                                                        bool decl) {
+  if (!CanDeserializeROSDirectly()) {
+    return;
+  }
+
+  struct Value {
+    const FieldInfo* field;
+    std::string ros_type;      // Empty for a string.
+    std::string storage_type;  // Empty for a string.
+  };
+  std::vector<Value> values;
+  const bool is_time = IsRosTime(message_);
+  if (is_time || IsRosDuration(message_)) {
+    const FieldInfo* seconds = nullptr;
+    const FieldInfo* nanos = nullptr;
+    for (const auto& field : fields_) {
+      if (field->field->name() == "seconds") {
+        seconds = field.get();
+      } else if (field->field->name() == "nanos") {
+        nanos = field.get();
+      }
+    }
+    assert(seconds != nullptr && nanos != nullptr);
+    const std::string ros_type = is_time ? "uint32_t" : "int32_t";
+    values.push_back({seconds, ros_type, "int64_t"});
+    values.push_back({nanos, ros_type, "int32_t"});
+  } else {
+    for (const auto& item : fields_in_order_) {
+      const auto* field = item->field;
+      switch (field->type()) {
+        case google::protobuf::FieldDescriptor::TYPE_STRING:
+        case google::protobuf::FieldDescriptor::TYPE_BYTES:
+          values.push_back({item.get(), "", ""});
+          break;
+        case google::protobuf::FieldDescriptor::TYPE_ENUM:
+          values.push_back({item.get(), "int32_t", "int32_t"});
+          break;
+        default: {
+          const std::string storage_type = ProtobufPrimitiveCppType(field);
+          const std::string ros_type = ROSPrimitiveCppType(field);
+          values.push_back(
+              {item.get(), ros_type.empty() ? storage_type : ros_type,
+               storage_type});
+          break;
+        }
+      }
+    }
+  }
+  const bool fixed_size =
+      !values.empty() &&
+      std::none_of(values.begin(), values.end(), [](const Value& value) {
+        return value.storage_type.empty();
+      });
+
+  if (decl) {
+    os << "  // Reads the ROS fields of the empty message at '_phaser_offset' "
+          "in the\n"
+          "  // mutable buffer of '_phaser_runtime' straight into the "
+          "payload.\n";
+    os << "  static absl::Status PhaserDeserializeFromROSAt("
+          "const ::phaser::RuntimeHandle& _phaser_runtime, "
+          "::phaser::BufferOffset _phaser_offset, "
+          "::phaser::ROSReader& _phaser_buffer);\n";
+    os << "  // The fewest ROS bytes the message takes: a string takes at "
+          "least its length.\n";
+    os << "  static constexpr size_t PhaserROSMinSize() { return 0";
+    for (const Value& value : values) {
+      os << " + sizeof("
+         << (value.ros_type.empty() ? "uint32_t" : value.ros_type) << ")";
+    }
+    os << "; }\n";
+    if (!fixed_size) {
+      return;
+    }
+    os << "  // PhaserDeserializeFromROSAt() for the PhaserROSMinSize() bytes "
+          "at\n"
+          "  // '_phaser_input'.  The payload stores could alias the input, so "
+          "they\n"
+          "  // follow all the reads.\n";
+    os << "  static void PhaserDeserializeFromROSUncheckedAt("
+          "::phaser::PayloadBuffer* _phaser_payload, "
+          "::phaser::BufferOffset _phaser_offset, "
+          "const char* _phaser_input) {\n";
+    size_t input_offset = 0;
+    for (size_t i = 0; i < values.size(); ++i) {
+      os << "    const " << values[i].ros_type << " _phaser_value" << i
+         << " = ::phaser::ROSReader::Decode<" << values[i].ros_type
+         << ">(_phaser_input + " << input_offset << ");\n";
+      input_offset += ROSCppTypeSize(values[i].ros_type);
+    }
+    std::map<uint32_t, uint32_t> presence;
+    for (size_t i = 0; i < values.size(); ++i) {
+      const Value& value = values[i];
+      os << "    _phaser_payload->Set<" << value.storage_type
+         << ">(_phaser_offset + " << FieldOffset(*value.field)
+         << ", static_cast<" << value.storage_type << ">(_phaser_value" << i
+         << "));\n";
+      presence[value.field->id / 32] |= uint32_t{1} << (value.field->id % 32);
+    }
+    for (const auto& [word, bits] : presence) {
+      os << "    _phaser_payload->SetPresenceBits(" << word << ", " << bits
+         << "u, _phaser_offset + ::phaser::Field::kPresenceMaskOffset);\n";
+    }
+    os << "  }\n";
+    return;
+  }
+
+  const std::string name = MessageName(message_);
+  os << "absl::Status " << name
+     << "::PhaserDeserializeFromROSAt([[maybe_unused]] const "
+        "::phaser::RuntimeHandle& _phaser_runtime, [[maybe_unused]] "
+        "::phaser::BufferOffset _phaser_offset, [[maybe_unused]] "
+        "::phaser::ROSReader& _phaser_buffer) {\n";
+  os << "  [[maybe_unused]] ::phaser::PayloadBuffer** _phaser_pb = "
+        "&_phaser_runtime->pb;\n";
+  if (fixed_size) {
+    // Short input falls through to the checked reads, for their error.
+    os << "  static_assert(PhaserROSFixedSize() == PhaserROSMinSize());\n";
+    os << "  if (_phaser_buffer.Remaining() >= PhaserROSMinSize()) {\n";
+    os << "    PhaserDeserializeFromROSUncheckedAt(*_phaser_pb, "
+          "_phaser_offset, "
+          "_phaser_buffer.ReadRawUnchecked(PhaserROSMinSize()));\n";
+    os << "    return absl::OkStatus();\n";
+    os << "  }\n";
+  }
+  // Each value is stored and marked present as its field's setter does.
+  for (const Value& value : values) {
+    const std::string location = "_phaser_offset + " + FieldOffset(*value.field);
+    os << "  {\n";
+    if (value.storage_type.empty()) {
+      os << "    absl::StatusOr<std::string_view> _phaser_value = "
+            "_phaser_buffer.ReadString();\n";
+      os << "    if (!_phaser_value.ok()) return _phaser_value.status();\n";
+      os << "    ::phaser::PayloadBuffer::SetString(_phaser_pb, *_phaser_value, "
+         << location << ");\n";
+    } else {
+      os << "    absl::StatusOr<" << value.ros_type
+         << "> _phaser_value = _phaser_buffer.Read<" << value.ros_type
+         << ">();\n";
+      os << "    if (!_phaser_value.ok()) return _phaser_value.status();\n";
+      os << "    (*_phaser_pb)->Set<" << value.storage_type << ">(" << location
+         << ", static_cast<" << value.storage_type << ">(*_phaser_value));\n";
+      os << "    (*_phaser_pb)->SetPresenceBit(" << FieldId(*value.field)
+         << ", _phaser_offset + ::phaser::Field::kPresenceMaskOffset);\n";
+    }
+    os << "  }\n";
+  }
+  os << "  return absl::OkStatus();\n";
+  os << "}\n\n";
+}
+
 void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   const std::string name = MessageName(message_);
   if (decl) {
@@ -4524,6 +4711,17 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
              << ".data(), static_cast<size_t>(*_phaser_count))); "
                 "!_phaser_status.ok()) return _phaser_status;\n";
         } else {
+          if (HasROSDirectVector(descriptor) &&
+              !(IsRosFrontend() && IsRosIntrinsic(descriptor))) {
+            os << "    if (absl::Status _phaser_status = "
+                  "::phaser::internal::DeserializeMessageVectorFromROS<"
+               << MessageName(descriptor->message_type(), true)
+               << ">(::phaser::Message::runtime, " << item->member_name
+               << ", *_phaser_count, _phaser_buffer); !_phaser_status.ok()) "
+                  "return _phaser_status;\n";
+            os << "  }\n";
+            continue;
+          }
           if (descriptor->type() ==
                   google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
               !IsRosIntrinsic(descriptor)) {

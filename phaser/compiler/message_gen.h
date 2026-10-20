@@ -202,6 +202,10 @@ class MessageGenerator {
   // The fast path of ROSSerializedSize() and SerializeToROS() for a repeated
   // message field of a message in a mutable buffer.
   bool HasROSDirectVector(const google::protobuf::FieldDescriptor* field);
+  // A static ROS parser that writes straight into the payload, for messages
+  // whose fields are all scalars, enums or strings.
+  bool CanDeserializeROSDirectly();
+  void GenerateROSDirectDeserialization(std::ostream& os, bool decl);
 
   void GenerateProtobufSerialization(std::ostream& os);
   void GenerateIndent(std::ostream& os);

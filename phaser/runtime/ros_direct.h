@@ -4,13 +4,15 @@
 
 #pragma once
 
-// ROS serialization of messages in a mutable buffer, read straight from the
-// payload without a handle per message.  This process built the buffer, so
-// every message in it has its compiled layout and no offset needs checking.
+// ROS serialization and parsing of messages in a mutable buffer, straight
+// from and to the payload without a handle per message.  This process built
+// the buffer, so every message in it has its compiled layout and no offset
+// needs checking.
 
 #include <stdint.h>
 #include <string.h>
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -191,6 +193,89 @@ inline absl::Status SerializeMessageVectorToROS(const RuntimeHandle& runtime,
       runtime->pb, header, [&](::phaser::BufferOffset element) {
         return SerializeToROSAt<T>(runtime, element, buffer);
       });
+}
+
+// Generated messages whose fields are all scalars, enums or strings have
+// static PhaserDeserializeFromROSAt and PhaserROSMinSize functions.
+template <typename T, typename = void>
+struct HasROSParseAt : std::false_type {};
+
+template <typename T>
+struct HasROSParseAt<T,
+                     std::void_t<decltype(&T::PhaserDeserializeFromROSAt)>>
+    : std::true_type {};
+
+// Those of them of a fixed ROS size also have PhaserDeserializeFromROSUncheckedAt
+// for input known to hold them.
+template <typename T, typename = void>
+struct HasROSUncheckedParseAt : std::false_type {};
+
+template <typename T>
+struct HasROSUncheckedParseAt<
+    T, std::void_t<decltype(&T::PhaserDeserializeFromROSUncheckedAt)>>
+    : std::true_type {};
+
+// The fewest ROS bytes a T read by PhaserDeserializeFromROSAt takes, or 0.
+template <typename T>
+constexpr size_t ROSParseMinSize() {
+  if constexpr (HasROSParseAt<T>::value) {
+    return T::PhaserROSMinSize();
+  } else {
+    return 0;
+  }
+}
+
+// Appends 'count' elements to 'vector', a vector of T in a message of
+// 'runtime', reading each from 'reader'.
+template <typename T, typename Vector>
+inline absl::Status DeserializeMessageVectorFromROS(
+    const RuntimeHandle& runtime, Vector& vector, uint32_t count,
+    ::phaser::ROSReader& reader) {
+  [[maybe_unused]] const bool direct =
+      HasROSParseAt<T>::value && runtime->IsMutable();
+  if constexpr (ROSParseMinSize<T>() > 0) {
+    // The input bounds the elements this allocates.  A count it cannot
+    // hold is truncated input, which the loop below reports.
+    if (direct && count <= reader.Remaining() / ROSParseMinSize<T>()) {
+      if constexpr (HasROSUncheckedParseAt<T>::value) {
+        // Every element is ROSParseMinSize<T>() bytes, so all are in the
+        // input.
+        constexpr size_t kSize = ROSParseMinSize<T>();
+        const char* input = reader.ReadRawUnchecked(size_t{count} * kSize);
+        vector.AddElementsInPlace(
+            count, [input](::phaser::PayloadBuffer* pb,
+                           ::phaser::BufferOffset element, uint32_t i) {
+              T::PhaserDeserializeFromROSUncheckedAt(pb, element,
+                                                     input + size_t{i} * kSize);
+            });
+        return absl::OkStatus();
+      } else {
+        return vector.AddElements(count, [&](::phaser::BufferOffset element) {
+          return T::PhaserDeserializeFromROSAt(runtime, element, reader);
+        });
+      }
+    }
+  }
+  // A hostile count can only reserve one element per four bytes left in the
+  // input.  Smaller elements still fit by growing.
+  vector.reserve(std::min<size_t>(count, reader.Remaining() / 4));
+  for (uint32_t i = 0; i < count; ++i) {
+    absl::Status status;
+    if constexpr (HasROSParseAt<T>::value) {
+      if (direct) {
+        status = T::PhaserDeserializeFromROSAt(runtime, vector.AddElement(),
+                                               reader);
+      } else {
+        status = vector.Add().DeserializeFromROSUncleared(reader);
+      }
+    } else {
+      status = vector.Add().DeserializeFromROSUncleared(reader);
+    }
+    if (!status.ok()) {
+      return status;
+    }
+  }
+  return absl::OkStatus();
 }
 
 template <typename T>

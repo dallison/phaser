@@ -677,6 +677,11 @@ using DirectKind = ::foo::bar::phaser::DirectKind;
 using ProtobufDirectElement = ::foo::bar::pb::protobuf_phaser::DirectElement;
 using ProtobufDirectElements = ::foo::bar::pb::protobuf_phaser::DirectElements;
 using ProtobufDirectKind = ::foo::bar::pb::protobuf_phaser::DirectKind;
+using DirectFixedLeaf = ::foo::bar::phaser::DirectFixedLeaf;
+using DirectLeaf = ::foo::bar::phaser::DirectLeaf;
+using ProtobufDirectFixedLeaf =
+    ::foo::bar::pb::protobuf_phaser::DirectFixedLeaf;
+using ProtobufDirectLeaf = ::foo::bar::pb::protobuf_phaser::DirectLeaf;
 
 // Every third element leaves its singular messages unset.
 bool HasMessages(int i) { return i % 3 != 0; }
@@ -776,6 +781,45 @@ void PopulateProtobufDirectElement(ProtobufDirectElement& element, int i,
   }
 }
 
+// Leaf 0 holds only zeros and empty strings.
+void PopulateFixedLeaf(DirectFixedLeaf& leaf, int i) {
+  leaf.id = -i;
+  leaf.flag = i % 2 == 1;
+  leaf.value = i * 1.5;
+  leaf.big = static_cast<uint64_t>(i) << 40;
+  leaf.small = static_cast<uint32_t>(i * 50 % 256);
+  leaf.level = -100 * i;
+  leaf.ratio = static_cast<float>(i) / 4;
+  leaf.kind = static_cast<DirectKind>(i % 3);
+  leaf.delta = -(int64_t{i} << 33);
+}
+
+void PopulateProtobufFixedLeaf(ProtobufDirectFixedLeaf& leaf, int i) {
+  leaf.set_id(-i);
+  leaf.set_flag(i % 2 == 1);
+  leaf.set_value(i * 1.5);
+  leaf.set_big(static_cast<uint64_t>(i) << 40);
+  leaf.set_small(static_cast<uint32_t>(i * 50 % 256));
+  leaf.set_level(-100 * i);
+  leaf.set_ratio(static_cast<float>(i) / 4);
+  leaf.set_kind(static_cast<ProtobufDirectKind>(i % 3));
+  leaf.set_delta(-(int64_t{i} << 33));
+}
+
+void PopulateLeaf(DirectLeaf& leaf, int i) {
+  leaf.name = i == 0 ? std::string() : "leaf " + std::to_string(i);
+  leaf.count = static_cast<uint32_t>(i);
+  leaf.payload = std::string(static_cast<size_t>(i % 3), '\xff');
+  leaf.kind = static_cast<DirectKind>(i % 3);
+}
+
+void PopulateProtobufLeaf(ProtobufDirectLeaf& leaf, int i) {
+  leaf.set_name(i == 0 ? std::string() : "leaf " + std::to_string(i));
+  leaf.set_count(static_cast<uint32_t>(i));
+  leaf.set_payload(std::string(static_cast<size_t>(i % 3), '\xff'));
+  leaf.set_kind(static_cast<ProtobufDirectKind>(i % 3));
+}
+
 // Enough elements to fill several chunks of the vector.
 constexpr int kDirectElementCount = 40;
 
@@ -791,6 +835,12 @@ TEST(ROSWireConversionTest, MutableVectorElementsMatchTheHandlePath) {
     handled.name = "handled";
     handled.stamp = ::ros::Time(static_cast<uint32_t>(i), 5);
     handled.children.Add()->id = i;
+  }
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto fixed_leaf = message.fixed_leaves.Add();
+    PopulateFixedLeaf(fixed_leaf, i);
+    auto leaf = message.leaves.Add();
+    PopulateLeaf(leaf, i);
   }
 
   ::phaser::ROSBuffer direct_output;
@@ -825,6 +875,12 @@ TEST(ROSWireConversionTest, MutableVectorElementsMatchTheHandlePath) {
     handled.mutable_stamp()->set_nanos(5);
     handled.add_children().set_id(i);
   }
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto fixed_leaf = protobuf_message.add_fixed_leaves();
+    PopulateProtobufFixedLeaf(fixed_leaf, i);
+    auto leaf = protobuf_message.add_leaves();
+    PopulateProtobufLeaf(leaf, i);
+  }
   std::string protobuf_frontend_output;
   ASSERT_TRUE(
       protobuf_message.SerializeToROSString(&protobuf_frontend_output).ok());
@@ -837,9 +893,89 @@ TEST(ROSWireConversionTest, MutableVectorElementsMatchTheHandlePath) {
                                                   expected.size()))
           .ok());
   ASSERT_EQ(decoded.elements.size(), size_t{kDirectElementCount});
+  ASSERT_EQ(decoded.fixed_leaves.size(), size_t{kDirectElementCount});
+  ASSERT_EQ(decoded.leaves.size(), size_t{kDirectElementCount});
   std::string reencoded;
   ASSERT_TRUE(decoded.SerializeToROSString(&reencoded).ok());
   EXPECT_EQ(reencoded, expected);
+
+  ProtobufDirectElements protobuf_decoded;
+  ASSERT_TRUE(protobuf_decoded
+                  .ParseFromROS(absl::Span<const char>(expected.data(),
+                                                       expected.size()))
+                  .ok());
+  std::string protobuf_reencoded;
+  ASSERT_TRUE(protobuf_decoded.SerializeToROSString(&protobuf_reencoded).ok());
+  EXPECT_EQ(protobuf_reencoded, expected);
+}
+
+TEST(ROSWireConversionTest, LeafElementsParseLikeTheirSetters) {
+  ProtobufDirectElements original;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto fixed_leaf = original.add_fixed_leaves();
+    PopulateProtobufFixedLeaf(fixed_leaf, i);
+    auto leaf = original.add_leaves();
+    PopulateProtobufLeaf(leaf, i);
+  }
+  std::string ros;
+  ASSERT_TRUE(original.SerializeToROSString(&ros).ok());
+  const std::string protobuf = original.SerializeAsString();
+
+  // Parsing marks the fields present, as the setters do.
+  ProtobufDirectElements decoded;
+  ASSERT_TRUE(
+      decoded.ParseFromROS(absl::Span<const char>(ros.data(), ros.size()))
+          .ok());
+  EXPECT_EQ(decoded.SerializeAsString(), protobuf);
+  DirectElements ros_decoded;
+  ASSERT_TRUE(
+      ros_decoded.ParseFromROS(absl::Span<const char>(ros.data(), ros.size()))
+          .ok());
+  EXPECT_EQ(ros_decoded.SerializeAsString(), protobuf);
+
+  // Each truncation is in its own allocation, so a read past it is caught
+  // under ASan.  Every one fails, some before and some after the elements
+  // that fit are added.
+  for (size_t size = 0; size < ros.size(); ++size) {
+    const std::vector<char> truncated(ros.begin(),
+                                      ros.begin() + static_cast<std::ptrdiff_t>(size));
+    ProtobufDirectElements partial;
+    EXPECT_FALSE(partial
+                     .ParseFromROS(absl::Span<const char>(truncated.data(),
+                                                          truncated.size()))
+                     .ok())
+        << size;
+  }
+}
+
+TEST(ROSWireConversionTest, ParsedLeavesAppendAfterExistingChunks) {
+  constexpr int kExisting = 3;
+  DirectElements expected;
+  DirectElements tail;
+  DirectElements message;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    for (DirectElements* target : {&expected, i < kExisting ? &message : &tail}) {
+      auto fixed_leaf = target->fixed_leaves.Add();
+      PopulateFixedLeaf(fixed_leaf, i);
+      auto leaf = target->leaves.Add();
+      PopulateLeaf(leaf, i);
+    }
+  }
+  std::string tail_ros;
+  ASSERT_TRUE(tail.SerializeToROSString(&tail_ros).ok());
+
+  // Add() left the existing elements in several small chunks, so the parsed
+  // ones start partway through the chunks.
+  ::phaser::ROSReader reader(tail_ros);
+  ASSERT_TRUE(message.DeserializeFromROSUncleared(reader).ok());
+  EXPECT_TRUE(reader.Eof());
+  ASSERT_EQ(message.fixed_leaves.size(), size_t{kDirectElementCount});
+  std::string actual;
+  std::string want;
+  ASSERT_TRUE(message.SerializeToROSString(&actual).ok());
+  ASSERT_TRUE(expected.SerializeToROSString(&want).ok());
+  EXPECT_EQ(actual, want);
+  EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
 }
 
 TEST(ROSWireConversionTest, MutableVectorElementsReportShortOutput) {

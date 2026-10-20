@@ -46,9 +46,29 @@ class ROSReader {
     if (ABSL_PREDICT_FALSE(Remaining() < sizeof(T))) {
       return TruncatedError(sizeof(T));
     }
+    return ReadUnchecked<T>();
+  }
 
-    const char* in = data_.data() + position_;
+  // Read() for a value the caller knows is not past the end of the input.
+  template <typename T>
+  T ReadUnchecked() {
+    const T value = Decode<T>(data_.data() + position_);
     position_ += sizeof(T);
+    return value;
+  }
+
+  // Skips 'length' bytes the caller knows are in the input, returning them.
+  const char* ReadRawUnchecked(size_t length) {
+    const char* in = data_.data() + position_;
+    position_ += length;
+    return in;
+  }
+
+  // The ROS encoding of a T at 'in'.
+  template <typename T>
+  static T Decode(const char* in) {
+    static_assert(std::is_arithmetic_v<T>,
+                  "ROSReader::Decode only supports arithmetic types");
     if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
       return *in != 0;
     } else {
