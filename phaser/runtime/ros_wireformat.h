@@ -243,6 +243,42 @@ class ROSBuffer {
 
   void Clear() { size_ = 0; }
 
+  // Appends 'length' bytes for the caller to write and returns where they
+  // start.  They must all be written before the buffer is used again.
+  absl::StatusOr<char*> Extend(size_t length) {
+    if (absl::Status status = EnsureSpace(length); !status.ok()) {
+      return status;
+    }
+    char* out = data_ + size_;
+    size_ += length;
+    return out;
+  }
+
+  // Writes the ROS encoding of 'value' at 'out'.
+  template <typename T>
+  static void Encode(char* out, T value) {
+    static_assert(std::is_arithmetic_v<T>,
+                  "ROSBuffer::Encode only supports arithmetic types");
+    if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
+      *out = value ? 1 : 0;
+    } else {
+      using U = std::conditional_t<
+          sizeof(T) == 1, uint8_t,
+          std::conditional_t<
+              sizeof(T) == 2, uint16_t,
+              std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>>>;
+      static_assert(sizeof(U) == sizeof(T));
+      U bits;
+      memcpy(&bits, &value, sizeof(bits));
+      for (size_t i = 0; i < sizeof(U); ++i) {
+        out[i] = static_cast<char>(bits & static_cast<U>(0xff));
+        if constexpr (sizeof(U) > 1) {
+          bits >>= 8;
+        }
+      }
+    }
+  }
+
   absl::Status WriteRaw(const void* source, size_t length) {
     if (length == 0) {
       return absl::OkStatus();

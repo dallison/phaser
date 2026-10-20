@@ -4500,6 +4500,34 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
       os << "    }\n";
     }
     os << "  }\n";
+    os << "  // PhaserSerializeToROSAt() of the message at '_phaser_element' "
+          "into the\n"
+          "  // PhaserROSFixedSize() bytes at '_phaser_output'.  The stores "
+          "could alias\n"
+          "  // the message, so they follow all the reads.\n";
+    os << "  static void PhaserSerializeToROSUncheckedAt("
+          "const char* _phaser_element, char* _phaser_output) {\n";
+    os << "    static_assert(PhaserROSFixedSize() == PhaserROSMinSize());\n";
+    for (size_t i = 0; i < values.size(); ++i) {
+      if (values[i].kind == Kind::kConstant) {
+        continue;
+      }
+      os << "    " << values[i].storage_type << " _phaser_value" << i << ";\n";
+      os << "    memcpy(&_phaser_value" << i << ", _phaser_element + "
+         << FieldOffset(*values[i].field) << ", sizeof(_phaser_value" << i
+         << "));\n";
+    }
+    size_t output_offset = 0;
+    for (size_t i = 0; i < values.size(); ++i) {
+      if (values[i].kind == Kind::kConstant) {
+        continue;
+      }
+      os << "    ::phaser::ROSBuffer::Encode<" << values[i].ros_type
+         << ">(_phaser_output + " << output_offset << ", static_cast<"
+         << values[i].ros_type << ">(_phaser_value" << i << "));\n";
+      output_offset += ROSCppTypeSize(values[i].ros_type);
+    }
+    os << "  }\n";
     return;
   }
 

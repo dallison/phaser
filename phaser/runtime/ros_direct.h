@@ -135,6 +135,16 @@ template <typename T>
 struct HasROSAt<T, std::void_t<decltype(&T::PhaserSerializeToROSAt)>>
     : std::true_type {};
 
+// Those of a fixed ROS size made of scalars also have
+// PhaserSerializeToROSUncheckedAt, writing to output known to have room.
+template <typename T, typename = void>
+struct HasROSUncheckedSerializeAt : std::false_type {};
+
+template <typename T>
+struct HasROSUncheckedSerializeAt<
+    T, std::void_t<decltype(&T::PhaserSerializeToROSUncheckedAt)>>
+    : std::true_type {};
+
 // The ROS encoding of a default T.  Reading a message's ROS fields caches
 // their values in it, so a shared default message cannot be serialized by
 // several threads at once.
@@ -161,7 +171,15 @@ inline absl::Status SerializeToROSAt(const RuntimeHandle& runtime,
     const std::string& bytes = DefaultROSBytes<T>();
     return buffer.WriteRaw(bytes.data(), bytes.size());
   }
-  if constexpr (HasROSAt<T>::value) {
+  if constexpr (HasROSUncheckedSerializeAt<T>::value) {
+    absl::StatusOr<char*> output = buffer.Extend(T::PhaserROSFixedSize());
+    if (!output.ok()) {
+      return output.status();
+    }
+    T::PhaserSerializeToROSUncheckedAt(
+        reinterpret_cast<const char*>(runtime->pb) + offset, *output);
+    return absl::OkStatus();
+  } else if constexpr (HasROSAt<T>::value) {
     return T::PhaserSerializeToROSAt(runtime, offset, buffer);
   } else {
     return T(BorrowedRuntime(runtime), offset).SerializeToROS(buffer);
@@ -191,10 +209,29 @@ template <typename T>
 inline absl::Status SerializeMessageVectorToROS(const RuntimeHandle& runtime,
                                                 ::phaser::BufferOffset header,
                                                 ::phaser::ROSBuffer& buffer) {
-  return ForEachMessageVectorElement(
-      runtime->pb, header, [&](::phaser::BufferOffset element) {
-        return SerializeToROSAt<T>(runtime, element, buffer);
-      });
+  if constexpr (HasROSUncheckedSerializeAt<T>::value) {
+    constexpr size_t kSize = T::PhaserROSFixedSize();
+    const ::phaser::PayloadBuffer* pb = runtime->pb;
+    absl::StatusOr<char*> output =
+        buffer.Extend(size_t{VectorSizeAt(pb, header)} * kSize);
+    if (!output.ok()) {
+      return output.status();
+    }
+    const char* base = reinterpret_cast<const char*>(pb);
+    char* out = *output;
+    ForEachMessageVectorElement(pb, header,
+                                [base, &out](::phaser::BufferOffset element) {
+                                  T::PhaserSerializeToROSUncheckedAt(
+                                      base + element, out);
+                                  out += kSize;
+                                });
+    return absl::OkStatus();
+  } else {
+    return ForEachMessageVectorElement(
+        runtime->pb, header, [&](::phaser::BufferOffset element) {
+          return SerializeToROSAt<T>(runtime, element, buffer);
+        });
+  }
 }
 
 // Generated messages whose fields can all be parsed straight into the

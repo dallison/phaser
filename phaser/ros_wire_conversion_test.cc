@@ -1131,6 +1131,8 @@ TEST(ROSWireConversionTest, MutableVectorElementsReportShortOutput) {
   for (int i = 0; i < 4; ++i) {
     auto element = message.elements.Add();
     PopulateDirectElement(element, i, 1);
+    auto fixed_leaf = message.fixed_leaves.Add();
+    PopulateFixedLeaf(fixed_leaf, i);
   }
   const size_t size = message.ROSSerializedSize();
   std::vector<char> output(size);
