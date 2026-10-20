@@ -1624,7 +1624,13 @@ class MessageVectorField : public Field {
             char staged[Stride()];
             StartElement(staged, block.metadata);
             local_f(staged, index - old_size);
-            memcpy(binary, staged, Stride());
+            // Copying the metadata and the presence word as one lets them be
+            // stored together.
+            uint64_t head;
+            memcpy(&head, staged, sizeof(head));
+            memcpy(binary, &head, sizeof(head));
+            memcpy(binary + sizeof(head), staged + sizeof(head),
+                   Stride() - sizeof(head));
           } else {
             StartElement(binary, block.metadata);
             local_f(binary, index - old_size);
