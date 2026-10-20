@@ -643,8 +643,18 @@ struct MessageRuntime {
     if (pb == nullptr || pb->metadata == 0) {
       return nullptr;
     }
-    auto* control =
-        pb->ToAddress<RuntimeControlBlock>(pb->metadata, buffer_size);
+    RuntimeControlBlock* control;
+    if (is_mutable_) {
+      // The metadata may be the user's rather than a control block, so it is
+      // only known to lie inside the buffer.
+      if (pb->full_size < sizeof(RuntimeControlBlock) ||
+          pb->metadata > pb->full_size - sizeof(RuntimeControlBlock)) {
+        return nullptr;
+      }
+      control = pb->UncheckedAddress<RuntimeControlBlock>(pb->metadata);
+    } else {
+      control = pb->ToAddress<RuntimeControlBlock>(pb->metadata, buffer_size);
+    }
     if (control == nullptr || control->magic != kRuntimeControlMagic ||
         control->version != kRuntimeControlVersion) {
       return nullptr;
@@ -1346,9 +1356,29 @@ struct Message {
   // buffer, copying it in if it is not there yet.  This can move the buffer.
   template <typename MessageType>
   static ::phaser::BufferOffset MetadataFor(const RuntimeHandle& runtime) {
-    static std::atomic<uint32_t> hint{0};
+    if (const RuntimeControlBlock* control = runtime->GetRuntimeControl();
+        control != nullptr) {
+      const uint32_t guess =
+          metadata_hint<MessageType>.load(std::memory_order_relaxed);
+      if (guess < control->count &&
+          control->entries[guess].key == MetadataKeyFor<MessageType>()) {
+        return control->entries[guess].field_data;
+      }
+    }
+    return FindOrAddMetadata<MessageType>(runtime);
+  }
+
+  // The index at which the metadata of MessageType was last found, in any
+  // buffer.
+  template <typename MessageType>
+  static inline std::atomic<uint32_t> metadata_hint{0};
+
+  template <typename MessageType>
+  ABSL_ATTRIBUTE_NOINLINE static ::phaser::BufferOffset FindOrAddMetadata(
+      const RuntimeHandle& runtime) {
     const uint64_t key = MetadataKeyFor<MessageType>();
-    ::phaser::BufferOffset metadata = runtime->GetMetadata(key, hint);
+    ::phaser::BufferOffset metadata =
+        runtime->GetMetadata(key, metadata_hint<MessageType>);
     if (metadata != 0) {
       return metadata;
     }
