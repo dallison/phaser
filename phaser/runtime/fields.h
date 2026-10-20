@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -996,8 +997,7 @@ class IndirectMessageField : public Field {
                                 int number)
       : Field(id, number, source_offset, relative_binary_offset),
         source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset),
-        msg_(InternalDefault{}) {}
+        relative_binary_offset_(relative_binary_offset) {}
   IndirectMessageField(const IndirectMessageField&) = default;
   IndirectMessageField(IndirectMessageField&&) = default;
   IndirectMessageField& operator=(const IndirectMessageField& other) {
@@ -1031,8 +1031,7 @@ class IndirectMessageField : public Field {
     if (message == 0) {
       return DefaultMessage();
     }
-    msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
-    return msg_;
+    return Bind(message);
   }
 
   bool IsPresent() const { return MessageAt(Locate()) != 0; }
@@ -1053,30 +1052,28 @@ class IndirectMessageField : public Field {
         *GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(
             message) = metadata;
       }
-      msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
-      return &msg_;
+      return &Bind(message);
     }
     ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (addr != nullptr && *addr != 0) {
       // Already allocated.
-      msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
-      return &msg_;
+      return &Bind(*addr);
     }
     // Allocate a new message.
     void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
     ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
-    msg_.template BindBorrowed<MessageType>(GetRuntime(), msg_offset);
+    MessageType& handle = Bind(msg_offset);
 
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(relative_binary_offset_);
     *addr = msg_offset;  // Put message field offset into message.
 
     // Install the metadata into the binary message.
-    msg_.template InstallMetadata<MessageType>();
-    return &msg_;
+    handle.template InstallMetadata<MessageType>();
+    return &handle;
   }
 
   void SetOffset(::phaser::BufferOffset offset) {
@@ -1091,7 +1088,7 @@ class IndirectMessageField : public Field {
       Clear();
     }
     *addr = offset;
-    msg_.template BindBorrowed<MessageType>(GetRuntime(), offset);
+    Bind(offset);
   }
 
   void Clear() {
@@ -1104,8 +1101,7 @@ class IndirectMessageField : public Field {
       }
       if constexpr (internal::HasSyncToPayloadWork<MessageType>::value) {
         // The handle holds values of the message's fields too.
-        msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
-        msg_.Clear();
+        Bind(message).Clear();
       } else {
         internal::ReleaseMessageContents<MessageType>(GetRuntime(), message);
       }
@@ -1123,8 +1119,7 @@ class IndirectMessageField : public Field {
     if constexpr (!internal::ClearReleasesNothing<MessageType>::value ||
                   internal::HasSyncToPayloadWork<MessageType>::value) {
       // Clear the message.
-      msg_.template BindBorrowed<MessageType>(GetRuntime(), old_offset);
-      msg_.Clear();
+      Bind(old_offset).Clear();
     }
     // Delete the memory in the payload buffer.
     GetBuffer()->Free(GetRuntime()->ToAddress(old_offset));
@@ -1149,9 +1144,10 @@ class IndirectMessageField : public Field {
     }
     if (const ::phaser::BufferOffset message = MessageAt(location);
         message != 0) {
-      msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
+      Bind(message);
     }
-    return ProtoBuffer::LengthDelimitedSize(Number(), msg_.SerializedSize());
+    return ProtoBuffer::LengthDelimitedSize(Number(),
+                                            Handle().SerializedSize());
   }
 
   absl::Status Serialize(ProtoBuffer& buffer) const {
@@ -1161,17 +1157,17 @@ class IndirectMessageField : public Field {
     }
     if (const ::phaser::BufferOffset message = MessageAt(location);
         message != 0) {
-      msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
+      Bind(message);
     }
 
-    size_t size = msg_.SerializedSize();
+    size_t size = Handle().SerializedSize();
     if (absl::Status status =
             buffer.SerializeLengthDelimitedHeader(Number(), size);
         !status.ok()) {
       return status;
     }
 
-    return msg_.Serialize(buffer);
+    return Handle().Serialize(buffer);
   }
 
   absl::Status Deserialize(ProtoBuffer& buffer) {
@@ -1189,7 +1185,7 @@ class IndirectMessageField : public Field {
         GetBufferAddr(), MessageType::BinarySize());
     ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
-    msg_.template BindBorrowed<MessageType>(GetRuntime(), msg_offset);
+    MessageType& handle = Bind(msg_offset);
 
     // Buffer might have moved, get address of indirect again.
     ::phaser::BufferOffset* addr =
@@ -1197,15 +1193,17 @@ class IndirectMessageField : public Field {
     *addr = msg_offset;  // Put message field offset into message.
 
     // Install the metadata into the binary message.
-    msg_.template InstallMetadata<MessageType>();
+    handle.template InstallMetadata<MessageType>();
 
     ProtoBuffer sub_buffer(s.value());
-    return msg_.Deserialize(sub_buffer);
+    return handle.Deserialize(sub_buffer);
   }
 
+  // Values waiting to reach the payload are held only by the handle, so
+  // there is nothing to write until the handle has been made.
   void SyncToPayload() const {
     if constexpr (internal::HasSyncToPayloadWork<MessageType>::value) {
-      if (IsPresent()) {
+      if (msg_.has_value() && IsPresent()) {
         Get().SyncToPayload();
       }
     }
@@ -1213,11 +1211,15 @@ class IndirectMessageField : public Field {
 
   // Clear() of the handle alone, for when the buffer holding the message is
   // reset.
-  void ClearHandle() { msg_.PhaserClearHandles(); }
+  void ClearHandle() {
+    if (msg_.has_value()) {
+      msg_->PhaserClearHandles();
+    }
+  }
 
   void Indent(int indent) const {
     Field::Indent(indent);
-    msg_.Indent(indent);
+    Handle().Indent(indent);
   }
 
  protected:
@@ -1243,8 +1245,22 @@ class IndirectMessageField : public Field {
     if (message == 0) {
       ThrowReadonlyMessage();
     }
-    msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
-    return &msg_;
+    return &Bind(message);
+  }
+
+  // Making the handle makes those of every message field inside it, so it is
+  // made when first used.
+  MessageType& Handle() const {
+    if (!msg_.has_value()) {
+      msg_.emplace(InternalDefault{});
+    }
+    return *msg_;
+  }
+
+  MessageType& Bind(::phaser::BufferOffset message) const {
+    MessageType& handle = Handle();
+    handle.template BindBorrowed<MessageType>(GetRuntime(), message);
+    return handle;
   }
 
   Location Locate() const {
@@ -1292,7 +1308,7 @@ class IndirectMessageField : public Field {
 
   uint32_t source_offset_;
   ::phaser::BufferOffset relative_binary_offset_;
-  mutable MessageType msg_;
+  mutable std::optional<MessageType> msg_;
 };
 
 namespace internal {

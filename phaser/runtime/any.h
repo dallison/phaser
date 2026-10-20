@@ -399,36 +399,36 @@ class AnyField : public IndirectMessageField<AnyMessage> {
 
   template <typename T>
   bool PackFrom(const T& msg) {
-    return msg_.PackFrom(msg);
+    return Handle().PackFrom(msg);
   }
 
   template <typename T>
   bool UnpackTo(T* msg) const {
-    return msg_.UnpackTo(msg);
+    return Handle().UnpackTo(msg);
   }
 
   bool ParseFromString(const std::string& str) {
-    return msg_.ParseFromString(str);
+    return Handle().ParseFromString(str);
   }
 
   bool SerializeToString(std::string* str) const {
-    return msg_.SerializeToString(str);
+    return Handle().SerializeToString(str);
   }
 
   template <typename T>
   bool Is() const {
-    return msg_.Is<T>();
+    return Handle().Is<T>();
   }
 
   template <typename T>
   void CloneFrom(const T& msg) {
-    msg_.CloneFrom(msg);
+    Handle().CloneFrom(msg);
   }
 
-  bool has_type_url() const { return msg_.has_type_url(); }
-  bool has_value() const { return msg_.has_value(); }
-  std::string_view type_url() const { return msg_.type_url(); }
-  std::string_view value() const { return msg_.value(); }
+  bool has_type_url() const { return Handle().has_type_url(); }
+  bool has_value() const { return Handle().has_value(); }
+  std::string_view type_url() const { return Handle().type_url(); }
+  std::string_view value() const { return Handle().value(); }
 };
 
 }  // namespace phaser
