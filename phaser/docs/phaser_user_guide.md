@@ -285,9 +285,24 @@ wire-to-wire conversion APIs. You do not need the ROS frontend to produce or
 consume ROS1 wire bytes.
 
 Set `enable_active_message = True` on `phaser_library`, or pass
-`active_message=true` to the plugin, to add a public `std::any active_message`
-member to every generated message. This is application-side transient state;
-it is not stored in the native payload or serialized to protobuf or ROS.
+`active_message=true` to the plugin, to add a public `active_message` member to
+every generated message. This is application-side transient state; it is not
+stored in the native payload or serialized to protobuf or ROS.
+
+The member is a `phaser::ActiveMessage`, which holds a `std::any` on the heap
+so that an empty one costs a pointer. It is assigned, tested, and reset like a
+`std::any`, and converts to `std::any&` for `std::any_cast`:
+
+```c++
+msg.active_message = std::make_shared<Buffer>(bytes);
+if (msg.active_message.has_value()) {
+  auto& buffer = std::any_cast<std::shared_ptr<Buffer>&>(msg.active_message);
+}
+msg.active_message.reset();
+```
+
+Initializing a `std::any` from it stores the `ActiveMessage` itself; to copy
+the value, write `std::any(static_cast<const std::any&>(msg.active_message))`.
 
 ### ROS field syntax
 Scalar, enum, string, message, and repeated fields provide value-like syntax,

@@ -1460,7 +1460,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   }
   if (generate_active_message_) {
     os << "  // Optional user-attached payload, not part of the wire format.\n";
-    os << "  std::any active_message;\n\n";
+    os << "  ::phaser::ActiveMessage active_message;\n\n";
   }
   for (const auto& [oneof, u] : unions_) {
     os << "  inline static constexpr uint32_t " << u->member_name

@@ -36,6 +36,7 @@ cc_library(
     ],
     copts = PHASER_COPTS,
     hdrs = [
+        "active_message.h",
         "any.h",
         "arrays.h",
         "fields.h",

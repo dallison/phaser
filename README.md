@@ -127,7 +127,7 @@ phaser_library(
     name = "foo_phaser",
     add_namespace = "phaser",  # optional: avoids clashing with protobuf classes
     frontend = "protobuf",     # default; use "ros" for public field proxies
-    enable_active_message = False,  # optionally add std::any active_message
+    enable_active_message = False,  # optionally add an active_message
     deps = [":foo_proto"],
 )
 ```
@@ -175,8 +175,9 @@ protobuf serialization, ROS1 serialization, and the direct wire conversion
 APIs described below.
 
 Set `enable_active_message = True` if each generated source object should also
-carry an application-owned `std::any active_message`. This transient member is
-not part of the native payload and is not serialized.
+carry an application-owned `active_message`, a `phaser::ActiveMessage` that
+holds a `std::any`. This transient member is not part of the native payload and
+is not serialized.
 
 Fixed-size ROS fields are repeated protobuf fields annotated with
 `[(phaser.array_size) = N]`; import `phaser/options.proto` in the schema. ROS

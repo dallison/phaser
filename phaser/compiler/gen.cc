@@ -282,7 +282,7 @@ void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
     os << "#include \"phaser/runtime/ros.h\"\n";
   }
   if (generate_active_message_) {
-    os << "#include <any>\n";
+    os << "#include \"phaser/runtime/active_message.h\"\n";
   }
   for (int i = 0; i < file_->dependency_count(); i++) {
     const google::protobuf::FileDescriptor* dep = file_->dependency(i);
