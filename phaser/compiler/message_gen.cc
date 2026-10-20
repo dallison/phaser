@@ -3368,6 +3368,12 @@ void MessageGenerator::GenerateDirectROSWriteValue(
          << value << ")); !status.ok()) return status;\n";
       return;
     default:
+      if (const std::string ros_type = ROSPrimitiveCppType(field);
+          !ros_type.empty()) {
+        os << indent << "if (absl::Status status = output.Write(static_cast<"
+           << ros_type << ">(" << value << ")); !status.ok()) return status;\n";
+        return;
+      }
       os << indent << "if (absl::Status status = output.Write(" << value
          << "); !status.ok()) return status;\n";
       return;
@@ -3532,7 +3538,7 @@ void MessageGenerator::GenerateDirectProtobufField(
           "ros_scan.DeserializeLengthDelimited();\n";
     os << indent
        << "        if (!ros_packed.ok()) return ros_packed.status();\n";
-    if (fixed_wire_type) {
+    if (fixed_wire_type && !ROSBulkPrimitiveType(field).empty()) {
       os << indent << "        if (ros_packed->size() % sizeof(" << type
          << ") != 0) {\n";
       os << indent
@@ -3686,10 +3692,14 @@ void MessageGenerator::GenerateDirectROSReadValue(
     abort();
   }
   const std::string type = DirectProtobufValueType(field);
-  os << indent << "absl::StatusOr<" << type << "> ros_value = " << reader
-     << ".Read<" << type << ">();\n";
+  std::string ros_type = ROSPrimitiveCppType(field);
+  if (ros_type.empty()) {
+    ros_type = type;
+  }
+  os << indent << "absl::StatusOr<" << ros_type << "> ros_value = " << reader
+     << ".Read<" << ros_type << ">();\n";
   os << indent << "if (!ros_value.ok()) return ros_value.status();\n";
-  os << indent << value << " = *ros_value;\n";
+  os << indent << value << " = static_cast<" << type << ">(*ros_value);\n";
 }
 
 void MessageGenerator::GenerateDirectProtoWriteValue(
@@ -3820,7 +3830,8 @@ void MessageGenerator::GenerateDirectROSFieldToProtobuf(
     return;
   }
 
-  if (field->is_packable() && field->is_packed() && fixed_wire_type) {
+  if (field->is_packable() && field->is_packed() && fixed_wire_type &&
+      !ROSBulkPrimitiveType(field).empty()) {
     os << indent << "  const uint64_t ros_packed_byte_size = "
        << "static_cast<uint64_t>(" << count << ") * sizeof(" << type << ");\n";
     os << indent << "  if (ros_packed_byte_size > ros.Remaining()) {\n";

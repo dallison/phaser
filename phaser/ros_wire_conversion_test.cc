@@ -436,6 +436,26 @@ TEST(ROSWireConversionTest, ROSNarrowScalarsUseDeclaredWireWidths) {
   EXPECT_EQ(decoded.int8_value.Get(), -2);
   EXPECT_EQ(decoded.uint16_value.Get(), 0xb2c3);
   EXPECT_EQ(decoded.int16_value.Get(), -4);
+
+  // The converters between protobuf and ROS use the same widths.
+  ::phaser::ROSBuffer protobuf_output;
+  ASSERT_TRUE(RosNarrowScalars::ProtobufToROS(message.SerializeAsString(),
+                                              protobuf_output)
+                  .ok());
+  EXPECT_EQ(protobuf_output.AsString(), expected);
+
+  std::vector<char> wire(64);
+  ::phaser::ProtoBuffer wire_output(wire.data(), wire.size());
+  ASSERT_TRUE(RosNarrowScalars::ROSToProtobuf(
+                  absl::Span<const char>(expected.data(), expected.size()),
+                  wire_output)
+                  .ok());
+  ::foo::bar::RosNarrowScalars protobuf;
+  ASSERT_TRUE(protobuf.ParseFromArray(wire.data(), int(wire_output.Size())));
+  EXPECT_EQ(protobuf.uint8_value(), 0xa1u);
+  EXPECT_EQ(protobuf.int8_value(), -2);
+  EXPECT_EQ(protobuf.uint16_value(), 0xb2c3u);
+  EXPECT_EQ(protobuf.int16_value(), -4);
 }
 
 TEST(ROSWireConversionTest, ParsesKnownROSBytesIntoNativePayload) {
