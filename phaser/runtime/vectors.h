@@ -1193,11 +1193,15 @@ class MessageVectorField : public Field {
   // The handle borrows the runtime of the message this vector is in, so it is
   // valid only while the handle it was made from exists.
   T Add() {
-    const ::phaser::BufferOffset element = AddElement();
     if constexpr (std::is_constructible_v<T, MutablePart, const RuntimeHandle&,
                                           ::phaser::BufferOffset>) {
-      return T(MutablePart{}, GetRuntime(), element);
+      // Read before the element is stored, which the compiler must assume
+      // could change this handle.
+      const RuntimeHandle runtime = BorrowedRuntime(GetRuntime());
+      const ::phaser::BufferOffset element = AddElement();
+      return T(MutablePart{}, runtime, element);
     } else {
+      const ::phaser::BufferOffset element = AddElement();
       return T(BorrowedRuntime(GetRuntime()), element);
     }
   }
@@ -1316,11 +1320,14 @@ class MessageVectorField : public Field {
   }
 
   void reserve(size_t n) {
+    const Message* message = Message::GetMessage(this, source_offset_);
     // Throws for a readonly message even when there is room.
-    (void)GetBufferAddr();
-    if (n > capacity()) {
-      Grow(GetRuntime(), VectorHeaderOffset(), n, n);
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
+      ThrowReadonlyMessage();
     }
+    // A mutable message has its compiled layout.
+    ReserveAt(message->runtime,
+              message->absolute_binary_offset + relative_binary_offset_, n);
   }
 
   void resize(size_t n) {

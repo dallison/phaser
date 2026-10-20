@@ -518,6 +518,8 @@ TEST(OutputAllocationTest, ReadonlyElementMutationIsRejected) {
       mutable_message.Data(), mutable_message.Size());
   EXPECT_THROW(readonly.vm(0).set_f(8), std::logic_error);
   EXPECT_THROW((void)readonly.add_vm(), std::logic_error);
+  EXPECT_THROW(readonly.reserve_vm(1), std::logic_error);
+  EXPECT_THROW(readonly.reserve_vm(64), std::logic_error);
   EXPECT_EQ(readonly.vm(0).f(), 7);
   EXPECT_EQ(readonly.vm_size(), 1u);
 }
