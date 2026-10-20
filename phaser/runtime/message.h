@@ -86,6 +86,16 @@ struct FieldLocation {
   int32_t id = -1;
 };
 
+// A singular message field has no presence bit, so its id in field metadata
+// is free to say how the message is stored: this id marks one stored inside
+// the message holding it rather than through an offset.
+inline constexpr int kInlineMessageFieldId = 1;
+
+// An inline message starts at the first 8-byte boundary at or after 'end'.
+constexpr uint32_t InlineMessageOffset(size_t end) {
+  return static_cast<uint32_t>((end + 7) & ~size_t{7});
+}
+
 namespace internal {
 
 inline FieldLocation FindLegacyField(const FieldData* field_data,
@@ -922,6 +932,18 @@ struct IndirectMessageRelease : std::true_type {
     const ::phaser::BufferOffset message = OffsetAt(runtime->pb, field);
     if (message != 0) {
       ReleaseMessageAt<T>(runtime, message);
+    }
+  }
+};
+
+// A message stored inside the message holding it is there if its metadata
+// word is set.
+template <typename T>
+struct InlineMessageRelease : std::true_type {
+  static void Release(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset field) {
+    if (OffsetAt(runtime->pb, field) != 0) {
+      ReleaseMessageContents<T>(runtime, field);
     }
   }
 };

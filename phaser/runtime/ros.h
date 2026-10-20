@@ -129,10 +129,10 @@ struct RosHeaderTraits {
 // A changed value is cached until SyncToPayload() or the handle's destruction,
 // so it also reaches the payload through a temporary handle such as a repeated
 // element.  ROS serialization reads the cache and needs no payload copy.
-template <typename Backend, typename Traits>
-class RosMessageField : public IndirectMessageField<Backend> {
+template <typename Backend, typename Traits, bool kInline = false>
+class RosMessageField : public IndirectMessageField<Backend, kInline> {
  public:
-  using Base = IndirectMessageField<Backend>;
+  using Base = IndirectMessageField<Backend, kInline>;
   using RosType = typename Traits::RosType;
 
   RosMessageField() = default;
@@ -276,12 +276,12 @@ class RosMessageField : public IndirectMessageField<Backend> {
   bool in_message_ = false;
 };
 
-template <typename Backend>
-using RosTimeField = RosMessageField<Backend, internal::RosTimeTraits>;
+template <typename Backend, bool kInline = false>
+using RosTimeField = RosMessageField<Backend, internal::RosTimeTraits, kInline>;
 
-template <typename Backend>
+template <typename Backend, bool kInline = false>
 using RosDurationField =
-    RosMessageField<Backend, internal::RosDurationTraits>;
+    RosMessageField<Backend, internal::RosDurationTraits, kInline>;
 
 // Presents a repeated Phaser message field as a sequence of ROS values, so a
 // ROS `time[]` or `duration[]` reads and writes as `::ros::Time` rather than as
@@ -552,11 +552,11 @@ class RosHeaderMutableView {
   FrameIdProxy frame_id;
 };
 
-template <typename Backend>
-class RosHeaderField : public IndirectMessageField<Backend> {
+template <typename Backend, bool kInline = false>
+class RosHeaderField : public IndirectMessageField<Backend, kInline> {
  public:
-  using Base = IndirectMessageField<Backend>;
-  using MutableView = RosHeaderMutableView<RosHeaderField<Backend>>;
+  using Base = IndirectMessageField<Backend, kInline>;
+  using MutableView = RosHeaderMutableView<RosHeaderField>;
   using Base::Base;
 
   struct ConstArrow {
@@ -661,13 +661,13 @@ class RosHeaderField : public IndirectMessageField<Backend> {
 };
 
 namespace internal {
-template <typename Backend, typename Traits>
-struct FieldRelease<RosMessageField<Backend, Traits>>
-    : IndirectMessageRelease<Backend> {};
+template <typename Backend, typename Traits, bool kInline>
+struct FieldRelease<RosMessageField<Backend, Traits, kInline>>
+    : FieldRelease<IndirectMessageField<Backend, kInline>> {};
 
-template <typename Backend>
-struct FieldRelease<RosHeaderField<Backend>>
-    : IndirectMessageRelease<Backend> {};
+template <typename Backend, bool kInline>
+struct FieldRelease<RosHeaderField<Backend, kInline>>
+    : FieldRelease<IndirectMessageField<Backend, kInline>> {};
 
 template <typename Sequence, typename Traits>
 struct FieldRelease<RosRepeatedMessageField<Sequence, Traits>>

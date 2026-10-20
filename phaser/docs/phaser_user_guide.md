@@ -251,7 +251,7 @@ phaser_library(
 When invoking the plugin directly, pass `frontend=ros` in `--phaser_out`.
 Unknown frontend values are rejected.
 
-The frontend controls source-level syntax, not storage or wire compatibility:
+The frontend controls source-level syntax, not wire compatibility:
 
 ```c++
 // frontend = "protobuf"
@@ -267,8 +267,9 @@ ros_message.name = "camera";
 ros_message.values.push_back(1.5);
 ```
 
-Both types use the same native Phaser payload layout. A receiver can attach the
-other frontend to the same bytes without conversion:
+Both types use the same native Phaser payload format, though the ROS frontend
+stores nested messages inline (see [Message fields](#message-fields)). A receiver
+can attach the other frontend to the same bytes without conversion:
 
 ```c++
 foo::bar::protobuf_api::Foo source;
@@ -1479,8 +1480,9 @@ direct lookup for the first group and one sparse entry for the outlier.
 The field id is used as a bit number for the `presence mask`, which is located
 immediately after the metadata offset in the message. The presence mask has a
 bit position for every primitive field and may not be present if there are no
-primitive fields. Field proxies cache both the resolved offset and id after
-their first access, including a missing-field result.
+primitive fields. A message whose metadata matches its compiled type has its
+fields at their compiled locations; otherwise each field access looks the field
+up in the metadata.
 
 Hybrid metadata changes the native Phaser payload format. This runtime can
 still read legacy metadata using its previous all-fields binary-search layout,
@@ -1505,6 +1507,15 @@ is not present.
 These have a header that contains the offset (relative to the PayloadBuffer) of another
 message, which is in the format described here.  Like strings, a value of 0 means
 that the field is not present.
+
+The ROS frontend instead stores a singular message that is not in a `oneof`
+inside the message that holds it, after the other fields, unless its type can
+reach the holding type through singular fields.  ROS messages have no presence
+for nested messages, so these are normally all set, and storing them inline
+saves an allocation and an offset per message.  An inline message is not
+present while its metadata offset is 0.  Its field metadata entry has the id
+`kInlineMessageFieldId`, so a reader whose compiled layout differs, such as a
+protobuf frontend type, still finds the message.
 
 ### Repeated fields (vectors)
 The header for these is 8-bytes long and contains:

@@ -108,6 +108,51 @@ TEST(RosIntrinsicsTest, CopyAndMovePreserveDeferredValues) {
   EXPECT_EQ(ReadFrame(moved.header), "map");
 }
 
+template <typename T>
+::phaser::BufferOffset InlineMessageStart(
+    const ::phaser::InlineMessageField<T>& field) {
+  return field.Get().absolute_binary_offset;
+}
+
+TEST(RosIntrinsicsTest, NestedMessagesAreInsideTheMessage) {
+  RosIntrinsicMessage message;
+  MutateTime(message.stamp);
+  MutateHeader(message.header);
+  message.SyncToPayload();
+
+  const ::phaser::BufferOffset start = message.absolute_binary_offset;
+  const ::phaser::BufferOffset end = static_cast<::phaser::BufferOffset>(
+      start + RosIntrinsicMessage::BinarySize());
+  const ::phaser::BufferOffset stamp = InlineMessageStart(message.stamp);
+  const ::phaser::BufferOffset header = InlineMessageStart(message.header);
+  EXPECT_GT(stamp, start);
+  EXPECT_LT(stamp, end);
+  EXPECT_GT(header, start);
+  EXPECT_LT(header, end);
+  EXPECT_EQ(message.stamp->sec, 12u);
+  EXPECT_EQ(message.header->stamp.sec, 21u);
+}
+
+TEST(RosIntrinsicsTest, ClearingAnInlineMessageRemovesIt) {
+  RosIntrinsicMessage message;
+  const RosIntrinsicMessage& view = message;
+  MutateHeader(message.header);
+  ASSERT_TRUE(message.header.IsPresent());
+
+  message.header.Clear();
+  EXPECT_FALSE(message.header.IsPresent());
+  EXPECT_EQ(view.header->seq, 0u);
+  EXPECT_EQ(ReadFrame(view.header), "");
+
+  MutateHeader(message.header);
+  EXPECT_EQ(view.header->seq, 9u);
+  EXPECT_EQ(ReadFrame(view.header), "map");
+
+  message.Clear();
+  EXPECT_FALSE(message.header.IsPresent());
+  EXPECT_FALSE(message.stamp.IsPresent());
+}
+
 void FillRepeated(RosIntrinsicMessage& message) {
   message.stamps.Add(::ros::Time(1, 2));
   message.stamps.Add(::ros::Time(3, 4));

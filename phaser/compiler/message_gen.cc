@@ -841,9 +841,10 @@ std::string MessageGenerator::FieldCFieldType(
         return "AnyField";
       }
       if (IsRosFrontend() && IsRosIntrinsic(field)) {
-        return RosIntrinsicFieldType(field);
+        return RosIntrinsicFieldType(field, StoresMessageInline(field));
       }
-      return "IndirectMessageField<" +
+      return (StoresMessageInline(field) ? "InlineMessageField<"
+                                         : "IndirectMessageField<") +
              MessageName(field->message_type(), true) + ">";
 
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
@@ -1177,16 +1178,17 @@ bool MessageGenerator::IsRosIntrinsic(
 }
 
 std::string MessageGenerator::RosIntrinsicFieldType(
-    const google::protobuf::FieldDescriptor* field) {
-  const std::string backend = MessageName(field->message_type(), true);
+    const google::protobuf::FieldDescriptor* field, bool stored_inline) {
+  const std::string args = MessageName(field->message_type(), true) +
+                           (stored_inline ? ", true>" : ">");
   if (IsRosTime(field->message_type())) {
-    return "RosTimeField<" + backend + ">";
+    return "RosTimeField<" + args;
   }
   if (IsRosDuration(field->message_type())) {
-    return "RosDurationField<" + backend + ">";
+    return "RosDurationField<" + args;
   }
   assert(IsRosHeader(field->message_type()));
-  return "RosHeaderField<" + backend + ">";
+  return "RosHeaderField<" + args;
 }
 
 std::string MessageGenerator::RosIntrinsicVectorFieldType(
@@ -1292,6 +1294,14 @@ void MessageGenerator::CompileFields() {
     } else if (field->is_repeated()) {
       field_type = FieldRepeatedCType(field);
       field_size = 8;
+    } else if (StoresMessageInline(field)) {
+      // Placed after the other fields by FinalizeOffsetsAndSizes.
+      fields_.push_back(std::make_shared<FieldInfo>(
+          field, 0, 0, MemberVariableName(std::string(field->name())),
+          FieldCFieldType(field), FieldCType(field), 0));
+      fields_.back()->inline_message = true;
+      fields_in_order_.push_back(fields_.back());
+      continue;
     } else {
       field_type = FieldCFieldType(field);
       field_size = FieldBinarySize(field);
@@ -1327,14 +1337,16 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
   size += presence_mask_size_;
 
   // Finalize the offsets in the fields vector now that we know the header size.
+  uint32_t offset = size;
   for (auto& field : fields_) {
+    if (field->inline_message) {
+      continue;
+    }
     field->offset += size;
+    offset = field->offset + field->binary_size;
   }
 
   // Set the offsets for the unions.
-  uint32_t offset =
-      fields_.empty() ? size
-                      : (fields_.back()->offset + fields_.back()->binary_size);
   // Align offset to 4 bytes.
   offset = (offset + 3) & ~3u;
   size = offset;
@@ -1349,6 +1361,53 @@ void MessageGenerator::FinalizeOffsetsAndSizes() {
     size += u->binary_size;
   }
   binary_size_ = size;
+}
+
+bool MessageGenerator::StoresMessageInline(
+    const google::protobuf::FieldDescriptor* field) {
+  // A ROS message has no presence for its nested messages, so they are
+  // normally all set and storing them inline costs no space.
+  if (!IsRosFrontend() ||
+      field->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+      field->is_repeated() || field->containing_oneof() != nullptr ||
+      IsAny(field)) {
+    return false;
+  }
+  // A type that can reach this one through singular fields would have to
+  // contain itself.
+  const auto* type = field->message_type();
+  absl::flat_hash_set<const google::protobuf::Descriptor*> visited;
+  return type != message_ &&
+         !ReachesThroughSingularFields(type, message_, &visited);
+}
+
+std::string MessageGenerator::FieldOffset(const FieldInfo& field) const {
+  if (field.inline_message) {
+    return "kPhaserField" + std::to_string(field.field->number()) + "Offset";
+  }
+  return std::to_string(field.offset);
+}
+
+std::string MessageGenerator::FieldId(const FieldInfo& field) const {
+  return field.inline_message ? "::phaser::kInlineMessageFieldId"
+                              : std::to_string(field.id);
+}
+
+std::string MessageGenerator::GenerateInlineMessageOffsets(std::ostream& os) {
+  std::string end = std::to_string(binary_size_);
+  for (const auto& field : fields_) {
+    if (!field->inline_message) {
+      continue;
+    }
+    const std::string offset = FieldOffset(*field);
+    os << "  static constexpr uint32_t " << offset
+       << " = ::phaser::InlineMessageOffset(" << end << ");\n";
+    os << "  static_assert(" << offset
+       << " <= 0x00ffffffu, \"Field offset exceeds 24 bits\");\n";
+    end = offset + " + " + MessageName(field->field->message_type(), true) +
+          "::BinarySize()";
+  }
+  return end;
 }
 
 absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
@@ -1367,6 +1426,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   os << (IsRosFrontend() ? "struct " : "class ") << MessageName(message_)
      << " : public ::phaser::Message {\n";
   os << " public:\n";
+  binary_end_ = GenerateInlineMessageOffsets(os);
   if (IsRosFrontend()) {
     GenerateRosOneofTypes(os);
   }
@@ -1829,8 +1889,8 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream& os,
   }
   for (auto& field : fields_) {
     os << sep << field->member_name << "(offsetof(" << MessageName(message_)
-       << ", " << field->member_name << "), " << field->offset << ", "
-       << field->id << ", " << field->field->number() << ")\n";
+       << ", " << field->member_name << "), " << FieldOffset(*field) << ", "
+       << FieldId(*field) << ", " << field->field->number() << ")\n";
     sep = ", ";
   }
   for (auto& [oneof, u] : unions_) {
@@ -1987,7 +2047,7 @@ void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
         "    runtime->pb->metadata = _phaser_user_metadata;\n"
         "  }\n";
   os << "  static constexpr size_t BinarySize() { return HeaderSize() + "
-     << binary_size_ << "; }\n";
+     << binary_end_ << "; }\n";
   os << "  static constexpr size_t PresenceMaskSize() { return "
      << presence_mask_size_ << "; }\n";
   os << "  static constexpr uint32_t HeaderSize() { return 4 + "
@@ -2132,8 +2192,8 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {
           static_cast<uint32_t>(all_fields[field_index]->field->number()) ==
               field_number) {
         const auto& field = all_fields[field_index++];
-        os << "      { .offset = " << field->offset << ", .id = " << field->id
-           << " },\n";
+        os << "      { .offset = " << FieldOffset(*field)
+           << ", .id = " << FieldId(*field) << " },\n";
       } else {
         os << "      {},\n";
       }
@@ -2149,8 +2209,8 @@ void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {
       }
       const auto& field = all_fields[i];
       os << "      { .number = " << field->field->number()
-         << ", .offset = " << field->offset << ", .id = " << field->id
-         << " },\n";
+         << ", .offset = " << FieldOffset(*field)
+         << ", .id = " << FieldId(*field) << " },\n";
     }
     os << "    },\n";
   }
@@ -2200,7 +2260,8 @@ void MessageGenerator::GenerateReleaseAt(std::ostream& os, bool decl) {
   for (auto& field : fields_) {
     os << "    ::phaser::internal::ReleaseField<decltype(" << name
        << "::" << field->member_name
-       << ")>(_phaser_runtime, _phaser_offset + " << field->offset << ");\n";
+       << ")>(_phaser_runtime, _phaser_offset + " << FieldOffset(*field)
+       << ");\n";
   }
   os << "  } else {\n";
   os << "    " << name << "(::phaser::BorrowedRuntime(_phaser_runtime), "

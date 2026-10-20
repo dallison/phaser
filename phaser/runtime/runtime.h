@@ -92,9 +92,9 @@ inline std::ostream& operator<<(
   return os;
 }
 
-template <typename T>
+template <typename T, bool kInline>
 inline std::ostream& operator<<(std::ostream& os,
-                                const IndirectMessageField<T>& field) {
+                                const IndirectMessageField<T, kInline>& field) {
   os << "{\n";
   field.Indent(2);
   os << field.Get();

@@ -41,6 +41,10 @@ struct FieldInfo {
   std::string member_type;
   std::string c_type;
   uint32_t binary_size;
+  // A singular message stored inside this message.  Its offset is a C++
+  // constant, since it follows the other fields and the sizes of the
+  // messages before it are only known to the C++ compiler.
+  bool inline_message = false;
 };
 
 struct UnionInfo : public FieldInfo {
@@ -90,6 +94,16 @@ class MessageGenerator {
   void CompileFields();
   void CompileUnions();
   void FinalizeOffsetsAndSizes();
+  // Whether the singular message 'field' is stored inside this message
+  // rather than through an offset.
+  bool StoresMessageInline(const google::protobuf::FieldDescriptor* field);
+  // C++ constant expressions for the field's offset in this message and its
+  // id in the field metadata.
+  std::string FieldOffset(const FieldInfo& field) const;
+  std::string FieldId(const FieldInfo& field) const;
+  // Declares the offsets of the inline messages and returns a C++ constant
+  // expression for where the message's binary ends.
+  std::string GenerateInlineMessageOffsets(std::ostream& os);
 
   void GenerateDefaultConstructor(std::ostream& os, bool decl);
   void GenerateInternalDefaultConstructor(std::ostream& os, bool decl);
@@ -224,7 +238,7 @@ class MessageGenerator {
   bool IsRosHeader(const google::protobuf::Descriptor* desc) const;
   bool IsRosIntrinsic(const google::protobuf::FieldDescriptor* field) const;
   std::string RosIntrinsicFieldType(
-      const google::protobuf::FieldDescriptor* field);
+      const google::protobuf::FieldDescriptor* field, bool stored_inline);
   std::string RosIntrinsicVectorFieldType(
       const google::protobuf::FieldDescriptor* field);
   std::string RosIntrinsicArrayFieldType(
@@ -249,6 +263,8 @@ class MessageGenerator {
       unions_;
   std::vector<std::shared_ptr<FieldInfo>> fields_in_order_;
   uint32_t binary_size_ = 4;
+  // Where the binary ends, including any inline messages.
+  std::string binary_end_;
   uint32_t presence_mask_size_ = 0;
   std::string added_namespace_;
   std::string package_name_;

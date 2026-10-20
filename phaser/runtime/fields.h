@@ -952,8 +952,8 @@ class NonEmbeddedStringField
           // ::phaser::StringHeader
 };
 
-// This is a buffer offset containing the absolute offset of a message in the
-// payload buffer.
+// A singular message field.  It is a buffer offset containing the absolute
+// offset of a message in the payload buffer:
 //
 //    In the message:
 //    +------------+
@@ -964,8 +964,12 @@ class NonEmbeddedStringField
 //                          |            |
 //                          |            |
 //                          +------------+
+//
+// or, if 'kInline' is true, the message itself, which is there when its
+// metadata word is not zero.  The field metadata says which, so a message
+// written with another version of the schema can be read either way.
 
-template <typename MessageType>
+template <typename MessageType, bool kInline = false>
 class IndirectMessageField : public Field {
  public:
   IndirectMessageField() = default;
@@ -1005,31 +1009,31 @@ class IndirectMessageField : public Field {
   MessageType& MutableMsg() { return *Mutable(); }
 
   const MessageType& Get() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
+    const ::phaser::BufferOffset message = MessageAt(Locate());
+    if (message == 0) {
       return DefaultMessage();
     }
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(static_cast<uint32_t>(offset));
-    if (addr == nullptr || *addr == 0) {
-      return DefaultMessage();
-    }
-    // Load up the message if it's already been allocated.
-    msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
+    msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
     return msg_;
   }
 
-  bool IsPresent() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      return false;
-    }
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(static_cast<uint32_t>(offset));
-    return addr != nullptr && *addr != 0;
-  }
+  bool IsPresent() const { return MessageAt(Locate()) != 0; }
 
   MessageType* Mutable() {
+    if constexpr (kInline) {
+      const ::phaser::BufferOffset message =
+          GetMessageBinaryStart() + relative_binary_offset_;
+      if (*MutableBuffer(source_offset_)
+               ->template AddressOf<::phaser::BufferOffset>(message) == 0) {
+        // Finding the metadata can move the buffer.
+        const ::phaser::BufferOffset metadata =
+            Message::MetadataFor<MessageType>(GetRuntime());
+        *GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(
+            message) = metadata;
+      }
+      msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
+      return &msg_;
+    }
     ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (addr != nullptr && *addr != 0) {
@@ -1054,6 +1058,7 @@ class IndirectMessageField : public Field {
   }
 
   void SetOffset(::phaser::BufferOffset offset) {
+    static_assert(!kInline, "an inline message is not at an offset");
     ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (addr == nullptr) {
@@ -1068,6 +1073,19 @@ class IndirectMessageField : public Field {
   }
 
   void Clear() {
+    if constexpr (kInline) {
+      const ::phaser::BufferOffset message =
+          GetMessageBinaryStart() + relative_binary_offset_;
+      if (*MutableBuffer(source_offset_)
+               ->template AddressOf<::phaser::BufferOffset>(message) == 0) {
+        return;
+      }
+      internal::ReleaseMessageContents<MessageType>(GetRuntime(), message);
+      // Releasing can move the buffer.
+      memset(GetRuntime()->pb->template AddressOf<char>(message), 0,
+             MessageType::BinarySize());
+      return;
+    }
     ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
     if (addr == nullptr || *addr == 0) {
@@ -1088,37 +1106,33 @@ class IndirectMessageField : public Field {
     }
   }
 
-  bool operator==(const IndirectMessageField<MessageType>& other) const {
+  bool operator==(const IndirectMessageField& other) const {
     return Get() == other.Get();
   }
-  bool operator!=(const IndirectMessageField<MessageType>& other) const {
+  bool operator!=(const IndirectMessageField& other) const {
     return !(*this == other);
   }
 
   size_t SerializedSize() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
+    const Location location = Locate();
+    if (location.offset < 0) {
       return 0;
     }
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(static_cast<uint32_t>(offset));
-    if (addr != nullptr && *addr != 0) {
-      // Load up the message if it's already been allocated.
-      msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
+    if (const ::phaser::BufferOffset message = MessageAt(location);
+        message != 0) {
+      msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
     }
     return ProtoBuffer::LengthDelimitedSize(Number(), msg_.SerializedSize());
   }
 
   absl::Status Serialize(ProtoBuffer& buffer) const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
+    const Location location = Locate();
+    if (location.offset < 0) {
       return absl::OkStatus();
     }
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(static_cast<uint32_t>(offset));
-    if (*addr != 0) {
-      // Load up the message if it's already been allocated.
-      msg_.template BindBorrowed<MessageType>(GetRuntime(), *addr);
+    if (const ::phaser::BufferOffset message = MessageAt(location);
+        message != 0) {
+      msg_.template BindBorrowed<MessageType>(GetRuntime(), message);
     }
 
     size_t size = msg_.SerializedSize();
@@ -1135,6 +1149,11 @@ class IndirectMessageField : public Field {
     absl::StatusOr<absl::Span<char>> s = buffer.DeserializeLengthDelimited();
     if (!s.ok()) {
       return s.status();
+    }
+    if constexpr (kInline) {
+      MessageType* message = Mutable();
+      ProtoBuffer sub_buffer(s.value());
+      return message->Deserialize(sub_buffer);
     }
     // Allocate a new message.
     void* msg_addr = ::phaser::PayloadBuffer::Allocate(
@@ -1178,6 +1197,38 @@ class IndirectMessageField : public Field {
     return Message::GetBuffer(this, source_offset_);
   }
 
+  // Where the field is in its message and whether the message it holds is
+  // stored there, which depend on the schema the message was written with.
+  struct Location {
+    int32_t offset;
+    bool is_inline;
+  };
+  Location Locate() const {
+    const Message* message = Message::GetMessage(this, source_offset_);
+    if (message->FieldLocationsKnown()) {
+      return {compiled_offset_, kInline};
+    }
+    const FieldLocation location =
+        message->FindField(static_cast<uint32_t>(number_));
+    return {location.offset, location.id == kInlineMessageFieldId};
+  }
+
+  // The start of the message held by the field at 'location', or 0 if it
+  // holds none.
+  ::phaser::BufferOffset MessageAt(Location location) const {
+    if (location.offset < 0) {
+      return 0;
+    }
+    const ::phaser::BufferOffset field =
+        GetMessageBinaryStart() + static_cast<uint32_t>(location.offset);
+    const ::phaser::BufferOffset* word =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(field);
+    if (word == nullptr || *word == 0) {
+      return 0;
+    }
+    return location.is_inline ? field : *word;
+  }
+
   ::phaser::BufferOffset* GetIndirectAddress(uint32_t abs_offset) const {
     return GetRuntime()->template ToAddress<::phaser::BufferOffset>(
         GetMessageBinaryStart() + abs_offset);
@@ -1210,9 +1261,16 @@ struct FieldRelease<StringField> : std::true_type {
 };
 
 template <typename MessageType>
-struct FieldRelease<IndirectMessageField<MessageType>>
+struct FieldRelease<IndirectMessageField<MessageType, false>>
     : IndirectMessageRelease<MessageType> {};
+
+template <typename MessageType>
+struct FieldRelease<IndirectMessageField<MessageType, true>>
+    : InlineMessageRelease<MessageType> {};
 }  // namespace internal
+
+template <typename MessageType>
+using InlineMessageField = IndirectMessageField<MessageType, true>;
 
 template <typename MessageType>
 class MessageObject {
