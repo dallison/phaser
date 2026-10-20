@@ -192,6 +192,16 @@ class MessageGenerator {
   std::optional<std::string> ROSFixedElementSize(
       const google::protobuf::FieldDescriptor* field);
   void GenerateROSFixedSize(std::ostream& os);
+  // ROS serialization of a message in a mutable buffer, read straight from
+  // the payload by static functions, for messages whose fields can all be.
+  bool CanSerializeROSDirectly();
+  void GenerateROSDirectSerialization(std::ostream& os, bool decl);
+  std::string ROSDirectValueExpression(const FieldInfo& field);
+  void GenerateROSDirectFieldSize(std::ostream& os, const FieldInfo& field);
+  void GenerateROSDirectFieldWrite(std::ostream& os, const FieldInfo& field);
+  // The fast path of ROSSerializedSize() and SerializeToROS() for a repeated
+  // message field of a message in a mutable buffer.
+  bool HasROSDirectVector(const google::protobuf::FieldDescriptor* field);
 
   void GenerateProtobufSerialization(std::ostream& os);
   void GenerateIndent(std::ostream& os);

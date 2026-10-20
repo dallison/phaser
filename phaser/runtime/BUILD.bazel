@@ -43,6 +43,7 @@ cc_library(
         "md5.h",
         "message.h",
         "runtime.h",
+        "ros_direct.h",
         "ros_wireformat.h",
         "union.h",
         "vectors.h",

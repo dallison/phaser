@@ -37,3 +37,48 @@ message RosIntrinsicMessage {
   repeated google.protobuf.Duration fixed_timeouts = 17
       [(phaser.array_size) = 2];
 }
+
+message StampedChild {
+  google.protobuf.Timestamp stamp = 1;
+  std_msgs.Header header = 2;
+}
+
+enum DirectKind {
+  DIRECT_KIND_UNSPECIFIED = 0;
+  DIRECT_KIND_FIRST = 1;
+  DIRECT_KIND_SECOND = 2;
+}
+
+// The protobuf frontend's twin of DirectElement in RosIntrinsics.proto, with
+// its nested messages stored through offsets.
+message DirectElement {
+  int32 id = 1;
+  string label = 2;
+  bool flag = 3;
+  double value = 4;
+  uint64 big = 5;
+  uint32 small = 6 [(phaser.ros_field) = { type: "uint8" }];
+  int32 level = 7 [(phaser.ros_field) = { type: "int16" }];
+  float ratio = 8;
+  DirectKind kind = 9;
+  bytes blob = 10;
+  google.protobuf.Timestamp stamp = 11;
+  google.protobuf.Duration timeout = 12;
+  std_msgs.Header header = 13;
+  WireChild child = 14;
+  repeated int32 samples = 15;
+  repeated uint32 octets = 16 [(phaser.ros_field) = { type: "uint8" }];
+  repeated bool flags = 17;
+  repeated DirectKind kinds = 18;
+  repeated string tags = 19;
+  repeated WireChild children = 20;
+  repeated google.protobuf.Timestamp stamps = 21;
+  repeated google.protobuf.Duration timeouts = 22;
+  repeated StampedChild stamped = 23;
+  repeated DirectElement nested = 24;
+}
+
+message DirectElements {
+  repeated DirectElement elements = 1;
+  repeated RosIntrinsicMessage handled = 2;
+}

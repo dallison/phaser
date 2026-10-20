@@ -671,4 +671,192 @@ TEST(ROSWireConversionTest, RejectsMalformedROSInput) {
   EXPECT_TRUE(oversized_sequence_message.xs.empty());
 }
 
+using DirectElement = ::foo::bar::phaser::DirectElement;
+using DirectElements = ::foo::bar::phaser::DirectElements;
+using DirectKind = ::foo::bar::phaser::DirectKind;
+using ProtobufDirectElement = ::foo::bar::pb::protobuf_phaser::DirectElement;
+using ProtobufDirectElements = ::foo::bar::pb::protobuf_phaser::DirectElements;
+using ProtobufDirectKind = ::foo::bar::pb::protobuf_phaser::DirectKind;
+
+// Every third element leaves its singular messages unset.
+bool HasMessages(int i) { return i % 3 != 0; }
+
+void PopulateDirectElement(DirectElement& element, int i, int depth) {
+  element.id = i;
+  element.label = "element " + std::to_string(i);
+  element.flag = i % 2 == 0;
+  element.value = i * 0.25;
+  element.big = uint64_t{1} << (32 + i % 30);
+  element.small = static_cast<uint32_t>(200 + i % 50);
+  element.level = -300 - i;
+  element.ratio = static_cast<float>(i) / 8;
+  element.kind = DirectKind::DIRECT_KIND_SECOND;
+  element.blob = std::string("\0\1\2", 3);
+  if (HasMessages(i)) {
+    element.stamp = ::ros::Time(static_cast<uint32_t>(i), 7);
+    element.timeout = ::ros::Duration(-i, 8);
+    element.header->seq = static_cast<uint32_t>(i + 1);
+    element.header->stamp = ::ros::Time(9, static_cast<uint32_t>(i));
+    element.header->frame_id = "frame";
+    element.child->id = i * 2;
+    element.child->label = "child";
+  }
+  for (int j = 0; j < i % 4; ++j) {
+    element.samples.push_back(i * 100 + j);
+    element.octets.push_back(static_cast<uint32_t>(250 + j));
+    element.flags.push_back(j % 2 == 1);
+    element.kinds.push_back(DirectKind::DIRECT_KIND_FIRST);
+    element.tags.push_back("tag " + std::to_string(j));
+    auto child = element.children.Add();
+    child.id = j;
+    child.label = j == 0 ? "" : "c";
+    element.stamps.Add(::ros::Time(static_cast<uint32_t>(j), 1));
+    element.timeouts.Add(::ros::Duration(-j, 2));
+    auto stamped = element.stamped.Add();
+    stamped.stamp = ::ros::Time(3, static_cast<uint32_t>(j));
+    stamped.header->frame_id = "stamped";
+  }
+  if (depth > 0) {
+    for (int j = 0; j < 2; ++j) {
+      auto nested = element.nested.Add();
+      PopulateDirectElement(nested, i * 10 + j, depth - 1);
+    }
+  }
+}
+
+void PopulateProtobufDirectElement(ProtobufDirectElement& element, int i,
+                                   int depth) {
+  element.set_id(i);
+  element.set_label("element " + std::to_string(i));
+  element.set_flag(i % 2 == 0);
+  element.set_value(i * 0.25);
+  element.set_big(uint64_t{1} << (32 + i % 30));
+  element.set_small(static_cast<uint32_t>(200 + i % 50));
+  element.set_level(-300 - i);
+  element.set_ratio(static_cast<float>(i) / 8);
+  element.set_kind(ProtobufDirectKind::DIRECT_KIND_SECOND);
+  element.set_blob(std::string("\0\1\2", 3));
+  if (HasMessages(i)) {
+    element.mutable_stamp()->set_seconds(i);
+    element.mutable_stamp()->set_nanos(7);
+    element.mutable_timeout()->set_seconds(-i);
+    element.mutable_timeout()->set_nanos(8);
+    element.mutable_header()->set_seq(static_cast<uint32_t>(i + 1));
+    element.mutable_header()->mutable_stamp()->set_seconds(9);
+    element.mutable_header()->mutable_stamp()->set_nanos(i);
+    element.mutable_header()->set_frame_id("frame");
+    element.mutable_child()->set_id(i * 2);
+    element.mutable_child()->set_label("child");
+  }
+  for (int j = 0; j < i % 4; ++j) {
+    element.add_samples(i * 100 + j);
+    element.add_octets(static_cast<uint32_t>(250 + j));
+    element.add_flags(j % 2 == 1);
+    element.add_kinds(ProtobufDirectKind::DIRECT_KIND_FIRST);
+    element.add_tags("tag " + std::to_string(j));
+    auto child = element.add_children();
+    child.set_id(j);
+    child.set_label(j == 0 ? "" : "c");
+    auto stamp = element.add_stamps();
+    stamp.set_seconds(j);
+    stamp.set_nanos(1);
+    auto timeout = element.add_timeouts();
+    timeout.set_seconds(-j);
+    timeout.set_nanos(2);
+    auto stamped = element.add_stamped();
+    stamped.mutable_stamp()->set_seconds(3);
+    stamped.mutable_stamp()->set_nanos(j);
+    stamped.mutable_header()->set_frame_id("stamped");
+  }
+  if (depth > 0) {
+    for (int j = 0; j < 2; ++j) {
+      auto nested = element.add_nested();
+      PopulateProtobufDirectElement(nested, i * 10 + j, depth - 1);
+    }
+  }
+}
+
+// Enough elements to fill several chunks of the vector.
+constexpr int kDirectElementCount = 40;
+
+TEST(ROSWireConversionTest, MutableVectorElementsMatchTheHandlePath) {
+  DirectElements message;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, i, 1);
+  }
+  for (int i = 0; i < 3; ++i) {
+    auto handled = message.handled.Add();
+    handled.count = i;
+    handled.name = "handled";
+    handled.stamp = ::ros::Time(static_cast<uint32_t>(i), 5);
+    handled.children.Add()->id = i;
+  }
+
+  ::phaser::ROSBuffer direct_output;
+  ASSERT_TRUE(message.SerializeToROS(direct_output).ok());
+  const std::string expected = direct_output.AsString();
+  EXPECT_EQ(message.ROSSerializedSize(), expected.size());
+
+  // A readonly message reads each element through a handle.
+  const auto* native_data = reinterpret_cast<const char*>(message.Data());
+  const absl::Span<const char> native_bytes(native_data, message.Size());
+  ::phaser::ROSBuffer native_output;
+  ASSERT_TRUE(DirectElements::PhaserToROS(native_bytes, native_output).ok());
+  EXPECT_EQ(native_output.AsString(), expected);
+
+  ::phaser::ROSBuffer protobuf_output;
+  ASSERT_TRUE(
+      DirectElements::ProtobufToROS(message.SerializeAsString(), protobuf_output)
+          .ok());
+  EXPECT_EQ(protobuf_output.AsString(), expected);
+
+  // The protobuf frontend stores its nested messages through offsets.
+  ProtobufDirectElements protobuf_message;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto element = protobuf_message.add_elements();
+    PopulateProtobufDirectElement(element, i, 1);
+  }
+  for (int i = 0; i < 3; ++i) {
+    auto handled = protobuf_message.add_handled();
+    handled.set_count(i);
+    handled.set_name("handled");
+    handled.mutable_stamp()->set_seconds(i);
+    handled.mutable_stamp()->set_nanos(5);
+    handled.add_children().set_id(i);
+  }
+  std::string protobuf_frontend_output;
+  ASSERT_TRUE(
+      protobuf_message.SerializeToROSString(&protobuf_frontend_output).ok());
+  EXPECT_EQ(protobuf_frontend_output, expected);
+  EXPECT_EQ(protobuf_message.ROSSerializedSize(), expected.size());
+
+  DirectElements decoded;
+  ASSERT_TRUE(
+      decoded.ParseFromROS(absl::Span<const char>(expected.data(),
+                                                  expected.size()))
+          .ok());
+  ASSERT_EQ(decoded.elements.size(), size_t{kDirectElementCount});
+  std::string reencoded;
+  ASSERT_TRUE(decoded.SerializeToROSString(&reencoded).ok());
+  EXPECT_EQ(reencoded, expected);
+}
+
+TEST(ROSWireConversionTest, MutableVectorElementsReportShortOutput) {
+  DirectElements message;
+  for (int i = 0; i < 4; ++i) {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, i, 1);
+  }
+  const size_t size = message.ROSSerializedSize();
+  std::vector<char> output(size);
+  ASSERT_TRUE(message.SerializeToROSArray(output.data(), output.size()).ok());
+  for (size_t short_size : {size_t{1}, size_t{5}, size / 2, size - 1}) {
+    std::vector<char> too_small(short_size);
+    EXPECT_FALSE(
+        message.SerializeToROSArray(too_small.data(), too_small.size()).ok())
+        << short_size;
+  }
+}
+
 }  // namespace
