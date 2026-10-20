@@ -176,13 +176,14 @@ class ROSReader {
     return value;
   }
 
- private:
+  // The error for input with fewer than 'length' bytes left.
   ABSL_ATTRIBUTE_NOINLINE absl::Status TruncatedError(size_t length) const {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
         length, Remaining()));
   }
 
+ private:
   ABSL_ATTRIBUTE_NOINLINE absl::Status TruncatedStringError(
       uint32_t length) const {
     return absl::InvalidArgumentError(absl::StrFormat(

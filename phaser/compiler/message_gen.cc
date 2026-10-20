@@ -4416,12 +4416,68 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
       }
     }
   }
+  const auto is_fixed = [](const Value& value) {
+    return value.kind == Kind::kScalar || value.kind == Kind::kConstant;
+  };
   const bool fixed_size =
       std::any_of(values.begin(), values.end(),
                   [](const Value& value) { return value.kind == Kind::kScalar; }) &&
-      std::all_of(values.begin(), values.end(), [](const Value& value) {
-        return value.kind == Kind::kScalar || value.kind == Kind::kConstant;
-      });
+      std::all_of(values.begin(), values.end(), is_fixed);
+  // The number of ROS bytes of values [begin, end), which are all fixed.
+  const auto run_size = [&](size_t begin, size_t end) {
+    size_t size = 0;
+    for (size_t i = begin; i < end; ++i) {
+      if (values[i].kind == Kind::kScalar) {
+        size += ROSCppTypeSize(values[i].ros_type);
+      }
+    }
+    return size;
+  };
+  // Stores values [begin, end), which are all fixed, from the ROS bytes at
+  // '_phaser_input' into the message at '_phaser_element'.
+  const auto write_run = [&](size_t begin, size_t end,
+                             const std::string& indent) {
+    size_t input_offset = 0;
+    for (size_t i = begin; i < end; ++i) {
+      if (values[i].kind == Kind::kConstant) {
+        continue;
+      }
+      os << indent << "const " << values[i].ros_type << " _phaser_value" << i
+         << " = ::phaser::ROSReader::Decode<" << values[i].ros_type
+         << ">(_phaser_input + " << input_offset << ");\n";
+      input_offset += ROSCppTypeSize(values[i].ros_type);
+    }
+    // A constant field's value is already zero.
+    std::map<uint32_t, uint32_t> presence;
+    for (size_t i = begin; i < end; ++i) {
+      const Value& value = values[i];
+      presence[value.field->id / 32] |= uint32_t{1} << (value.field->id % 32);
+      if (value.kind == Kind::kConstant) {
+        continue;
+      }
+      os << indent << "{\n";
+      os << indent << "  const " << value.storage_type
+         << " _phaser_stored = static_cast<" << value.storage_type
+         << ">(_phaser_value" << i << ");\n";
+      os << indent << "  memcpy(_phaser_element + " << FieldOffset(*value.field)
+         << ", &_phaser_stored, sizeof(_phaser_stored));\n";
+      os << indent << "}\n";
+    }
+    for (const auto& [word, bits] : presence) {
+      os << indent << "{\n";
+      os << indent
+         << "  char* _phaser_mask = _phaser_element + "
+            "::phaser::Field::kPresenceMaskOffset + "
+         << word * sizeof(uint32_t) << ";\n";
+      os << indent << "  uint32_t _phaser_bits;\n";
+      os << indent
+         << "  memcpy(&_phaser_bits, _phaser_mask, sizeof(_phaser_bits));\n";
+      os << indent << "  _phaser_bits |= " << bits << "u;\n";
+      os << indent
+         << "  memcpy(_phaser_mask, &_phaser_bits, sizeof(_phaser_bits));\n";
+      os << indent << "}\n";
+    }
+  };
 
   if (decl) {
     os << "  // Reads the ROS fields of the empty message at '_phaser_offset' "
@@ -4462,43 +4518,7 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
           "  // stores could alias the input, so they follow all the reads.\n";
     os << "  static void PhaserDeserializeFromROSUncheckedAt("
           "char* _phaser_element, const char* _phaser_input) {\n";
-    size_t input_offset = 0;
-    for (size_t i = 0; i < values.size(); ++i) {
-      if (values[i].kind == Kind::kConstant) {
-        continue;
-      }
-      os << "    const " << values[i].ros_type << " _phaser_value" << i
-         << " = ::phaser::ROSReader::Decode<" << values[i].ros_type
-         << ">(_phaser_input + " << input_offset << ");\n";
-      input_offset += ROSCppTypeSize(values[i].ros_type);
-    }
-    // A constant field's value is already zero.
-    std::map<uint32_t, uint32_t> presence;
-    for (size_t i = 0; i < values.size(); ++i) {
-      const Value& value = values[i];
-      presence[value.field->id / 32] |= uint32_t{1} << (value.field->id % 32);
-      if (value.kind == Kind::kConstant) {
-        continue;
-      }
-      os << "    {\n";
-      os << "      const " << value.storage_type
-         << " _phaser_stored = static_cast<" << value.storage_type
-         << ">(_phaser_value" << i << ");\n";
-      os << "      memcpy(_phaser_element + " << FieldOffset(*value.field)
-         << ", &_phaser_stored, sizeof(_phaser_stored));\n";
-      os << "    }\n";
-    }
-    for (const auto& [word, bits] : presence) {
-      os << "    {\n";
-      os << "      char* _phaser_mask = _phaser_element + "
-            "::phaser::Field::kPresenceMaskOffset + "
-         << word * sizeof(uint32_t) << ";\n";
-      os << "      uint32_t _phaser_bits;\n";
-      os << "      memcpy(&_phaser_bits, _phaser_mask, sizeof(_phaser_bits));\n";
-      os << "      _phaser_bits |= " << bits << "u;\n";
-      os << "      memcpy(_phaser_mask, &_phaser_bits, sizeof(_phaser_bits));\n";
-      os << "    }\n";
-    }
+    write_run(0, values.size(), "    ");
     os << "  }\n";
     os << "  // PhaserSerializeToROSAt() of the message at '_phaser_element' "
           "into the\n"
@@ -4540,36 +4560,46 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
   os << "  [[maybe_unused]] ::phaser::PayloadBuffer** _phaser_pb = "
         "&_phaser_runtime->pb;\n";
   if (fixed_size) {
-    // Short input falls through to the checked reads, for their error.
     os << "  static_assert(PhaserROSFixedSize() == PhaserROSMinSize());\n";
-    os << "  if (_phaser_buffer.Remaining() >= PhaserROSMinSize()) {\n";
-    os << "    PhaserDeserializeFromROSUncheckedAt("
+    os << "  if (_phaser_buffer.Remaining() < PhaserROSMinSize()) {\n";
+    os << "    return _phaser_buffer.TruncatedError(PhaserROSMinSize());\n";
+    os << "  }\n";
+    os << "  PhaserDeserializeFromROSUncheckedAt("
           "(*_phaser_pb)->AddressOf<char>(_phaser_offset), "
           "_phaser_buffer.ReadRawUnchecked(PhaserROSMinSize()));\n";
-    os << "    return absl::OkStatus();\n";
-    os << "  }\n";
+    os << "  return absl::OkStatus();\n";
+    os << "}\n\n";
+    return;
   }
   // Each value is stored as its field's setter stores it.
-  for (const Value& value : values) {
+  for (size_t index = 0; index < values.size(); ++index) {
+    const Value& value = values[index];
     const std::string location = "_phaser_offset + " + FieldOffset(*value.field);
     os << "  {\n";
     switch (value.kind) {
       case Kind::kScalar:
-        os << "    absl::StatusOr<" << value.ros_type
-           << "> _phaser_value = _phaser_buffer.Read<" << value.ros_type
-           << ">();\n";
-        os << "    if (!_phaser_value.ok()) return _phaser_value.status();\n";
-        os << "    (*_phaser_pb)->Set<" << value.storage_type << ">("
-           << location << ", static_cast<" << value.storage_type
-           << ">(*_phaser_value));\n";
-        os << "    (*_phaser_pb)->SetPresenceBit(" << FieldId(*value.field)
-           << ", _phaser_offset + ::phaser::Field::kPresenceMaskOffset);\n";
+      case Kind::kConstant: {
+        // Consecutive scalars are checked for and read together.
+        size_t end = index + 1;
+        while (end < values.size() && is_fixed(values[end])) {
+          ++end;
+        }
+        const size_t size = run_size(index, end);
+        if (size != 0) {
+          os << "    if (_phaser_buffer.Remaining() < " << size << ") {\n";
+          os << "      return _phaser_buffer.TruncatedError(" << size
+             << ");\n";
+          os << "    }\n";
+          os << "    const char* _phaser_input = "
+                "_phaser_buffer.ReadRawUnchecked("
+             << size << ");\n";
+        }
+        os << "    char* _phaser_element = "
+              "(*_phaser_pb)->AddressOf<char>(_phaser_offset);\n";
+        write_run(index, end, "    ");
+        index = end - 1;
         break;
-      case Kind::kConstant:
-        // The value is already zero.
-        os << "    (*_phaser_pb)->SetPresenceBit(" << FieldId(*value.field)
-           << ", _phaser_offset + ::phaser::Field::kPresenceMaskOffset);\n";
-        break;
+      }
       case Kind::kString:
         os << "    absl::StatusOr<std::string_view> _phaser_value = "
               "_phaser_buffer.ReadString();\n";
@@ -4606,18 +4636,20 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
         break;
       case Kind::kVector:
       case Kind::kMessageVector:
-        os << "    absl::StatusOr<uint32_t> _phaser_count = "
-              "_phaser_buffer.ReadSequenceLength();\n";
-        os << "    if (!_phaser_count.ok()) return _phaser_count.status();\n";
+        os << "    if (_phaser_buffer.Remaining() < sizeof(uint32_t)) {\n";
+        os << "      return _phaser_buffer.TruncatedError(sizeof(uint32_t));\n";
+        os << "    }\n";
+        os << "    const uint32_t _phaser_count = "
+              "_phaser_buffer.ReadUnchecked<uint32_t>();\n";
         if (value.kind == Kind::kMessageVector) {
           os << "    if (absl::Status _phaser_status = "
                 "::phaser::internal::DeserializeMessageVectorFromROSAt<"
              << value.storage_type << ">(_phaser_runtime, " << location
-             << ", *_phaser_count, _phaser_buffer); !_phaser_status.ok()) "
+             << ", _phaser_count, _phaser_buffer); !_phaser_status.ok()) "
                 "return _phaser_status;\n";
           break;
         }
-        os << "    if (*_phaser_count > _phaser_buffer.Remaining() / sizeof("
+        os << "    if (_phaser_count > _phaser_buffer.Remaining() / sizeof("
            << value.ros_type << ")) {\n";
         os << "      return absl::InvalidArgumentError("
               "\"ROS sequence length exceeds remaining input\");\n";
@@ -4625,20 +4657,20 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
         os << "    " << value.storage_type
            << "* _phaser_data = ::phaser::internal::ResizeVectorAt<"
            << value.storage_type << ">(_phaser_runtime, " << location
-           << ", *_phaser_count);\n";
+           << ", _phaser_count);\n";
         if (value.ros_type == value.storage_type) {
           os << "    if (absl::Status _phaser_status = "
                 "_phaser_buffer.ReadArray<"
              << value.storage_type << ">(absl::Span<" << value.storage_type
-             << ">(_phaser_data, *_phaser_count)); !_phaser_status.ok()) "
+             << ">(_phaser_data, _phaser_count)); !_phaser_status.ok()) "
                 "return _phaser_status;\n";
         } else {
           os << "    const char* _phaser_input = "
-                "_phaser_buffer.ReadRawUnchecked(size_t{*_phaser_count} * "
+                "_phaser_buffer.ReadRawUnchecked(size_t{_phaser_count} * "
                 "sizeof("
              << value.ros_type << "));\n";
           os << "    for (uint32_t _phaser_index = 0; _phaser_index < "
-                "*_phaser_count; ++_phaser_index) {\n";
+                "_phaser_count; ++_phaser_index) {\n";
           os << "      const " << value.storage_type
              << " _phaser_value = static_cast<" << value.storage_type
              << ">(::phaser::ROSReader::Decode<" << value.ros_type
