@@ -509,6 +509,66 @@ TEST(OutputAllocationTest, ReadonlyMutationIsRejected) {
   EXPECT_EQ(readonly.x(), 7);
 }
 
+TEST(OutputAllocationTest, ReadonlyElementMutationIsRejected) {
+  alignas(std::max_align_t) std::array<std::byte, 32768> storage{};
+  auto mutable_message = foo::bar::phaser::TestMessage::CreateMutable(
+      storage.data(), storage.size());
+  mutable_message.add_vm().set_f(7);
+  auto readonly = foo::bar::phaser::TestMessage::CreateReadonly(
+      mutable_message.Data(), mutable_message.Size());
+  EXPECT_THROW(readonly.vm(0).set_f(8), std::logic_error);
+  EXPECT_THROW((void)readonly.add_vm(), std::logic_error);
+  EXPECT_EQ(readonly.vm(0).f(), 7);
+  EXPECT_EQ(readonly.vm_size(), 1u);
+}
+
+TEST(OutputAllocationTest, AddedElementsBorrowTheMessageRuntime) {
+  alignas(std::max_align_t) std::array<std::byte, 32768> storage{};
+  auto message = foo::bar::phaser::TestMessage::CreateMutable(
+      storage.data(), storage.size());
+  std::vector<foo::bar::phaser::InnerMessage> copies;
+  for (int i = 0; i < 20; i++) {
+    auto inner = message.add_vm();
+    EXPECT_EQ(inner.runtime.get(), message.runtime.get());
+    inner.set_f(i);
+    inner.set_str("element");
+    copies.push_back(inner);
+  }
+  ASSERT_EQ(message.vm_size(), 20u);
+  for (int i = 0; i < 20; i++) {
+    EXPECT_EQ(message.vm(i).f(), i);
+    EXPECT_EQ(message.vm(i).str(), "element");
+    copies[i].set_f(i + 100);
+    EXPECT_EQ(message.vm(i).f(), i + 100);
+  }
+}
+
+TEST(OutputAllocationTest, AssignedHandlesTakeTheSourceMutability) {
+  alignas(std::max_align_t) std::array<std::byte, 32768> storage{};
+  auto mutable_message = foo::bar::phaser::TestMessage::CreateMutable(
+      storage.data(), storage.size());
+  mutable_message.add_vm().set_f(7);
+  std::vector<char> payload(
+      static_cast<const char*>(mutable_message.Data()),
+      static_cast<const char*>(mutable_message.Data()) +
+          mutable_message.Size());
+  auto readonly = foo::bar::phaser::TestMessage::CreateReadonly(
+      payload.data(), payload.size());
+
+  // Copy assignment rebinds the handle, then copies the fields through it.
+  auto handle = readonly.vm(0);
+  EXPECT_THROW(handle.set_f(8), std::logic_error);
+  const auto source = mutable_message.mutable_vm(0);
+  handle = source;
+  handle.set_f(9);
+  EXPECT_EQ(mutable_message.vm(0).f(), 9);
+  EXPECT_EQ(readonly.vm(0).f(), 7);
+
+  auto writable = mutable_message.mutable_vm(0);
+  const auto readonly_source = readonly.vm(0);
+  EXPECT_THROW(writable = readonly_source, std::logic_error);
+}
+
 TEST(ReceiveAllocationTest, ReturnedViewsDependOnlyOnReceiveBuffer) {
   foo::bar::phaser::RosCompileMessage source;
   source.names.push_back("borrowed-name");

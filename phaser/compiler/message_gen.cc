@@ -1896,6 +1896,10 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
        << "(const std::shared_ptr<::phaser::MessageRuntime>& runtime, "
           "::phaser::BufferOffset "
           "offset);\n";
+    os << "  " << MessageName(message_)
+       << "(::phaser::MutablePart, "
+          "const std::shared_ptr<::phaser::MessageRuntime>& runtime, "
+          "::phaser::BufferOffset offset);\n";
     return;
   }
   // Inline so that a handle made for an element or a field can be built in
@@ -1908,6 +1912,13 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
         "offset) : Message(runtime_ptr, offset, &field_data, "
         "sizeof(field_data))\n";
   // Generate field initializers.
+  GenerateFieldInitializers(os, ", ");
+  os << "{}\n\n";
+  os << "inline " << MessageName(message_) << "::" << MessageName(message_)
+     << "(::phaser::MutablePart, "
+        "const std::shared_ptr<::phaser::MessageRuntime>& runtime_ptr, "
+        "::phaser::BufferOffset offset) : "
+        "Message(::phaser::MutablePart{}, runtime_ptr, offset)\n";
   GenerateFieldInitializers(os, ", ");
   os << "{}\n\n";
   GenerateInvalidOffsetofWarningPop(os);

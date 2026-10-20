@@ -1190,13 +1190,46 @@ class MessageVectorField : public Field {
 
   T emplace_back() { return Add(); }
 
-  T Add() { return T(BorrowedRuntime(GetRuntime()), AddElement()); }
+  // The handle borrows the runtime of the message this vector is in, so it is
+  // valid only while the handle it was made from exists.
+  T Add() {
+    const ::phaser::BufferOffset element = AddElement();
+    if constexpr (std::is_constructible_v<T, MutablePart, const RuntimeHandle&,
+                                          ::phaser::BufferOffset>) {
+      return T(MutablePart{}, GetRuntime(), element);
+    } else {
+      return T(BorrowedRuntime(GetRuntime()), element);
+    }
+  }
 
   // Add() without the handle: appends an empty element and returns its offset.
   ::phaser::BufferOffset AddElement() {
-    // Throws for a readonly message.
-    (void)GetBufferAddr();
-    return AddElementTo(GetRuntime(), ResolvedVectorHeader());
+    const Message* message = Message::GetMessage(this, source_offset_);
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
+      ThrowReadonlyMessage();
+    }
+    // A mutable message has its compiled layout.
+    MessageRuntime* runtime = message->runtime.get();
+    ::phaser::PayloadBuffer* pb = runtime->pb;
+    const ::phaser::BufferOffset header =
+        message->absolute_binary_offset + relative_binary_offset_;
+    auto* hdr = pb->template AddressOf<::phaser::VectorHeader>(header);
+    const uint32_t index = hdr->num_elements;
+    if (ABSL_PREDICT_TRUE(hdr->data != 0)) {
+      const auto* block =
+          pb->template AddressOf<::phaser::MessageVectorBlock>(hdr->data);
+      if (ABSL_PREDICT_TRUE(index < block->first_capacity)) {
+        const auto element = static_cast<::phaser::BufferOffset>(
+            hdr->data + sizeof(::phaser::MessageVectorBlock) +
+            index * Stride());
+        char* binary = pb->template AddressOf<char>(element);
+        memset(binary, 0, Stride());
+        memcpy(binary, &block->metadata, sizeof(block->metadata));
+        hdr->num_elements = index + 1;
+        return element;
+      }
+    }
+    return AddElementSlow(runtime, header);
   }
 
   // The offset of the VectorHeader in a mutable message.
@@ -1654,6 +1687,14 @@ class MessageVectorField : public Field {
     memcpy(binary, &block->metadata, sizeof(block->metadata));
     hdr->num_elements = index + 1;
     return element;
+  }
+
+  // AddElement() for when the element is not in the first chunk.  It takes
+  // the runtime, not the handle, so that the handle need not be in memory.
+  ABSL_ATTRIBUTE_NOINLINE static ::phaser::BufferOffset AddElementSlow(
+      MessageRuntime* runtime, ::phaser::BufferOffset header) {
+    const RuntimeHandle borrowed(RuntimeHandle(), runtime);
+    return AddElementAt(borrowed, header);
   }
 
   // Makes room for element 'index', which Add() is about to append to the

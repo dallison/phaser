@@ -607,8 +607,7 @@ struct TestMessage : public Message {
                                                    TestMessage::BinarySize());
     auto rt =
         std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
-    this->runtime = rt;
-    this->absolute_binary_offset = pb->message;
+    BindNewMutable(rt, pb->message);
     this->InstallMetadata<TestMessage>();
   }
 

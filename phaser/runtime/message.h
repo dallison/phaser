@@ -1073,6 +1073,10 @@ struct InlineMessageRelease : std::true_type {
 }  // namespace internal
 
 struct InternalDefault {};
+// Selects the constructor of a handle for part of a mutable message, such as
+// an element Add() has just appended.  The handle borrows the runtime of the
+// handle it was made from, so it is valid only while that handle exists.
+struct MutablePart {};
 
 // Tuning parameters for messages.  The kPerformance tuning uses a bitmap
 // allocator for block sizes up to 128 bytes.  This is about twice as fast
@@ -1136,6 +1140,15 @@ struct Message {
       field_locations_known_ = MetadataIs(field_data, field_data_size);
     }
   }
+  // 'rt' must be mutable.  The handle must not copy it: a handle that
+  // points at itself has to stay in memory, where any store into the payload
+  // might change it as far as the compiler knows.
+  Message(MutablePart, const RuntimeHandle& rt, ::phaser::BufferOffset start)
+      : readonly_runtime_(nullptr, size_t{0}, false),
+        runtime(BorrowedRuntime(rt)),
+        absolute_binary_offset(start),
+        field_locations_known_(true),
+        mutable_(true) {}
   Message(const Message& other) : Message(other.runtime,
                                           other.absolute_binary_offset) {}
   Message(Message&& other) noexcept
@@ -1144,6 +1157,8 @@ struct Message {
     if (this != &other) {
       absolute_binary_offset = other.absolute_binary_offset;
       BindRuntime(other.runtime);
+      field_locations_known_ = other.field_locations_known_;
+      mutable_ = other.mutable_;
     }
     return *this;
   }
@@ -1151,6 +1166,8 @@ struct Message {
     if (this != &other) {
       absolute_binary_offset = other.absolute_binary_offset;
       BindRuntime(std::move(other.runtime));
+      field_locations_known_ = other.field_locations_known_;
+      mutable_ = other.mutable_;
     }
     return *this;
   }
@@ -1174,9 +1191,15 @@ struct Message {
   // compiled presence id, so fields need not look themselves up.
   bool FieldLocationsKnown() const { return field_locations_known_; }
 
+  // Whether the runtime is mutable, kept in the handle so that code using a
+  // handle made mutable knows it is.  It would have to reread the runtime
+  // after any store into the payload.
+  bool IsMutable() const { return mutable_; }
+
  private:
-  // Fields are constructed after this, so it is set in the constructor.
+  // Fields are constructed after these, so they are set in the constructor.
   bool field_locations_known_ = false;
+  bool mutable_ = false;
 
   // Comparing larger tables would cost more than the lookups it saves.
   static constexpr size_t kMaxComparedFieldDataSize = 256;
@@ -1216,7 +1239,7 @@ struct Message {
                                                    uint32_t offset) {
     const Message* msg = reinterpret_cast<const Message*>(
         reinterpret_cast<const char*>(field) - offset);
-    if (!msg->runtime->IsMutable()) {
+    if (!msg->IsMutable()) {
       throw std::logic_error("cannot mutate a readonly Phaser message");
     }
     return &msg->runtime->pb;
@@ -1407,6 +1430,7 @@ struct Message {
     runtime = std::move(rt);
     absolute_binary_offset = start;
     field_locations_known_ = true;
+    mutable_ = true;
   }
 
   // A borrowed runtime has no owner.  One that may live in another handle is
@@ -1426,7 +1450,8 @@ struct Message {
   void BindBorrowed(const RuntimeHandle& rt, ::phaser::BufferOffset start) {
     runtime = BorrowedRuntime(rt);
     absolute_binary_offset = start;
-    field_locations_known_ = rt != nullptr && rt->IsMutable();
+    mutable_ = rt != nullptr && rt->IsMutable();
+    field_locations_known_ = mutable_;
     if constexpr (internal::HasFieldData<T>::value) {
       if (!field_locations_known_ && rt != nullptr) {
         field_locations_known_ =
@@ -1443,13 +1468,15 @@ struct Message {
                                : MessageRuntime(nullptr, size_t{0}, false)),
         runtime(copy ? BorrowRuntime(readonly_runtime_) : rt),
         absolute_binary_offset(start),
-        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
+        field_locations_known_(runtime != nullptr && runtime->IsMutable()),
+        mutable_(runtime != nullptr && runtime->IsMutable()) {}
   Message(RuntimeHandle&& rt, ::phaser::BufferOffset start, bool copy)
       : readonly_runtime_(copy ? *rt
                                : MessageRuntime(nullptr, size_t{0}, false)),
         runtime(copy ? BorrowRuntime(readonly_runtime_) : std::move(rt)),
         absolute_binary_offset(start),
-        field_locations_known_(runtime != nullptr && runtime->IsMutable()) {}
+        field_locations_known_(runtime != nullptr && runtime->IsMutable()),
+        mutable_(runtime != nullptr && runtime->IsMutable()) {}
 
   void BindRuntime(const RuntimeHandle& other) {
     if (CopiesRuntime(other)) {

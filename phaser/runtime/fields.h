@@ -113,11 +113,11 @@ class Field {
 
   // The buffer of the message holding this field, which must be mutable.
   ::phaser::PayloadBuffer* MutableBuffer(uint32_t source_offset) const {
-    const MessageRuntime& runtime = *Message::GetRuntime(this, source_offset);
-    if (ABSL_PREDICT_FALSE(!runtime.IsMutable())) {
+    const Message* message = Message::GetMessage(this, source_offset);
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
       ThrowReadonlyMessage();
     }
-    return runtime.pb;
+    return message->runtime->pb;
   }
 
   [[noreturn]] ABSL_ATTRIBUTE_NOINLINE static void ThrowReadonlyMessage() {
