@@ -285,6 +285,26 @@ inline absl::Status DeserializeFromROSAt(const RuntimeHandle& runtime,
 template <typename T>
 inline T* ResizeVectorAt(const RuntimeHandle& runtime,
                          ::phaser::BufferOffset header, uint32_t n) {
+  if (n == 0) {
+    return nullptr;
+  }
+  if (runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header)
+          ->data == 0) {
+    if (size_t{n} * sizeof(T) > UINT32_MAX) {
+      throw std::bad_alloc();
+    }
+    void* data = ::phaser::PayloadBuffer::Allocate(
+        &runtime->pb, static_cast<uint32_t>(size_t{n} * sizeof(T)));
+    if (data == nullptr) {
+      throw std::bad_alloc();
+    }
+    // Allocating can move the buffer.
+    auto* vector_header =
+        runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header);
+    vector_header->data = runtime->pb->UncheckedOffset(data);
+    vector_header->num_elements = n;
+    return static_cast<T*>(data);
+  }
   ::phaser::PayloadBuffer::VectorResize<T>(
       &runtime->pb,
       runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header),
@@ -305,6 +325,9 @@ inline absl::Status DeserializeMessageVectorFromROSAt(
     const RuntimeHandle& runtime, ::phaser::BufferOffset header,
     uint32_t count, ::phaser::ROSReader& reader) {
   using Vector = ::phaser::MessageVectorField<T>;
+  if (count == 0) {
+    return absl::OkStatus();
+  }
   if constexpr (ROSParseMinSize<T>() > 0) {
     // The input bounds the elements this allocates.  A count it cannot
     // hold is truncated input, which the loop below reports.
