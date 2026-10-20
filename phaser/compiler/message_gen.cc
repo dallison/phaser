@@ -1405,7 +1405,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   // Generate field metadata.
   GenerateFieldMetadata(os);
   os << "  static constexpr size_t MetadataTypeCount() { return "
-     << ReachableMessageTypeCount() << "; }\n";
+     << ReachableMessageTypes().size() << "; }\n";
   os << "  static constexpr bool kPhaserClearReleasesNothing = "
      << (ClearReleasesNothing(message_) ? "true" : "false") << ";\n";
   os << "  static constexpr bool kPhaserHasSyncToPayloadWork = "
@@ -1878,17 +1878,11 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
-        "  ::phaser::InitializeRuntimeControl(&pb, "
-     << MessageName(message_)
-     << "::MetadataTypeCount());\n"
-        "  ::phaser::MessageRuntime runtime(pb, true);\n"
-        "  auto msg = "
+     << InitializeMetadataCall("&pb")
+     << "  ::phaser::MessageRuntime runtime(pb, true);\n"
+        "  return "
      << MessageName(message_)
      << "(BorrowRuntime(runtime), pb->message);\n"
-        "  msg.InstallMetadata<"
-     << MessageName(message_)
-     << ">();\n"
-        "  return msg;\n"
         "}\n"
         "\n";
 
@@ -1935,19 +1929,13 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
-        "  ::phaser::InitializeRuntimeControl(&pb, "
-     << MessageName(message_)
-     << "::MetadataTypeCount());\n"
         "  auto runtime = "
         "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
         "std::move(free));\n"
-        "  auto msg = "
+     << InitializeMetadataCall("&runtime->pb")
+     << "  return "
      << MessageName(message_)
-     << "(runtime, pb->message);\n"
-        "  msg.InstallMetadata<"
-     << MessageName(message_)
-     << ">();\n"
-        "  return msg;\n"
+     << "(runtime, runtime->pb->message);\n"
         "}\n\n";
 
   os << MessageName(message_) << " " << MessageName(message_)
@@ -1980,18 +1968,9 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
-        "  ::phaser::InitializeRuntimeControl(&pb, "
-     << MessageName(message_)
-     << "::MetadataTypeCount());\n"
-        "  auto runtime = "
-        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
-        "::free);\n"
-        "  this->runtime = runtime;\n"
-        "  this->absolute_binary_offset = pb->message;\n"
-        "  this->InstallMetadata<"
-     << MessageName(message_)
-     << ">();\n"
-        "}\n\n";
+        "  BindNewMutable(std::make_shared<"
+        "::phaser::DynamicMutableMessageRuntime>(pb, ::free), pb->message);\n"
+     << InitializeMetadataCall("&runtime->pb") << "}\n\n";
 }
 
 void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
@@ -2015,13 +1994,16 @@ void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
         "PresenceMaskSize(); }\n";
 }
 
-size_t MessageGenerator::ReachableMessageTypeCount() const {
-  std::set<const google::protobuf::Descriptor*> reachable;
+std::vector<const google::protobuf::Descriptor*>
+MessageGenerator::ReachableMessageTypes() const {
+  std::vector<const google::protobuf::Descriptor*> reachable;
+  std::set<const google::protobuf::Descriptor*> visited;
   std::function<void(const google::protobuf::Descriptor*)> visit =
       [&](const google::protobuf::Descriptor* descriptor) {
-        if (descriptor == nullptr || !reachable.insert(descriptor).second) {
+        if (descriptor == nullptr || !visited.insert(descriptor).second) {
           return;
         }
+        reachable.push_back(descriptor);
         for (int i = 0; i < descriptor->field_count(); ++i) {
           const auto* field = descriptor->field(i);
           if (field->type() ==
@@ -2031,7 +2013,18 @@ size_t MessageGenerator::ReachableMessageTypeCount() const {
         }
       };
   visit(message_);
-  return reachable.size();
+  return reachable;
+}
+
+std::string MessageGenerator::InitializeMetadataCall(const std::string& pb) {
+  std::string types;
+  for (const auto* descriptor : ReachableMessageTypes()) {
+    if (!types.empty()) {
+      types += ", ";
+    }
+    types += MessageName(descriptor, true);
+  }
+  return "  ::phaser::InitializeMetadata<" + types + ">(" + pb + ");\n";
 }
 
 void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {

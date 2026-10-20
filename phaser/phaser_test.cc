@@ -238,6 +238,7 @@ TEST(PhaserTest, RepeatedMessagesGrowAcrossChunks) {
 
 TEST(PhaserTest, PartHandlesBorrowTheMessage) {
   foo::bar::phaser::TestMessage msg;
+  EXPECT_TRUE(msg.FieldLocationsKnown());
   const long owners = msg.runtime.use_count();
   foo::bar::phaser::InnerMessage element = msg.add_vm();
   foo::bar::phaser::InnerMessage* nested = msg.mutable_m();

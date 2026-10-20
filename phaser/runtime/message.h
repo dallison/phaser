@@ -352,10 +352,85 @@ inline RuntimeControlBlock* InitializeRuntimeControl(
   }
   void* memory = ::phaser::PayloadBuffer::Allocate(
       pb, static_cast<uint32_t>(RuntimeControlSize(capacity)), true);
+  if (memory == nullptr) {
+    throw std::bad_alloc();
+  }
   auto* control = new (memory) RuntimeControlBlock;
   control->capacity = static_cast<uint32_t>(capacity);
   (*pb)->metadata = (*pb)->ToOffset(control);
   return control;
+}
+
+namespace internal {
+template <typename T>
+using FieldDataOf = std::remove_const_t<decltype(T::field_data)>;
+
+// The field metadata of each of a list of message types, laid out as one
+// block that a new buffer takes with a single copy.
+template <typename... Ts>
+struct MetadataTables {
+  static void Record(RuntimeMetadataEntry*, ::phaser::BufferOffset) {}
+};
+
+template <typename T, typename... Rest>
+struct MetadataTables<T, Rest...> {
+  FieldDataOf<T> table = T::field_data;
+  [[no_unique_address]] MetadataTables<Rest...> rest;
+
+  // Fills an entry for each type whose table is in a block at 'offset'.
+  static void Record(RuntimeMetadataEntry* entry,
+                     ::phaser::BufferOffset offset) {
+    static constexpr uint64_t kKey = MetadataKey(T::FullName());
+    entry->key = kKey;
+    entry->field_data = offset;
+    MetadataTables<Rest...>::Record(
+        entry + 1, offset + static_cast<::phaser::BufferOffset>(
+                                offsetof(MetadataTables, rest)));
+  }
+};
+}  // namespace internal
+
+// Installing the metadata of every type a message can reach when its buffer
+// is made could add tables for types it never uses, so it is only done when
+// they are no bigger than this.
+inline constexpr size_t kMaxEagerMetadataSize = 512;
+
+// Sets up the metadata of a new buffer whose main message has been
+// allocated.  'Root' is the main message's type and 'Reachable' the other
+// message types it can reach.  Their tables are copied in as one block when
+// they are small enough, so that making a message of a reachable type needs
+// no allocation; otherwise each is copied in when first needed.
+template <typename Root, typename... Reachable>
+void InitializeMetadata(::phaser::PayloadBuffer** pb) {
+  constexpr size_t kTypeCount = 1 + sizeof...(Reachable);
+  constexpr bool kEager =
+      sizeof(internal::MetadataTables<Root, Reachable...>) <=
+      kMaxEagerMetadataSize;
+  using Tables =
+      std::conditional_t<kEager, internal::MetadataTables<Root, Reachable...>,
+                         internal::MetadataTables<Root>>;
+  static constexpr Tables kTables{};
+
+  if ((*pb)->message == 0) {
+    throw std::bad_alloc();
+  }
+  InitializeRuntimeControl(pb, kTypeCount);
+  void* block = ::phaser::PayloadBuffer::Allocate(
+      pb, static_cast<uint32_t>(sizeof(kTables)), false);
+  if (block == nullptr) {
+    throw std::bad_alloc();
+  }
+  memcpy(block, &kTables, sizeof(kTables));
+  const ::phaser::BufferOffset offset = (*pb)->ToOffset(block);
+  // A message that reaches no other type has no control block.
+  if constexpr (kTypeCount > 1) {
+    // Allocating the tables may have moved the buffer.
+    auto* control = (*pb)->AddressOf<RuntimeControlBlock>((*pb)->metadata);
+    Tables::Record(control->entries, offset);
+    control->count = kEager ? static_cast<uint32_t>(kTypeCount) : 1;
+  }
+  // The first word of a message is the offset of its metadata.
+  *(*pb)->AddressOf<::phaser::BufferOffset>((*pb)->message) = offset;
 }
 
 // Mutable messages share one of these through an owning shared_ptr. Read-only
@@ -1179,6 +1254,14 @@ struct Message {
  protected:
   static RuntimeHandle BorrowRuntime(MessageRuntime& runtime) {
     return RuntimeHandle(RuntimeHandle(), &runtime);
+  }
+
+  // Points this handle at the new message at 'start' in the mutable runtime
+  // 'rt', which it shares.
+  void BindNewMutable(RuntimeHandle rt, ::phaser::BufferOffset start) {
+    runtime = std::move(rt);
+    absolute_binary_offset = start;
+    field_locations_known_ = true;
   }
 
   // A borrowed runtime has no owner.  One that may live in another handle is

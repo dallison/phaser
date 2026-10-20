@@ -429,10 +429,15 @@ TEST(OutputAllocationTest, MetadataEntriesAreReusedAndTypedAnyCanGrowTable) {
   alignas(std::max_align_t) std::array<std::byte, 32768> storage{};
   auto fixed = foo::bar::phaser::TestMessage::CreateMutable(
       storage.data(), storage.size());
+  // Every type the message can reach has its metadata installed when the
+  // message is made.
+  ASSERT_NE(fixed.runtime->GetRuntimeControl(), nullptr);
+  EXPECT_EQ(fixed.runtime->GetRuntimeControl()->count,
+            foo::bar::phaser::TestMessage::MetadataTypeCount());
   fixed.add_vm()->set_str("first");
   fixed.add_vm()->set_str("second");
-  ASSERT_NE(fixed.runtime->GetRuntimeControl(), nullptr);
-  EXPECT_EQ(fixed.runtime->GetRuntimeControl()->count, 2u);
+  EXPECT_EQ(fixed.runtime->GetRuntimeControl()->count,
+            foo::bar::phaser::TestMessage::MetadataTypeCount());
 
   foo::bar::phaser::TestMessage dynamic;
   const uint32_t initial_capacity =

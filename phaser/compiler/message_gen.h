@@ -97,7 +97,12 @@ class MessageGenerator {
   void GenerateConstructors(std::ostream& os, bool decl);
   void GenerateFieldInitializers(std::ostream& os, const char* sep = ": ");
   void GenerateSizeFunctions(std::ostream& os);
-  size_t ReachableMessageTypeCount() const;
+  // The message types this message can reach, starting with itself.
+  std::vector<const google::protobuf::Descriptor*> ReachableMessageTypes()
+      const;
+  // The InitializeMetadata call that sets up the new buffer at 'pb', a
+  // PayloadBuffer** expression, for this message.
+  std::string InitializeMetadataCall(const std::string& pb);
   void GenerateFieldMetadata(std::ostream& os);
   void GenerateCreators(std::ostream& os, bool decl);
   void GenerateClear(std::ostream& os, bool decl);
