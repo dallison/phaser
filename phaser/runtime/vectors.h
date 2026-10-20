@@ -1194,7 +1194,9 @@ class MessageVectorField : public Field {
 
   // Add() without the handle: appends an empty element and returns its offset.
   ::phaser::BufferOffset AddElement() {
-    return AddElementAt(GetRuntime(), VectorHeaderOffset());
+    // Throws for a readonly message.
+    (void)GetBufferAddr();
+    return AddElementTo(GetRuntime(), ResolvedVectorHeader());
   }
 
   // The offset of the VectorHeader in a mutable message.
@@ -1208,30 +1210,9 @@ class MessageVectorField : public Field {
   // AddElement() for the vector at 'header'.
   static ::phaser::BufferOffset AddElementAt(const RuntimeHandle& runtime,
                                              ::phaser::BufferOffset header) {
-    ::phaser::PayloadBuffer** buffer = &runtime->pb;
-    ::phaser::VectorHeader* hdr =
-        (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header);
-    const uint32_t index = hdr->num_elements;
-    const ::phaser::MessageVectorBlock* block =
-        (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
-            hdr->data);
-    ::phaser::BufferOffset element;
-    if (ABSL_PREDICT_TRUE(block != nullptr && index < block->first_capacity)) {
-      element = static_cast<::phaser::BufferOffset>(
-          hdr->data + sizeof(::phaser::MessageVectorBlock) + index * Stride());
-    } else {
-      element = GrowForAdd(runtime, header, index);
-      hdr = (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header);
-      block =
-          (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
-              hdr->data);
-    }
-    // This process wrote the block, so its stride is T's.
-    char* binary = (*buffer)->template UncheckedAddress<char>(element);
-    memset(binary, 0, Stride());
-    memcpy(binary, &block->metadata, sizeof(block->metadata));
-    hdr->num_elements = index + 1;
-    return element;
+    return AddElementTo(
+        runtime,
+        runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header));
   }
 
   // Appends 'n' elements to the vector at 'header', calling 'f' with the
@@ -1644,6 +1625,35 @@ class MessageVectorField : public Field {
   static uint32_t DefaultFirstCapacity() {
     return std::clamp<uint32_t>(kDefaultFirstChunkBytes / Stride(), 1,
                                 kMaxDefaultFirstCapacity);
+  }
+
+  // Appends an empty element to the vector whose VectorHeader is 'hdr' in the
+  // mutable buffer of 'runtime' and returns its offset.
+  static ::phaser::BufferOffset AddElementTo(const RuntimeHandle& runtime,
+                                             ::phaser::VectorHeader* hdr) {
+    ::phaser::PayloadBuffer** buffer = &runtime->pb;
+    const uint32_t index = hdr->num_elements;
+    const ::phaser::MessageVectorBlock* block =
+        (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
+            hdr->data);
+    ::phaser::BufferOffset element;
+    if (ABSL_PREDICT_TRUE(block != nullptr && index < block->first_capacity)) {
+      element = static_cast<::phaser::BufferOffset>(
+          hdr->data + sizeof(::phaser::MessageVectorBlock) + index * Stride());
+    } else {
+      const ::phaser::BufferOffset header = (*buffer)->UncheckedOffset(hdr);
+      element = GrowForAdd(runtime, header, index);
+      hdr = (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header);
+      block =
+          (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
+              hdr->data);
+    }
+    // This process wrote the block, so its stride is T's.
+    char* binary = (*buffer)->template UncheckedAddress<char>(element);
+    memset(binary, 0, Stride());
+    memcpy(binary, &block->metadata, sizeof(block->metadata));
+    hdr->num_elements = index + 1;
+    return element;
   }
 
   // Makes room for element 'index', which Add() is about to append to the
