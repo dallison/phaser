@@ -1258,8 +1258,10 @@ class MessageVectorField : public Field {
   }
 
   // AddElementsAt() for an 'f' that neither fails nor allocates, called with
-  // a copy of 'f' with the address of each element and its index among the
-  // 'n'.  The size includes the new elements only once all are added.
+  // a copy of 'f' with where to write each element and its index among the
+  // 'n'.  That may be a copy of the element, stored once 'f' returns, so 'f'
+  // must write only there.  The size includes the new elements only once all
+  // are added.
   template <typename F>
   static void AddElementsInPlaceAt(const RuntimeHandle& runtime,
                                    ::phaser::BufferOffset header, uint32_t n,
@@ -1616,8 +1618,17 @@ class MessageVectorField : public Field {
         char* binary = pb->template AddressOf<char>(chunk) +
                        size_t{index - chunk_begin} * Stride();
         for (; index < chunk_end; ++index, binary += Stride()) {
-          StartElement(binary, block.metadata);
-          local_f(binary, index - old_size);
+          if constexpr (Stride() <= kMaxStagedStride) {
+            // Made in a local copy, which can stay in registers, so that only
+            // the finished element is stored.
+            char staged[Stride()];
+            StartElement(staged, block.metadata);
+            local_f(staged, index - old_size);
+            memcpy(binary, staged, Stride());
+          } else {
+            StartElement(binary, block.metadata);
+            local_f(binary, index - old_size);
+          }
         }
       } else {
         for (; index < chunk_end; ++index) {
@@ -1641,9 +1652,12 @@ class MessageVectorField : public Field {
     return absl::OkStatus();
   }
 
-  static uint32_t Stride() {
+  static constexpr uint32_t Stride() {
     return static_cast<uint32_t>((T::BinarySize() + 7) & ~size_t(7));
   }
+
+  // AddElementsInPlaceAt() makes elements up to this size in a local copy.
+  static constexpr uint32_t kMaxStagedStride = 64;
 
   // Makes the empty element at 'binary'.
   static void StartElement(char* binary, ::phaser::BufferOffset metadata) {
