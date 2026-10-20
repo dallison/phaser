@@ -214,33 +214,28 @@ struct PayloadBuffer {
     return reinterpret_cast<T *>(reinterpret_cast<char *>(this) + offset);
   }
 
+  // Presence bits are packed 32 to a little-endian word, so bit 'bit' is bit
+  // bit % 8 of byte bit / 8.  The accessors for one field use that byte
+  // alone, which measured faster than updating the word when setting fields
+  // one after another.
+
   // The writers below are only used on mutable buffers.
   void SetPresenceBit(uint32_t bit, uint32_t offset) {
-    uint32_t word = bit / 32;
-    bit %= 32;
-    uint32_t *p = AddressOf<uint32_t>(offset);
-    p[word] |= (1 << bit);
+    AddressOf<uint8_t>(offset)[bit / 8] |= uint8_t(1U << (bit % 8));
   }
 
   void ClearPresenceBit(uint32_t bit, uint32_t offset) {
-    uint32_t word = bit / 32;
-    bit %= 32;
-    uint32_t *p = AddressOf<uint32_t>(offset);
-    p[word] &= ~(1 << bit);
+    AddressOf<uint8_t>(offset)[bit / 8] &= uint8_t(~(1U << (bit % 8)));
   }
 
   bool IsPresent(uint32_t bit, uint32_t offset) const {
-    // Presence bits are packed 32 to a word; this must match SetPresenceBit /
-    // ClearPresenceBit which use 32-bit words.  Validate the specific word we
-    // read so a hostile field id cannot walk off the end of the buffer.
-    uint32_t word = bit / 32;
-    bit %= 32;
-    const uint32_t *p = ToAddress<const uint32_t>(
-        offset + word * static_cast<uint32_t>(sizeof(uint32_t)));
+    // Validate the byte read so a hostile field id cannot walk off the end of
+    // the buffer.
+    const uint8_t *p = ToAddress<const uint8_t>(offset + bit / 8);
     if (p == nullptr) {
       return false;
     }
-    return (*p & (1U << bit)) != 0;
+    return (*p & (1U << (bit % 8))) != 0;
   }
 
   static uint32_t DecodeSize(const BufferOffset *addr) {
