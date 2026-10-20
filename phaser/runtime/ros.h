@@ -22,6 +22,8 @@
 
 #include "phaser/runtime/arrays.h"
 #include "phaser/runtime/fields.h"
+#include "phaser/runtime/ros_direct.h"
+#include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/vectors.h"
 
 namespace phaser {
@@ -59,6 +61,13 @@ struct RosTimeTraits {
     backend.set_nanos(static_cast<int32_t>(value.nsec));
   }
 
+  // Writes the ROS encoding of 'value', which is kROSSize bytes.
+  static constexpr size_t kROSSize = 2 * sizeof(uint32_t);
+  static void EncodeROS(const RosType& value, char* out) {
+    ROSBuffer::Encode<uint32_t>(out, value.sec);
+    ROSBuffer::Encode<uint32_t>(out + sizeof(uint32_t), value.nsec);
+  }
+
   static void Print(std::ostream& os, const RosType& value) {
     os << "sec: " << value.sec << " nsec: " << value.nsec;
   }
@@ -79,10 +88,26 @@ struct RosDurationTraits {
     backend.set_nanos(static_cast<int32_t>(value.nsec));
   }
 
+  // Writes the ROS encoding of 'value', which is kROSSize bytes.
+  static constexpr size_t kROSSize = 2 * sizeof(int32_t);
+  static void EncodeROS(const RosType& value, char* out) {
+    ROSBuffer::Encode<int32_t>(out, value.sec);
+    ROSBuffer::Encode<int32_t>(out + sizeof(int32_t), value.nsec);
+  }
+
   static void Print(std::ostream& os, const RosType& value) {
     os << "sec: " << value.sec << " nsec: " << value.nsec;
   }
 };
+
+// Traits whose values a backend of a fixed ROS size can parse straight into
+// the payload.
+template <typename Traits, typename = void>
+struct HasROSEncoding : std::false_type {};
+
+template <typename Traits>
+struct HasROSEncoding<Traits, std::void_t<decltype(&Traits::EncodeROS)>>
+    : std::true_type {};
 
 struct RosHeaderTraits {
   using RosType = ::std_msgs::Header;
@@ -227,7 +252,20 @@ class RosMessageField : public IndirectMessageField<Backend, kInline> {
       Base::SyncToPayload();
       return;
     }
-    Backend* backend = const_cast<RosMessageField*>(this)->Base::Mutable();
+    auto* self = const_cast<RosMessageField*>(this);
+    if constexpr (kInline && internal::HasROSEncoding<Traits>::value &&
+                  internal::HasROSUncheckedParseAt<Backend>::value) {
+      static_assert(Backend::PhaserROSMinSize() == Traits::kROSSize);
+      if (self->InMutableMessage()) {
+        char encoded[Traits::kROSSize];
+        Traits::EncodeROS(cache_, encoded);
+        self->StoreFromROSUnchecked(encoded);
+        dirty_ = false;
+        cache_loaded_ = true;
+        return;
+      }
+    }
+    Backend* backend = self->Base::Mutable();
     Traits::Store(cache_, *backend);
     dirty_ = false;
     cache_loaded_ = true;

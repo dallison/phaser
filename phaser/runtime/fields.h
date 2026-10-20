@@ -1042,17 +1042,7 @@ class IndirectMessageField : public Field {
       return ReadonlyMutable();
     }
     if constexpr (kInline) {
-      const ::phaser::BufferOffset message =
-          GetMessageBinaryStart() + relative_binary_offset_;
-      if (*GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(
-              message) == 0) {
-        // Finding the metadata can move the buffer.
-        const ::phaser::BufferOffset metadata =
-            Message::MetadataFor<MessageType>(GetRuntime());
-        *GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(
-            message) = metadata;
-      }
-      return &Bind(message);
+      return &Bind(InstallInline());
     }
     ::phaser::BufferOffset* addr =
         GetIndirectAddress(relative_binary_offset_);
@@ -1232,6 +1222,20 @@ class IndirectMessageField : public Field {
     return Message::GetBuffer(this, source_offset_);
   }
 
+  bool InMutableMessage() const {
+    return Message::GetMessage(this, source_offset_)->IsMutable();
+  }
+
+  // Sets every field of the inline message, which is in a mutable message,
+  // from the PhaserROSMinSize() bytes of its ROS encoding at 'input', as
+  // their setters would.
+  void StoreFromROSUnchecked(const char* input) {
+    static_assert(kInline);
+    const ::phaser::BufferOffset message = InstallInline();
+    MessageType::PhaserDeserializeFromROSUncheckedAt(
+        GetRuntime()->pb->template AddressOf<char>(message), input);
+  }
+
   // Where the field is in its message and whether the message it holds is
   // stored there, which depend on the schema the message was written with.
   struct Location {
@@ -1246,6 +1250,22 @@ class IndirectMessageField : public Field {
       ThrowReadonlyMessage();
     }
     return &Bind(message);
+  }
+
+  // The inline message in a mutable message, given its metadata if it has
+  // none yet.
+  ABSL_ATTRIBUTE_ALWAYS_INLINE ::phaser::BufferOffset InstallInline() {
+    const ::phaser::BufferOffset message =
+        GetMessageBinaryStart() + relative_binary_offset_;
+    if (*GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(
+            message) == 0) {
+      // Finding the metadata can move the buffer.
+      const ::phaser::BufferOffset metadata =
+          Message::MetadataFor<MessageType>(GetRuntime());
+      *GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(message) =
+          metadata;
+    }
+    return message;
   }
 
   // Making the handle makes those of every message field inside it, so it is
