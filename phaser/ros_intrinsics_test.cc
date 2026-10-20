@@ -133,6 +133,12 @@ TEST(RosIntrinsicsTest, NestedMessagesAreInsideTheMessage) {
   EXPECT_EQ(message.header->stamp.sec, 21u);
 }
 
+TEST(RosIntrinsicsTest, MessageSizeCountsTheHeaderOnce) {
+  // The metadata offset, the presence mask, then int64 seconds and int32 nanos.
+  EXPECT_EQ(::google::protobuf::phaser::Timestamp::BinarySize(),
+            4u + 4u + 8u + 4u);
+}
+
 TEST(RosIntrinsicsTest, ClearingAnInlineMessageRemovesIt) {
   RosIntrinsicMessage message;
   const RosIntrinsicMessage& view = message;

@@ -2046,8 +2046,8 @@ void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
         "    runtime->pb->free_list = 0;\n"
         "    runtime->pb->metadata = _phaser_user_metadata;\n"
         "  }\n";
-  os << "  static constexpr size_t BinarySize() { return HeaderSize() + "
-     << binary_end_ << "; }\n";
+  os << "  static constexpr size_t BinarySize() { return " << binary_end_
+     << "; }\n";
   os << "  static constexpr size_t PresenceMaskSize() { return "
      << presence_mask_size_ << "; }\n";
   os << "  static constexpr uint32_t HeaderSize() { return 4 + "
