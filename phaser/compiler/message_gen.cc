@@ -5201,13 +5201,10 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
         "std::string_view(input.data(), input.size()), output);\n";
   os << "    case ::phaser::MessageWireFormat::kPhaser:\n";
   os << "      return PhaserToROS(input, output);\n";
-  os << "    case ::phaser::MessageWireFormat::kAmbiguous:\n";
-  os << "      return absl::InvalidArgumentError("
-        "\"Input is structurally valid as both Phaser and protobuf\");\n";
   os << "    case ::phaser::MessageWireFormat::kUnknown:\n";
   os << "      return absl::InvalidArgumentError("
-        "\"Input is neither a valid Phaser payload nor protobuf wire "
-        "message\");\n";
+        "\"Input starts with a zero byte but is not a valid Phaser "
+        "payload\");\n";
   os << "  }\n";
   os << "  return absl::InvalidArgumentError(\"Unknown input format\");\n";
   os << "}\n\n";

@@ -23,7 +23,6 @@ enum class MessageWireFormat {
   kProtobuf,
   kPhaser,
   kUnknown,
-  kAmbiguous,
 };
 
 namespace internal {
@@ -36,95 +35,6 @@ inline uint32_t LoadWireUint32(absl::Span<const char> data, size_t offset) {
              << static_cast<unsigned>(i * 8);
   }
   return value;
-}
-
-inline bool ConsumeWireVarint(absl::Span<const char> data, size_t* offset,
-                              size_t max_bytes, uint8_t max_last_byte,
-                              uint64_t* value) {
-  uint64_t result = 0;
-  for (size_t i = 0; i < max_bytes; ++i) {
-    if (*offset >= data.size()) {
-      return false;
-    }
-    const uint8_t byte =
-        static_cast<unsigned char>(data[(*offset)++]);
-    if (i + 1 == max_bytes &&
-        ((byte & 0x80U) != 0 || (byte & 0x7fU) > max_last_byte)) {
-      return false;
-    }
-    result |= static_cast<uint64_t>(byte & 0x7fU)
-              << static_cast<unsigned>(i * 7);
-    if ((byte & 0x80U) == 0) {
-      *value = result;
-      return true;
-    }
-  }
-  return false;
-}
-
-inline bool ConsumeProtobufFields(absl::Span<const char> data, size_t* offset,
-                                  uint32_t expected_end_group = 0,
-                                  size_t depth = 0) {
-  constexpr uint32_t kMaxFieldNumber = (uint32_t{1} << 29) - 1;
-  constexpr size_t kMaxGroupDepth = 100;
-  if (depth > kMaxGroupDepth) {
-    return false;
-  }
-  while (*offset < data.size()) {
-    uint64_t tag = 0;
-    if (!ConsumeWireVarint(data, offset, 5, 0x0f, &tag)) {
-      return false;
-    }
-    const uint32_t field_number = static_cast<uint32_t>(tag >> 3);
-    const uint32_t wire_type = static_cast<uint32_t>(tag & 7);
-    if (field_number == 0 || field_number > kMaxFieldNumber) {
-      return false;
-    }
-    if (wire_type == 4) {
-      return expected_end_group != 0 && field_number == expected_end_group;
-    }
-
-    uint64_t value = 0;
-    switch (wire_type) {
-      case 0:
-        if (!ConsumeWireVarint(data, offset, 10, 1, &value)) {
-          return false;
-        }
-        break;
-      case 1:
-        if (data.size() - *offset < sizeof(uint64_t)) {
-          return false;
-        }
-        *offset += sizeof(uint64_t);
-        break;
-      case 2:
-        if (!ConsumeWireVarint(data, offset, 10, 1, &value) ||
-            value > data.size() - *offset) {
-          return false;
-        }
-        *offset += value;
-        break;
-      case 3:
-        if (!ConsumeProtobufFields(data, offset, field_number, depth + 1)) {
-          return false;
-        }
-        break;
-      case 5:
-        if (data.size() - *offset < sizeof(uint32_t)) {
-          return false;
-        }
-        *offset += sizeof(uint32_t);
-        break;
-      default:
-        return false;
-    }
-  }
-  return expected_end_group == 0;
-}
-
-inline bool IsStructurallyValidProtobuf(absl::Span<const char> data) {
-  size_t offset = 0;
-  return ConsumeProtobufFields(data, &offset) && offset == data.size();
 }
 
 inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
@@ -188,23 +98,17 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
 
 }  // namespace internal
 
-// Infers a format from its complete byte representation. Both formats are
-// validated structurally; the magic prefix alone is deliberately insufficient
-// because it can also begin a valid protobuf field tag.
+// Infers a format from the first byte, which is zero in a payload buffer and
+// cannot be in a non-empty protobuf message, and from a payload buffer's
+// header.  Only the header is read: protobuf is validated when it is parsed.
 inline MessageWireFormat InferMessageWireFormat(
     absl::Span<const char> data) {
-  const bool phaser = internal::IsStructurallyValidPhaser(data);
-  const bool protobuf = internal::IsStructurallyValidProtobuf(data);
-  if (phaser && protobuf) {
-    return MessageWireFormat::kAmbiguous;
-  }
-  if (phaser) {
-    return MessageWireFormat::kPhaser;
-  }
-  if (protobuf) {
+  if (data.empty() || data[0] != 0) {
     return MessageWireFormat::kProtobuf;
   }
-  return MessageWireFormat::kUnknown;
+  return internal::IsStructurallyValidPhaser(data)
+             ? MessageWireFormat::kPhaser
+             : MessageWireFormat::kUnknown;
 }
 
 inline MessageWireFormat InferMessageWireFormat(std::string_view data) {

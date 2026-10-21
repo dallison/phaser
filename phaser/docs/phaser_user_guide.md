@@ -505,11 +505,12 @@ recursively by those public wrappers; most callers should use
 `ProtobufToROS` and `ROSToProtobuf`.
 `PhaserToROS` attaches a read-only message to a valid native Phaser payload for
 the duration of the conversion. `ConvertToROS` calls
-`InferMessageWireFormat` and selects either input path. Inference validates the
-complete generic protobuf field structure and the Phaser payload header rather
-than checking only the four-byte magic: those magic bytes can also begin a
-valid protobuf tag. The result enum can report `kProtobuf`, `kPhaser`,
-`kUnknown`, or `kAmbiguous`; automatic conversion rejects the latter two.
+`InferMessageWireFormat` and selects either input path. Inference reads only
+the first byte and, for a Phaser payload, its header. A Phaser payload starts
+with a zero byte, which a non-empty protobuf message cannot. Any other input,
+including empty input, is reported as `kProtobuf` and is validated when it is
+parsed. Input that starts with a zero byte is `kPhaser` if its header is valid
+and `kUnknown` otherwise; automatic conversion rejects `kUnknown`.
 
 #### Direct protobuf wire to ROS1
 
@@ -1472,17 +1473,21 @@ The start of every PayloadBuffer contains a header, shown in the following diagr
 <img src="PayloadBuffer header.png"/>
 </div>
 
-Each member is 4-bytes long.  The first member is the `magic` which is either:
+Each member is 4-bytes long.  The first member is the `magic`, which is the
+bytes `00 'P' 'H'` followed by a flags byte:
 
-1. ::phaser::kFixedBufferMagic
-2. ::phaser::kMovableBufferMagic
+| Bit | Meaning |
+|-----|---------|
+| 7 | Always 1 |
+| 2-6 | Format version (`::phaser::kBufferFormatVersion`, currently 1) |
+| 1 | Movable buffer (`::phaser::kMovableBufferMagic`) rather than fixed (`::phaser::kFixedBufferMagic`) |
+| 0 | Bitmap allocator on (`::phaser::kBitMapFlag`) |
 
-This serves to identify the buffer as a PayloadBuffer and also whether it is
-movable or fixed.  Movable buffers are only moved when creating the message, however
-all buffers are relocatable in memory.
-
-The bottom bit of the magic field is used to specify whether the `bitmap allocator`
-is on or off (0 = off).
+The magic identifies the buffer as a PayloadBuffer of this format version.
+Because a non-empty protobuf message cannot start with a zero byte, the first
+byte alone tells a PayloadBuffer from protobuf.  Buffers with a different
+version are not valid PayloadBuffers.  Movable buffers are only moved when
+creating the message, however all buffers are relocatable in memory.
 
 The next member, `message` contains the offset to the root of the message tree
 in the buffer - the top level message.

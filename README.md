@@ -216,10 +216,9 @@ status = msg.ParseFromROS(ros_bytes);
 little-endian ROS1 layout. Phaser's custom `oneof` layout writes a `uint32`
 protobuf field-number discriminator before the selected arm, with zero meaning
 unset, so it can be decoded without an external arm selection.
-`InferMessageWireFormat` validates both the protobuf structure and Phaser
-payload header; magic alone is not enough because the same four-byte prefix can
-begin a valid protobuf tag. Malformed or genuinely ambiguous input is reported
-explicitly.
+`InferMessageWireFormat` reads only the first byte and, for a Phaser payload,
+its header: a Phaser payload starts with a zero byte, which a non-empty protobuf
+message cannot.
 
 ### 2. Create and use a message
 

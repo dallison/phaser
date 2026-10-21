@@ -19,12 +19,21 @@
 
 namespace phaser {
 
-constexpr uint32_t kFixedBufferMagic = 0xe5f6f1c4;
-constexpr uint32_t kMovableBufferMagic = 0xc5f6f1c4;
+// The magic is the bytes 0x00 'P' 'H' and a flags byte.  A non-empty protobuf
+// message cannot start with a zero byte, so the first byte tells a payload
+// buffer from protobuf.  The flags byte holds a set top bit, the format version
+// in bits 2-6, the movable flag in bit 1 and the bitmap allocator flag in bit 0
+// (bits 25 and 24 of the magic).
+constexpr uint32_t kBufferFormatVersion = 1;
+constexpr uint32_t kFixedBufferMagic =
+    ((0x80 | (kBufferFormatVersion << 2)) << 24) | (uint32_t{'H'} << 16) |
+    (uint32_t{'P'} << 8);
+constexpr uint32_t kMovableBufferMagic = kFixedBufferMagic | (1u << 25);
+static_assert((kFixedBufferMagic & 0xff) == 0 && kBufferFormatVersion < 32);
 
-// Bottom bit is set for enabling bitmap allocator.
-constexpr uint32_t kBitMapMask = 0xfffffffe;
-constexpr uint32_t kBitMapFlag = 1;
+// Set for enabling bitmap allocator.
+constexpr uint32_t kBitMapFlag = 1u << 24;
+constexpr uint32_t kBitMapMask = ~kBitMapFlag;
 
 using BufferOffset = uint32_t;
 
