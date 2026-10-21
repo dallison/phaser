@@ -1064,6 +1064,8 @@ class StringArrayField : public FieldBase<StoredFieldLoc> {
 
   std::string_view operator[](size_t index) const { return Get(index); }
 
+  // The strings are made on the first change, which can move the buffer, so
+  // a string from the buffer is given to one with Set().
   NonEmbeddedStringField operator[](size_t index) {
     EnsureMutableExtent();
     return ConstSlot(index);
@@ -1224,7 +1226,8 @@ class StringArrayField : public FieldBase<StoredFieldLoc> {
 
   template <typename Str>
   void Set(size_t index, Str s) {
-    (*this)[index].Set(s);
+    const ::phaser::StringSource source(*GetBufferAddr(), std::string_view(s));
+    (*this)[index].Set(source.In(*GetBufferAddr()));
   }
 
   ::phaser::BufferOffset BinaryEndOffset() const {

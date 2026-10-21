@@ -47,6 +47,19 @@ char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
   BufferOffset str_ptr = *hdr;
   void *old_str = (*self)->ToAddress(str_ptr);
 
+  const StringSource source(*self, std::string_view(s, len));
+  if (old_str != nullptr) {
+    const char *old_begin = static_cast<const char *>(old_str);
+    const char *old_end =
+        old_begin + sizeof(uint32_t) + *static_cast<const uint32_t *>(old_str);
+    if (std::less_equal<const char *>()(old_begin, s) &&
+        std::less<const char *>()(s, old_end)) {
+      // Resizing the old string can overwrite 's', which is in it.
+      const std::string copy(s, len);
+      return SetString(self, copy.data(), len, header_offset);
+    }
+  }
+
   // If this contains a valid (non-zero) offset, reallocate the
   // data it points to, otherwise allocate new data.
   if (old_str != nullptr) {
@@ -56,7 +69,7 @@ char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
   }
   uint32_t *p = reinterpret_cast<uint32_t *>(str);
   p[0] = uint32_t(len);
-  memcpy(p + 1, s, len);
+  memcpy(p + 1, source.In(*self).data(), len);
 
   // The buffer may have moved.  Reassign the address of the string
   // back into the header.

@@ -329,6 +329,13 @@ a borrowed view of the caller-owned receive buffer. Iterators and string views
 into a dynamic message can be invalidated by an operation that grows or compacts
 its payload buffer, so reacquire them after mutation.
 
+A string view into a message can still be passed to a string setter, `push_back`
+or `insert` of the same message, which finds the string again if the buffer
+moves. The exception is assigning it with `=` to a repeated string element
+that has never held a string, or to an element of a fixed string array that
+has not been changed yet: making the element can move the buffer before the
+assignment, so use `Set(index, view)` there instead.
+
 `CreateReadonly` messages support const field access and serialization. A
 non-const proxy operation requires a mutable message.
 

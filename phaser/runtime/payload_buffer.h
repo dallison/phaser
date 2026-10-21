@@ -217,6 +217,13 @@ struct PayloadBuffer {
                               reinterpret_cast<const char *>(this));
   }
 
+  // The offset of 'p' if it points into this buffer, otherwise 0.
+  BufferOffset ContainedOffset(const void *p) const {
+    const uintptr_t at = reinterpret_cast<uintptr_t>(p);
+    const uintptr_t start = reinterpret_cast<uintptr_t>(this);
+    return at > start && at - start < full_size ? BufferOffset(at - start) : 0;
+  }
+
   // The address of 'offset' in a buffer this process built, for an offset
   // that cannot be 0, such as one inside a message.
   template <typename T = void> T *AddressOf(BufferOffset offset) {
@@ -562,6 +569,25 @@ struct PayloadBuffer {
       hwm = off;
     }
   }
+};
+
+// A string to be copied into a buffer.  It can be in that buffer, which
+// allocating can move, so it is found again there by its offset.
+class StringSource {
+ public:
+  StringSource(const PayloadBuffer *pb, std::string_view s)
+      : data_(s.data()), size_(s.size()), offset_(pb->ContainedOffset(data_)) {}
+
+  std::string_view In(const PayloadBuffer *pb) const {
+    return std::string_view(
+        offset_ == 0 ? data_ : reinterpret_cast<const char *>(pb) + offset_,
+        size_);
+  }
+
+ private:
+  const char *data_;
+  size_t size_;
+  BufferOffset offset_;
 };
 
 template <>

@@ -1092,6 +1092,33 @@ TEST(ROSWireConversionTest, InsertedHandleKeepsItsChangesWithItsElement) {
   EXPECT_EQ(actual_wire, expected_wire);
 }
 
+TEST(ROSWireConversionTest, ElementsCopiedFromTheSameBuffer) {
+  // Long enough that each copy grows the buffer.
+  const std::string label(100000, 'l');
+  DirectElements message;
+  {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, 1, 1);
+    element.label = label;
+  }
+  for (int i = 0; i < 3; ++i) {
+    message.elements.push_back(message.elements[0]);
+  }
+  message.elements[1] = message.elements[2];
+
+  DirectElements expected;
+  for (int i = 0; i < 4; ++i) {
+    auto element = expected.elements.Add();
+    PopulateDirectElement(element, 1, 1);
+    element.label = label;
+  }
+  std::string expected_wire;
+  ASSERT_TRUE(expected.SerializeToROSString(&expected_wire).ok());
+  std::string actual_wire;
+  ASSERT_TRUE(message.SerializeToROSString(&actual_wire).ok());
+  EXPECT_EQ(actual_wire, expected_wire);
+}
+
 TEST(ROSWireConversionTest, ErasedElementsLeaveTheOthers) {
   DirectElements message;
   std::vector<int> ids;

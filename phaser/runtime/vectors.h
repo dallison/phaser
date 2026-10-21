@@ -2101,6 +2101,8 @@ class BasicStringVectorField : public FieldBase<Loc> {
     return GetRuntime()->GetStringView(data[index]);
   }
 
+  // An element that has never held a string is made here, which can move
+  // the buffer, so a string from the buffer is given to it with Set().
   NonEmbeddedStringField operator[](int index) {
     if (index < 0 || static_cast<size_t>(index) >= NumElements()) {
       return {};
@@ -2255,11 +2257,13 @@ class BasicStringVectorField : public FieldBase<Loc> {
 
   template <typename Str>
   void push_back(Str s) {
+    const ::phaser::StringSource source(*GetBufferAddr(), std::string_view(s));
     // Allocate string header in buffer.
     void* str_hdr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(), sizeof(::phaser::StringHeader));
     ::phaser::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
-    ::phaser::PayloadBuffer::SetString(GetBufferAddr(), s, hdr_offset);
+    ::phaser::PayloadBuffer::SetString(GetBufferAddr(),
+                                       source.In(*GetBufferAddr()), hdr_offset);
 
     // Add an offset for the new string to the binary.
     ::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(
@@ -2288,6 +2292,7 @@ class BasicStringVectorField : public FieldBase<Loc> {
 
   template <typename Str>
   void Set(size_t index, Str s) {
+    const ::phaser::StringSource source(*GetBufferAddr(), std::string_view(s));
     if (index >= size()) {
       ::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
           GetBufferAddr(), ResolvedVectorHeader(), index + 1);
@@ -2307,7 +2312,8 @@ class BasicStringVectorField : public FieldBase<Loc> {
           GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
       data[index] = hdr_offset;
     }
-    NonEmbeddedStringField(Parent(), data[index]).Set(s);
+    NonEmbeddedStringField(Parent(), data[index])
+        .Set(source.In(*GetBufferAddr()));
   }
 
   size_t capacity() const {
@@ -2371,14 +2377,6 @@ class BasicStringVectorField : public FieldBase<Loc> {
   }
 
   iterator insert(const_iterator pos, std::string_view value) {
-    const ::phaser::PayloadBuffer* pb = *GetBufferAddr();
-    const auto at = reinterpret_cast<uintptr_t>(value.data());
-    const auto start = reinterpret_cast<uintptr_t>(pb);
-    if (at >= start && at < start + pb->full_size) {
-      // Adding to the buffer can move it from under 'value'.
-      const std::string copy(value);
-      return insert(pos, copy);
-    }
     const size_t index = pos.Index();
     push_back(value);
     ::phaser::VectorHeader* hdr = ResolvedVectorHeader();

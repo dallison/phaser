@@ -473,6 +473,71 @@ TEST(RosCompileTest, EraseMatchesStdVector) {
   EXPECT_TRUE(msg.inners.empty());
 }
 
+// A string as long as this does not fit in the space a buffer has left after
+// holding it, so copying it grows the buffer.
+std::string LongString(char seed) {
+  std::string s(100000, '\0');
+  for (size_t i = 0; i < s.size(); ++i) {
+    s[i] = static_cast<char>(seed + i % 61);
+  }
+  return s;
+}
+
+TEST(RosCompileTest, StringsCopiedFromTheSameBuffer) {
+  const std::string value = LongString('a');
+  RosCompileMessage msg;
+  msg.names.push_back(value);
+  for (int i = 0; i < 4; ++i) {
+    msg.names.push_back(msg.names.Get(0));
+    msg.names.emplace_back(msg.names.Get(0));
+  }
+  ASSERT_EQ(msg.names.size(), 9u);
+  for (size_t i = 0; i < msg.names.size(); ++i) {
+    EXPECT_EQ(msg.names.Get(i), value) << i;
+  }
+
+  // With short strings it is at times adding a string's header that grows
+  // the buffer.
+  RosCompileMessage short_names;
+  short_names.names.push_back(value.substr(0, 20));
+  for (int i = 0; i < 2000; ++i) {
+    short_names.names.push_back(short_names.names.Get(0));
+  }
+  for (size_t i = 0; i < short_names.names.size(); ++i) {
+    ASSERT_EQ(short_names.names.Get(i), value.substr(0, 20)) << i;
+  }
+  // So too can making a fixed array's strings, which happens when it is
+  // first changed, and making room to set past the end.
+  for (size_t filled = 1; filled < 200; ++filled) {
+    RosCompileMessage grown;
+    for (size_t i = 0; i < filled; ++i) {
+      grown.names.push_back(value.substr(0, 20));
+    }
+    grown.fixed_names.Set(1, grown.names.Get(0));
+    grown.names.Set(filled + 1000, grown.names.Get(0));
+    ASSERT_EQ(grown.fixed_names.Get(1), value.substr(0, 20)) << filled;
+    ASSERT_EQ(grown.names.Get(filled + 1000), value.substr(0, 20)) << filled;
+  }
+
+  msg.names.Set(12, msg.names.Get(3));
+  EXPECT_EQ(msg.names.Get(12), value);
+  msg.name = msg.names.Get(5);
+  EXPECT_EQ(msg.name.Get(), value);
+  msg.names[1].Clear();
+  msg.names[1] = msg.name.Get();
+  EXPECT_EQ(msg.names.Get(1), value);
+  msg.fixed_names.Set(0, msg.names.Get(0));
+  msg.fixed_names.Set(1, msg.fixed_names[0].Get());
+  EXPECT_EQ(msg.fixed_names[0].Get(), value);
+  EXPECT_EQ(msg.fixed_names[1].Get(), value);
+
+  // A part of itself, ending past the end of the shorter value.
+  msg.name = msg.name.Get().substr(10, 60000);
+  EXPECT_EQ(msg.name.Get(), value.substr(10, 60000));
+  msg.names[2] = msg.names.Get(2).substr(10, 60000);
+  EXPECT_EQ(msg.names.Get(2), value.substr(10, 60000));
+}
+
 TEST(RosCompileTest, ChangingAReadonlyVectorThrows) {
   RosCompileMessage msg;
   msg.xs = {1, 2};
