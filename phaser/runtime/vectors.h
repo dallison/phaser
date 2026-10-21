@@ -276,14 +276,22 @@ class PrimitiveVectorField : public FieldBase<Loc> {
         (first.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
     const size_t last_index = static_cast<size_t>(
         (last.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<T> values = Get();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last_index));
-    assign(values.begin(), values.end());
+    (void)GetBufferAddr();
+    if (first_index != last_index) {
+      const size_t n = size();
+      T* values = data();
+      memmove(values + first_index, values + last_index,
+              (n - last_index) * sizeof(T));
+      resize(n - (last_index - first_index));
+    }
     return begin() + first_index;
   }
   void swap(PrimitiveVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*Header(Offset()), *other.Header(other.Offset()));
       return;
     }
     const std::vector<T> mine = Get();
@@ -794,14 +802,22 @@ class EnumVectorField : public FieldBase<Loc> {
         (first.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
     const size_t last_index = static_cast<size_t>(
         (last.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<Enum> values = Get();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last_index));
-    assign(values.begin(), values.end());
+    (void)GetBufferAddr();
+    if (first_index != last_index) {
+      const size_t n = size();
+      T* values = GetRuntime()->template ToAddress<T>(BaseOffset());
+      memmove(values + first_index, values + last_index,
+              (n - last_index) * sizeof(T));
+      resize(n - (last_index - first_index));
+    }
     return begin() + first_index;
   }
   void swap(EnumVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*Header(Offset()), *other.Header(other.Offset()));
       return;
     }
     const std::vector<Enum> mine = Get();
@@ -1211,62 +1227,91 @@ class MessageVectorOps {
     memcpy(binary, &metadata, sizeof(metadata));
   }
 
+  // The elements of the mutable vector whose VectorHeader is at 'header'.
+  // Chunk k holds the elements from Begin(k) to End(k).
+  struct Chunks {
+    Chunks(const MessageRuntime& runtime, ::phaser::BufferOffset header)
+        : base(reinterpret_cast<char*>(runtime.pb)),
+          hdr(reinterpret_cast<::phaser::VectorHeader*>(base + header)),
+          layout(LoadMessageVectorLayout(runtime, hdr->data)) {}
+
+    uint32_t Begin(uint32_t k) const {
+      return k == 0 ? 0 : layout.first_capacity << (k - 1);
+    }
+    uint32_t End(uint32_t k) const { return layout.first_capacity << k; }
+    // The chunk that holds element 'index'.
+    uint32_t Of(uint32_t index) const {
+      uint32_t k = 0;
+      while (End(k) <= index) {
+        ++k;
+      }
+      return k;
+    }
+    // Element 'index', which is in chunk k.
+    char* Element(uint32_t k, uint32_t index) const {
+      char* chunk;
+      if (k == 0) {
+        chunk = base + layout.block + sizeof(::phaser::MessageVectorBlock);
+      } else {
+        ::phaser::BufferOffset offset;
+        memcpy(&offset, base + layout.directory + k * sizeof(offset),
+               sizeof(offset));
+        chunk = base + offset;
+      }
+      return chunk + size_t{index - Begin(k)} * Stride();
+    }
+
+    char* base;
+    ::phaser::VectorHeader* hdr;
+    MessageVectorLayout layout;
+  };
+
   // Moves the elements from 'index' of the vector whose VectorHeader is at
   // 'header' up by one, over its last element, which must be empty, and
   // returns the offset of element 'index', made empty.  An element holds only
   // values and buffer offsets, so its bytes can move.
-  static ::phaser::BufferOffset OpenElementAt(const RuntimeHandle& runtime,
+  static ::phaser::BufferOffset OpenElementAt(const MessageRuntime& runtime,
                                               ::phaser::BufferOffset header,
                                               uint32_t index) {
-    char* base = reinterpret_cast<char*>(runtime->pb);
-    const auto* hdr =
-        reinterpret_cast<const ::phaser::VectorHeader*>(base + header);
-    const MessageVectorLayout layout =
-        LoadMessageVectorLayout(*runtime, hdr->data);
-    const auto chunk_begin = [&layout](uint32_t k) -> uint32_t {
-      return k == 0 ? 0 : layout.first_capacity << (k - 1);
-    };
-    const auto chunk_data = [&layout, base](uint32_t k) -> char* {
-      if (k == 0) {
-        return base + layout.block + sizeof(::phaser::MessageVectorBlock);
-      }
-      ::phaser::BufferOffset chunk;
-      memcpy(&chunk, base + layout.directory + k * sizeof(chunk),
-             sizeof(chunk));
-      return base + chunk;
-    };
+    const Chunks chunks(runtime, header);
     // Element 'end' is free.  Each pass moves the elements of chunk k from
     // 'index' up to 'end', then the last of chunk k - 1 to the start of k.
-    uint32_t end = hdr->num_elements - 1;
-    uint32_t k = 0;
-    while (k < layout.num_chunks && chunk_begin(k + 1) <= end) {
-      ++k;
-    }
-    uint32_t begin = chunk_begin(k);
-    char* chunk = chunk_data(k);
-    for (;;) {
-      const uint32_t low = std::max(begin, index);
-      memmove(chunk + size_t{low + 1 - begin} * Stride(),
-              chunk + size_t{low - begin} * Stride(),
-              size_t{end - low} * Stride());
+    uint32_t end = chunks.hdr->num_elements - 1;
+    for (uint32_t k = chunks.Of(end);; --k) {
+      const uint32_t low = std::max(chunks.Begin(k), index);
+      char* const from = chunks.Element(k, low);
+      memmove(from + Stride(), from, size_t{end - low} * Stride());
       if (low == index) {
-        break;
+        StartElement(from,
+                     reinterpret_cast<const ::phaser::MessageVectorBlock*>(
+                         chunks.base + chunks.layout.block)
+                         ->metadata);
+        return static_cast<::phaser::BufferOffset>(from - chunks.base);
       }
-      char* const first = chunk;
-      --k;
-      begin = chunk_begin(k);
-      chunk = chunk_data(k);
       end = low - 1;
-      memcpy(first, chunk + size_t{end - begin} * Stride(), Stride());
-      if (end == index) {
-        break;
-      }
+      memcpy(from, chunks.Element(k - 1, end), Stride());
     }
-    char* opened = chunk + size_t{index - begin} * Stride();
-    StartElement(opened, reinterpret_cast<const ::phaser::MessageVectorBlock*>(
-                             base + layout.block)
-                             ->metadata);
-    return static_cast<::phaser::BufferOffset>(opened - base);
+  }
+
+  // Moves the elements after the 'count' from 'index' of the vector whose
+  // VectorHeader is at 'header' down over them, and removes the last 'count'.
+  // The elements removed must hold nothing.
+  static void CloseElementsAt(const MessageRuntime& runtime,
+                              ::phaser::BufferOffset header, uint32_t index,
+                              uint32_t count) {
+    const Chunks chunks(runtime, header);
+    const uint32_t size = chunks.hdr->num_elements;
+    for (uint32_t to = index; to + count < size;) {
+      const uint32_t from = to + count;
+      const uint32_t to_chunk = chunks.Of(to);
+      const uint32_t from_chunk = chunks.Of(from);
+      const uint32_t run = std::min({size - from, chunks.End(to_chunk) - to,
+                                     chunks.End(from_chunk) - from});
+      memmove(chunks.Element(to_chunk, to), chunks.Element(from_chunk, from),
+              size_t{run} * Stride());
+      to += run;
+    }
+    chunks.hdr->num_elements = size - count;
   }
 
   // The first chunk of a vector that was not reserved holds about this many
@@ -1736,23 +1781,34 @@ class MessageVectorField : public FieldBase<Loc> {
       return insert(pos, T(std::forward<Args>(args)...));
     }
   }
+  // As for insert(), a handle to an element after those erased must not be
+  // in use across the erasure.
   iterator erase(const_iterator pos) {
-    const size_t index = pos.Index();
-    std::vector<T> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(index));
-    assign(values.begin(), values.end());
-    return iterator(this, index);
+    return erase(pos, const_iterator(this, pos.Index() + 1));
   }
   iterator erase(const_iterator first, const_iterator last) {
-    const size_t first_index = first.Index();
-    std::vector<T> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last.Index()));
-    assign(values.begin(), values.end());
-    return iterator(this, first_index);
+    const size_t index = first.Index();
+    const size_t count = last.Index() - index;
+    (void)GetBufferAddr();
+    if (count != 0) {
+      if constexpr (!internal::ClearReleasesNothing<T>::value) {
+        for (size_t i = index; i < index + count; ++i) {
+          internal::ReleaseMessageContents<T>(GetRuntime(), ElementOffset(i));
+        }
+      }
+      Ops::CloseElementsAt(*GetRuntime(), HeaderOffset(),
+                           static_cast<uint32_t>(index),
+                           static_cast<uint32_t>(count));
+    }
+    return iterator(this, index);
   }
+  // Neither vector may be in an element of the other.
   void swap(MessageVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*ResolvedVectorHeader(), *other.ResolvedVectorHeader());
       return;
     }
     const std::vector<T> mine = CopyValues();
@@ -1933,11 +1989,14 @@ class MessageVectorField : public FieldBase<Loc> {
   // Inserts an empty element at 'index' and returns its offset.
   ::phaser::BufferOffset InsertElement(size_t index) {
     (void)AddElement();
-    // A mutable message has its compiled layout.
-    const Message* message = Parent();
-    return Ops::OpenElementAt(message->runtime,
-                              message->absolute_binary_offset + Offset(),
+    return Ops::OpenElementAt(*GetRuntime(), HeaderOffset(),
                               static_cast<uint32_t>(index));
+  }
+
+  // The offset of the VectorHeader of a mutable message, which has its
+  // compiled layout.
+  ::phaser::BufferOffset HeaderOffset() const {
+    return Parent()->absolute_binary_offset + Offset();
   }
 
   // The offset of element 'index', or 0 if there is no such element.
@@ -2337,22 +2396,33 @@ class BasicStringVectorField : public FieldBase<Loc> {
     }
   }
   iterator erase(const_iterator pos) {
-    const size_t index = pos.Index();
-    std::vector<std::string> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(index));
-    assign(values.begin(), values.end());
-    return iterator(this, index);
+    return erase(pos, const_iterator(this, pos.Index() + 1));
   }
   iterator erase(const_iterator first, const_iterator last) {
-    const size_t first_index = first.Index();
-    std::vector<std::string> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last.Index()));
-    assign(values.begin(), values.end());
-    return iterator(this, first_index);
+    const size_t index = first.Index();
+    const size_t count = last.Index() - index;
+    (void)GetBufferAddr();
+    if (count != 0) {
+      ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+      ::phaser::BufferOffset* data =
+          GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+      for (size_t i = index; i < index + count; ++i) {
+        if (data[i] != 0) {
+          NonEmbeddedStringField(Parent(), data[i]).Clear();
+        }
+      }
+      memmove(data + index, data + index + count,
+              (hdr->num_elements - index - count) * sizeof(*data));
+      hdr->num_elements -= static_cast<uint32_t>(count);
+    }
+    return iterator(this, index);
   }
   void swap(BasicStringVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*ResolvedVectorHeader(), *other.ResolvedVectorHeader());
       return;
     }
     const std::vector<std::string> mine = CopyValues();

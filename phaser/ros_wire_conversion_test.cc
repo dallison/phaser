@@ -10,6 +10,7 @@
 #include <iterator>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -1089,6 +1090,88 @@ TEST(ROSWireConversionTest, InsertedHandleKeepsItsChangesWithItsElement) {
   std::string actual_wire;
   ASSERT_TRUE(message.SerializeToROSString(&actual_wire).ok());
   EXPECT_EQ(actual_wire, expected_wire);
+}
+
+TEST(ROSWireConversionTest, ErasedElementsLeaveTheOthers) {
+  DirectElements message;
+  std::vector<int> ids;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, i, 1);
+    ids.push_back(i);
+  }
+  // Single elements, runs and an empty run, over the vector's chunks.
+  const std::pair<size_t, size_t> erasures[] = {
+      {0, 1}, {3, 7}, {10, 1}, {5, 0}, {1, 15}, {15, 1}, {2, 4}};
+  for (const auto& [first, count] : erasures) {
+    const auto at = static_cast<ptrdiff_t>(first);
+    const auto end = static_cast<ptrdiff_t>(first + count);
+    const auto next =
+        message.elements.erase(std::next(message.elements.begin(), at),
+                               std::next(message.elements.begin(), end));
+    ids.erase(ids.begin() + at, ids.begin() + end);
+    if (first < ids.size()) {
+      EXPECT_EQ((*next).id.Get(), ids[first]);
+    }
+  }
+
+  DirectElements expected;
+  for (const int i : ids) {
+    auto element = expected.elements.Add();
+    PopulateDirectElement(element, i, 1);
+  }
+  std::string expected_wire;
+  ASSERT_TRUE(expected.SerializeToROSString(&expected_wire).ok());
+  std::string actual_wire;
+  ASSERT_TRUE(message.SerializeToROSString(&actual_wire).ok());
+  EXPECT_EQ(actual_wire, expected_wire);
+  EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
+}
+
+TEST(ROSWireConversionTest, SwapInOneBufferMatchesSwapBetweenBuffers) {
+  // The vectors of element 4 are empty and those of element 7 are not.
+  DirectElements message;
+  for (const int i : {4, 7}) {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, i, 1);
+  }
+  DirectElements expected;
+  ASSERT_TRUE(expected.CloneFrom(message).ok());
+
+  const auto swap_vectors = [](auto&& a, auto&& b) {
+    a.samples.swap(b.samples);
+    a.octets.swap(b.octets);
+    a.kinds.swap(b.kinds);
+    a.tags.swap(b.tags);
+    a.children.swap(b.children);
+    a.stamped.swap(b.stamped);
+    a.nested.swap(b.nested);
+  };
+  // In one buffer, the vectors are exchanged without being copied.
+  const size_t size = message.Size();
+  swap_vectors(message.elements[0], message.elements[1]);
+  EXPECT_EQ(message.Size(), size);
+  EXPECT_EQ(message.elements[0].tags.size(), 3u);
+  EXPECT_TRUE(message.elements[1].tags.empty());
+  EXPECT_EQ(message.elements[0].nested[0].id.Get(), 70);
+  EXPECT_EQ(message.elements[1].nested[0].id.Get(), 40);
+
+  // Between buffers, copies of them are.
+  {
+    DirectElement first;
+    ASSERT_TRUE(first.CloneFrom(expected.elements[0]).ok());
+    DirectElement second;
+    ASSERT_TRUE(second.CloneFrom(expected.elements[1]).ok());
+    swap_vectors(expected.elements[0], second);
+    swap_vectors(expected.elements[1], first);
+  }
+
+  std::string expected_wire;
+  ASSERT_TRUE(expected.SerializeToROSString(&expected_wire).ok());
+  std::string actual_wire;
+  ASSERT_TRUE(message.SerializeToROSString(&actual_wire).ok());
+  EXPECT_EQ(actual_wire, expected_wire);
+  EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
 }
 
 TEST(ROSWireConversionTest, LeafElementsParseLikeTheirSetters) {

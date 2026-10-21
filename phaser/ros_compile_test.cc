@@ -1,4 +1,5 @@
 // Compile and runtime fixture for frontend=ros generated messages.
+#include <algorithm>
 #include <cstring>
 #include <iterator>
 #include <memory>
@@ -392,7 +393,87 @@ TEST(RosCompileTest, InsertAndEmplaceMatchStdVector) {
   expect_values(parsed);
 }
 
-TEST(RosCompileTest, InsertIntoReadonlyMessageThrows) {
+TEST(RosCompileTest, EraseMatchesStdVector) {
+  RosCompileMessage msg;
+  std::vector<int32_t> xs;
+  std::vector<std::string> names;
+  std::vector<RosColor> colors;
+  std::vector<int32_t> ids;
+  for (int32_t i = 0; i < 100; ++i) {
+    msg.xs.push_back(i);
+    xs.push_back(i);
+    msg.names.push_back("name " + std::to_string(i));
+    names.push_back("name " + std::to_string(i));
+    msg.colors.push_back(static_cast<RosColor>(i % 3));
+    colors.push_back(static_cast<RosColor>(i % 3));
+    msg.inners.Add()->id = i;
+    ids.push_back(i);
+  }
+  const auto expect_values = [&](const RosCompileMessage& m) {
+    EXPECT_EQ(m.xs, xs);
+    EXPECT_EQ(m.names, names);
+    EXPECT_EQ(m.colors, colors);
+    ASSERT_EQ(m.inners.size(), ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+      EXPECT_EQ(m.inners[i]->id.Get(), ids[i]) << i;
+    }
+  };
+
+  // Single values, runs of up to 9 and empty runs, from the front, the back
+  // and between, over the vectors' chunks.
+  for (size_t step = 0; xs.size() > 20; ++step) {
+    const size_t first = step * 7 % xs.size();
+    const size_t count =
+        std::min<size_t>(step % 4 == 3 ? 9 : step % 4, xs.size() - first);
+    const auto at = static_cast<ptrdiff_t>(first);
+    const auto end = static_cast<ptrdiff_t>(first + count);
+    if (count == 1) {
+      msg.xs.erase(msg.xs.begin() + first);
+      msg.names.erase(std::next(msg.names.begin(), at));
+      msg.colors.erase(msg.colors.begin() + first);
+      msg.inners.erase(std::next(msg.inners.begin(), at));
+    } else {
+      msg.xs.erase(msg.xs.begin() + first, msg.xs.begin() + (first + count));
+      msg.names.erase(std::next(msg.names.begin(), at),
+                      std::next(msg.names.begin(), end));
+      msg.colors.erase(msg.colors.begin() + first,
+                       msg.colors.begin() + (first + count));
+      msg.inners.erase(std::next(msg.inners.begin(), at),
+                       std::next(msg.inners.begin(), end));
+    }
+    xs.erase(xs.begin() + at, xs.begin() + end);
+    names.erase(names.begin() + at, names.begin() + end);
+    colors.erase(colors.begin() + at, colors.begin() + end);
+    ids.erase(ids.begin() + at, ids.begin() + end);
+    expect_values(msg);
+  }
+
+  std::string wire;
+  ASSERT_TRUE(msg.SerializeToROSString(&wire).ok());
+  RosCompileMessage parsed;
+  ASSERT_TRUE(
+      parsed.ParseFromROS(absl::Span<const char>(wire.data(), wire.size()))
+          .ok());
+  expect_values(parsed);
+
+  // The iterator returned is to the value after those erased.
+  EXPECT_EQ(*msg.xs.erase(msg.xs.begin() + 2), xs[3]);
+  EXPECT_EQ(*msg.names.erase(std::next(msg.names.begin(), 2)), names[3]);
+  EXPECT_EQ(*msg.colors.erase(msg.colors.begin() + 2), colors[3]);
+  EXPECT_EQ((*msg.inners.erase(std::next(msg.inners.begin(), 2)))->id.Get(),
+            ids[3]);
+
+  msg.xs.erase(msg.xs.begin(), msg.xs.end());
+  msg.names.erase(msg.names.begin(), msg.names.end());
+  msg.colors.erase(msg.colors.begin(), msg.colors.end());
+  msg.inners.erase(msg.inners.begin(), msg.inners.end());
+  EXPECT_TRUE(msg.xs.empty());
+  EXPECT_TRUE(msg.names.empty());
+  EXPECT_TRUE(msg.colors.empty());
+  EXPECT_TRUE(msg.inners.empty());
+}
+
+TEST(RosCompileTest, ChangingAReadonlyVectorThrows) {
   RosCompileMessage msg;
   msg.xs = {1, 2};
   msg.names = {"a"};
@@ -413,6 +494,28 @@ TEST(RosCompileTest, InsertIntoReadonlyMessageThrows) {
                std::logic_error);
   EXPECT_THROW(readonly.inners.insert(readonly.inners.begin(), RosInner()),
                std::logic_error);
+  EXPECT_THROW(readonly.xs.erase(readonly.xs.begin()), std::logic_error);
+  EXPECT_THROW(readonly.names.erase(readonly.names.begin()), std::logic_error);
+  EXPECT_THROW(readonly.colors.erase(readonly.colors.begin()),
+               std::logic_error);
+  EXPECT_THROW(readonly.inners.erase(readonly.inners.begin()),
+               std::logic_error);
+
+  RosCompileMessage other;
+  other.xs = {4};
+  other.names = {"c"};
+  other.colors = {RosColor::ROS_COLOR_BLUE};
+  other.inners.Add()->id = 5;
+  EXPECT_THROW(readonly.xs.swap(other.xs), std::logic_error);
+  EXPECT_THROW(other.names.swap(readonly.names), std::logic_error);
+  EXPECT_THROW(readonly.colors.swap(other.colors), std::logic_error);
+  EXPECT_THROW(other.inners.swap(readonly.inners), std::logic_error);
+  EXPECT_EQ(other.xs, std::vector<int32_t>({4}));
+  EXPECT_EQ(other.names, std::vector<std::string>({"c"}));
+  EXPECT_EQ(other.colors, std::vector<RosColor>({RosColor::ROS_COLOR_BLUE}));
+  ASSERT_EQ(other.inners.size(), 1u);
+  EXPECT_EQ(other.inners[0]->id.Get(), 5);
+
   EXPECT_EQ(readonly.xs, std::vector<int32_t>({1, 2}));
   EXPECT_EQ(readonly.names, std::vector<std::string>({"a"}));
   EXPECT_EQ(readonly.colors, std::vector<RosColor>({RosColor::ROS_COLOR_RED}));
