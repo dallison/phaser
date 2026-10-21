@@ -1527,6 +1527,15 @@ struct Message {
     }
   }
 
+  // BindBorrowed() where 'rt' is mutable.
+  void BindBorrowedMutable(const RuntimeHandle& rt,
+                           ::phaser::BufferOffset start) {
+    runtime = BorrowedRuntime(rt);
+    absolute_binary_offset = start;
+    mutable_ = true;
+    field_locations_known_ = true;
+  }
+
  private:
   // 'copy' is CopiesRuntime(rt), computed once since copying the runtime
   // could change what 'rt' points to as far as the compiler knows.

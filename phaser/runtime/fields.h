@@ -1130,19 +1130,19 @@ class IndirectMessageField
       return ReadonlyMutable();
     }
     if constexpr (kInline) {
-      return &Bind(InstallInline());
+      return &BindMutable(InstallInline());
     }
     ::phaser::BufferOffset* addr = GetIndirectAddress(Offset());
     if (addr != nullptr && *addr != 0) {
       // Already allocated.
-      return &Bind(*addr);
+      return &BindMutable(*addr);
     }
     // Allocate a new message.
     void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(), MessageType::BinarySize());
     ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
-    MessageType& handle = Bind(msg_offset);
+    MessageType& handle = BindMutable(msg_offset);
 
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(Offset());
@@ -1263,7 +1263,7 @@ class IndirectMessageField
         GetBufferAddr(), MessageType::BinarySize());
     ::phaser::BufferOffset msg_offset = GetRuntime()->ToOffset(msg_addr);
     // Assign to the message.
-    MessageType& handle = Bind(msg_offset);
+    MessageType& handle = BindMutable(msg_offset);
 
     // Buffer might have moved, get address of indirect again.
     ::phaser::BufferOffset* addr = GetIndirectAddress(Offset());
@@ -1376,6 +1376,13 @@ class IndirectMessageField
   MessageType& Bind(::phaser::BufferOffset message) const {
     MessageType& handle = Handle();
     handle.template BindBorrowed<MessageType>(GetRuntime(), message);
+    return handle;
+  }
+
+  // Bind() in a mutable message.
+  MessageType& BindMutable(::phaser::BufferOffset message) {
+    MessageType& handle = Handle();
+    handle.BindBorrowedMutable(GetRuntime(), message);
     return handle;
   }
 
