@@ -237,6 +237,40 @@ TEST(PhaserTest, RepeatedMessagesGrowAcrossChunks) {
   ExpectInnerMessages(copy, kCount);
 }
 
+// A buffer is sent finalized, without the index of its metadata, so a reader
+// with a newer schema finds each field through the message's own metadata.
+TEST(PhaserTest, NewFieldsInFinalizedBuffer) {
+  foo::bar::phaser::TestMessage msg;
+  msg.set_x(1234);
+  msg.set_y(5678);
+  msg.set_s("hello world");
+  msg.mutable_m()->set_str("nested");
+  SetInnerMessage(msg.add_vm(), 7);
+  msg.Finalize();
+  EXPECT_EQ(0u,
+            static_cast<const ::phaser::PayloadBuffer*>(msg.Data())->metadata);
+
+  const char* base = static_cast<const char*>(msg.Data());
+  std::vector<char> recv(base, base + msg.Size());
+  auto same =
+      foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size());
+  EXPECT_TRUE(same.FieldLocationsKnown());
+  EXPECT_TRUE(same.m().FieldLocationsKnown());
+
+  auto evolved = foo::bar::phaser::TestMessageNewFields::CreateReadonly(
+      recv.data(), recv.size());
+  EXPECT_FALSE(evolved.FieldLocationsKnown());
+  EXPECT_EQ(1234, evolved.x());
+  EXPECT_EQ(5678, evolved.y());
+  EXPECT_EQ("hello world", evolved.s());
+  EXPECT_FALSE(evolved.has_new1());
+  EXPECT_FALSE(evolved.has_new2());
+  EXPECT_EQ(0, evolved.new3_size());
+  EXPECT_EQ("nested", evolved.m().str());
+  ASSERT_EQ(1, evolved.vm_size());
+  ExpectInnerMessage(evolved.vm(0), 7);
+}
+
 TEST(PhaserTest, PartHandlesBorrowTheMessage) {
   foo::bar::phaser::TestMessage msg;
   EXPECT_TRUE(msg.FieldLocationsKnown());
