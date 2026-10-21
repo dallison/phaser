@@ -94,6 +94,46 @@ TEST(BufferTest, FreeThenAlloc) {
   free(buffer);
 }
 
+// A block that grows into the free block below it moves down.  The free
+// blocks below leave 8 bytes, the smallest free block, and nothing.
+TEST(BufferTest, ReallocIntoFreeBlockBelow) {
+  for (const uint32_t below : {256u, 248u}) {
+    char *buffer = (char *)calloc(1, 4096);
+    PayloadBuffer *pb = new (buffer) PayloadBuffer(4096);
+    void *lower = PayloadBuffer::Allocate(&pb, below, true, false);
+    auto *block =
+        static_cast<uint8_t *>(PayloadBuffer::Allocate(&pb, 256, true, false));
+    auto *upper =
+        static_cast<uint8_t *>(PayloadBuffer::Allocate(&pb, 256, true, false));
+    for (uint32_t i = 0; i < 256; ++i) {
+      block[i] = static_cast<uint8_t>(i);
+    }
+    memset(upper, 0xc5, 256);
+    const uint64_t upper_size = *(reinterpret_cast<uint64_t *>(upper) - 1);
+    pb->Free(lower);
+
+    auto *grown = static_cast<uint8_t *>(
+        PayloadBuffer::Realloc(&pb, block, 512, true, false));
+    ASSERT_EQ(grown, lower) << below;
+    for (uint32_t i = 0; i < 256; ++i) {
+      ASSERT_EQ(grown[i], i) << below;
+    }
+    for (uint32_t i = 256; i < 512; ++i) {
+      ASSERT_EQ(grown[i], 0) << below;
+    }
+    EXPECT_EQ(*(reinterpret_cast<uint64_t *>(upper) - 1), upper_size) << below;
+    for (uint32_t i = 0; i < 256; ++i) {
+      ASSERT_EQ(upper[i], 0xc5) << below;
+    }
+    for (const auto *free_block = pb->FreeList(); free_block != nullptr;
+         free_block =
+             pb->ToAddress<::phaser::FreeBlockHeader>(free_block->next)) {
+      EXPECT_GE(free_block->length, sizeof(::phaser::FreeBlockHeader)) << below;
+    }
+    free(buffer);
+  }
+}
+
 TEST(BufferTest, SmallBlockAllocSimple) {
   char *buffer = (char *)calloc(1, 4096);
   PayloadBuffer *pb = new (buffer) PayloadBuffer(4096);

@@ -573,14 +573,8 @@ uint64_t *PayloadBuffer::MergeWithFreeBlockBelow(
   } else {
     next_ptr = &prev->next;
   }
-  // Move FreeBlockHeader to end of allocated block.  This is inside
-  // the combined free block and block being reallocated.
-  FreeBlockHeader *next = ToAddress<FreeBlockHeader>(free_block->next);
-  FreeBlockHeader *newb = reinterpret_cast<FreeBlockHeader *>(
-      free_addr + new_length + sizeof(uint64_t));
-  newb->length = free_block->length + orig_length - new_length;
-  newb->next = ToOffset(next);
-  *next_ptr = ToOffset(newb);
+  const BufferOffset next = free_block->next;
+  const uint32_t remaining = free_block->length + orig_length - new_length;
 
   uint64_t *len_ptr = reinterpret_cast<uint64_t *>(free_block);
   *len_ptr = new_length;
@@ -588,6 +582,18 @@ uint64_t *PayloadBuffer::MergeWithFreeBlockBelow(
   if (clear) {
     memset(reinterpret_cast<char *>(len_ptr) + sizeof(uint64_t) + orig_length, 0,
            new_length - orig_length);
+  }
+  // What is left of the combined blocks follows the moved block, and can
+  // start inside the block's old place, so it is made after the move.  With
+  // nothing left, the next block starts there.
+  if (remaining >= sizeof(FreeBlockHeader)) {
+    FreeBlockHeader *newb = reinterpret_cast<FreeBlockHeader *>(
+        free_addr + new_length + sizeof(uint64_t));
+    newb->length = remaining;
+    newb->next = next;
+    *next_ptr = ToOffset(newb);
+  } else {
+    *next_ptr = next;
   }
   return len_ptr + 1;
 }
