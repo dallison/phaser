@@ -1130,6 +1130,10 @@ provided by the regular protobuf messages.  Protobuf provides others (like
 ## Cloning and copying
 Like protobuf, Phaser provides a `CopyFrom` method to copy messages.
 
+Copying or assigning a message of the protobuf frontend copies the handle, not
+the contents: afterwards both refer to the same message.  Use `CopyFrom` to copy
+the contents into another message.
+
 ## The Phaser Bank
 A significant feature that is missing from protobuf implementations (that I
 am aware of anyway) is the ability to do things with messages given only their

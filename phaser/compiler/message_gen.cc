@@ -1771,12 +1771,22 @@ void MessageGenerator::GenerateProtobufCopyMove(std::ostream& os, bool decl) {
   const std::string name = MessageName(message_);
   if (decl) {
     os << "  " << name << "(const " << name << "& other) = default;\n";
-    os << "  " << name << "& operator=(const " << name
-       << "& other) = default;\n";
+    os << "  " << name << "& operator=(const " << name << "& other);\n";
     os << "  " << name << "(" << name << "&& other) noexcept = default;\n";
     os << "  " << name << "& operator=(" << name << "&& other) noexcept;\n\n";
     return;
   }
+
+  // Assigning each field would copy its value into the message the handle now
+  // refers to, so the message is copied as a whole, as by the constructor.
+  os << name << "& " << name << "::operator=(const " << name << "& other) {\n";
+  os << "  if (this != &other) {\n";
+  os << "    " << name << " copy(other);\n";
+  os << "    this->~" << name << "();\n";
+  os << "    new (this) " << name << "(std::move(copy));\n";
+  os << "  }\n";
+  os << "  return *this;\n";
+  os << "}\n\n";
 
   os << name << "& " << name << "::operator=(" << name
      << "&& other) noexcept {\n";

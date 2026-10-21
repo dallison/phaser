@@ -340,13 +340,39 @@ TEST(PhaserTest, CopiesOfDynamicMessageShareIt) {
 
   // Assigning releases the runtime the handle owned.
   foo::bar::phaser::TestMessage other;
-  static_cast<::phaser::Message&>(other) = moved;
+  other = moved;
   EXPECT_EQ(moved.runtime, other.runtime);
   EXPECT_EQ(2u, owners.load());
   EXPECT_EQ(2, other.y());
   other = foo::bar::phaser::TestMessage();
   EXPECT_NE(moved.runtime, other.runtime);
   EXPECT_EQ(1u, owners.load());
+}
+
+// Assigning a protobuf-frontend message makes it refer to the other message,
+// as copying one does.
+TEST(PhaserTest, AssignedMessageRefersToTheOther) {
+  foo::bar::phaser::TestMessage msg;
+  msg.set_x(1);
+  msg.mutable_u3b()->set_str("member");
+  msg.mutable_m()->set_str("nested");
+
+  foo::bar::phaser::TestMessage other;
+  other.set_x(2);
+  other.mutable_u3b()->set_str("other");
+  other = msg;
+  EXPECT_EQ(msg.runtime, other.runtime);
+  EXPECT_EQ(1, other.x());
+  EXPECT_EQ("member", other.u3b().str());
+  EXPECT_EQ("nested", other.m().str());
+  other.mutable_u3b()->set_str("changed");
+  EXPECT_EQ("changed", msg.u3b().str());
+
+  foo::bar::phaser::TestMessage empty;
+  other = empty;
+  EXPECT_EQ(empty.runtime, other.runtime);
+  EXPECT_FALSE(other.has_u3b());
+  EXPECT_EQ("changed", msg.u3b().str());
 }
 
 TEST(PhaserTest, RepeatedMessagesResizeAndReserve) {

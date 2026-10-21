@@ -557,7 +557,7 @@ TEST(OutputAllocationTest, AssignedHandlesTakeTheSourceMutability) {
   auto readonly = foo::bar::phaser::TestMessage::CreateReadonly(
       payload.data(), payload.size());
 
-  // Copy assignment rebinds the handle, then copies the fields through it.
+  // Copy assignment rebinds the handle.
   auto handle = readonly.vm(0);
   EXPECT_THROW(handle.set_f(8), std::logic_error);
   const auto source = mutable_message.mutable_vm(0);
@@ -568,7 +568,10 @@ TEST(OutputAllocationTest, AssignedHandlesTakeTheSourceMutability) {
 
   auto writable = mutable_message.mutable_vm(0);
   const auto readonly_source = readonly.vm(0);
-  EXPECT_THROW(writable = readonly_source, std::logic_error);
+  writable = readonly_source;
+  EXPECT_THROW(writable.set_f(10), std::logic_error);
+  EXPECT_EQ(writable.f(), 7);
+  EXPECT_EQ(mutable_message.vm(0).f(), 9);
 }
 
 TEST(ReceiveAllocationTest, NonConstAccessReachesPresentNestedMessages) {
