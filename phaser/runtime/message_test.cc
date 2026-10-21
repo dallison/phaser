@@ -60,8 +60,7 @@ struct InnerMessage : public Message {
         uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0,
             absl::MakeConstSpan(kUvFieldNumbers)) {}
 
-  InnerMessage(std::shared_ptr<phaser::MessageRuntime> rt,
-               ::phaser::BufferOffset offset)
+  InnerMessage(phaser::RuntimeHandle rt, ::phaser::BufferOffset offset)
       : Message(rt, offset),
         str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
@@ -155,8 +154,8 @@ struct InnerMessage : public Message {
         new (addr)::phaser::PayloadBuffer(static_cast<uint32_t>(size));
     ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    InnerMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
-    auto msg = InnerMessage(runtime, pb->message);
+    phaser::MutableMessageRuntime runtime(pb);
+    auto msg = InnerMessage(&runtime, pb->message);
     msg.InstallMetadata<InnerMessage>();
     return msg;
   }
@@ -410,16 +409,15 @@ static size_t InnerMessageSerializedSize(const Message& msg) {
   return m->SerializedSize();
 }
 
-static Message* InnerMessageAllocateAtOffset(
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
-    ::phaser::BufferOffset offset) {
+static Message* InnerMessageAllocateAtOffset(::phaser::RuntimeHandle runtime,
+                                             ::phaser::BufferOffset offset) {
   auto msg = new InnerMessage(runtime, offset);
   msg->InstallMetadata<InnerMessage>();
   return msg;
 }
 
 static std::pair<Message*, ::phaser::BufferOffset> InnerMessageAllocate(
-    std::shared_ptr<::phaser::MessageRuntime> runtime) {
+    ::phaser::RuntimeHandle runtime) {
   void* addr = ::phaser::PayloadBuffer::Allocate(&runtime->pb,
                                                  InnerMessage::BinarySize());
   ::phaser::BufferOffset offset = runtime->pb->ToOffset(addr);
@@ -439,8 +437,8 @@ static absl::Status InnerMessageCopy(const Message& src, Message& dst) {
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message* InnerMessageMakeExisting(
-    std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data) {
+static const Message* InnerMessageMakeExisting(::phaser::RuntimeHandle runtime,
+                                               const void* data) {
   return new InnerMessage(runtime, runtime->pb->ToOffset(data));
 }
 
@@ -547,8 +545,7 @@ struct TestMessage : public Message {
     InitDynamicMutable(initial_size);
   }
 
-  TestMessage(std::shared_ptr<phaser::MessageRuntime> rt,
-              ::phaser::BufferOffset offset)
+  TestMessage(phaser::RuntimeHandle rt, ::phaser::BufferOffset offset)
       : Message(rt, offset),
         x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
         y_(offsetof(TestMessage, y_), HeaderSize() + 8, 1, 101),
@@ -569,8 +566,8 @@ struct TestMessage : public Message {
         new (addr)::phaser::PayloadBuffer(static_cast<uint32_t>(size));
     ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
-    auto msg = TestMessage(runtime, pb->message);
+    phaser::MutableMessageRuntime runtime(pb);
+    auto msg = TestMessage(&runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
     return msg;
   }
@@ -578,17 +575,17 @@ struct TestMessage : public Message {
   static TestMessage CreateReadonly(void* addr) {
     ::phaser::PayloadBuffer* pb =
         reinterpret_cast<::phaser::PayloadBuffer*>(addr);
-    auto runtime = std::make_shared<phaser::MessageRuntime>(pb);
-    return TestMessage(runtime, pb->message);
+    phaser::MessageRuntime runtime(pb);
+    return TestMessage(&runtime, pb->message);
   }
 
   static TestMessage CreateDynamicMutable(size_t initial_size = 1024) {
     ::phaser::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
     ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime =
-        std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
-    auto msg = TestMessage(runtime, pb->message);
+    TestMessage msg(nullptr, 0);
+    msg.BindNewMutable(new phaser::DynamicMutableMessageRuntime(pb, ::free),
+                       pb->message);
     msg.InstallMetadata<TestMessage>();
     return msg;
   }
@@ -597,9 +594,8 @@ struct TestMessage : public Message {
     ::phaser::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
     ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto rt =
-        std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
-    BindNewMutable(rt, pb->message);
+    BindNewMutable(new phaser::DynamicMutableMessageRuntime(pb, ::free),
+                   pb->message);
     this->InstallMetadata<TestMessage>();
   }
 
@@ -1212,16 +1208,15 @@ static size_t TestMessageSerializedSize(const Message& msg) {
   return m->SerializedSize();
 }
 
-static Message* TestMessageAllocateAtOffset(
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
-    ::phaser::BufferOffset offset) {
+static Message* TestMessageAllocateAtOffset(::phaser::RuntimeHandle runtime,
+                                            ::phaser::BufferOffset offset) {
   auto msg = new TestMessage(runtime, offset);
   msg->InstallMetadata<TestMessage>();
   return msg;
 }
 
 static std::pair<Message*, ::phaser::BufferOffset> TestMessageAllocate(
-    std::shared_ptr<::phaser::MessageRuntime> runtime) {
+    ::phaser::RuntimeHandle runtime) {
   void* addr = ::phaser::PayloadBuffer::Allocate(&runtime->pb,
                                                  TestMessage::BinarySize());
   ::phaser::BufferOffset offset = runtime->pb->ToOffset(addr);
@@ -1241,8 +1236,8 @@ static absl::Status TestMessageCopy(const Message& src, Message& dst) {
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message* TestMessageMakeExisting(
-    std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data) {
+static const Message* TestMessageMakeExisting(::phaser::RuntimeHandle runtime,
+                                              const void* data) {
   return new TestMessage(runtime, runtime->pb->ToOffset(data));
 }
 

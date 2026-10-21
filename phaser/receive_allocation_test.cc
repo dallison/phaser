@@ -531,7 +531,7 @@ TEST(OutputAllocationTest, AddedElementsBorrowTheMessageRuntime) {
   std::vector<foo::bar::phaser::InnerMessage> copies;
   for (int i = 0; i < 20; i++) {
     auto inner = message.add_vm();
-    EXPECT_EQ(inner.runtime.get(), message.runtime.get());
+    EXPECT_EQ(inner.runtime, message.runtime);
     inner.set_f(i);
     inner.set_str("element");
     copies.push_back(inner);

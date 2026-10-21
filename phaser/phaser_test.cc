@@ -7,17 +7,18 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <sstream>
 #include <type_traits>
 #include <vector>
 
 #include "absl/strings/str_format.h"
+#include "phaser/runtime/payload_buffer.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "phaser/testdata/TestMessage.phaser.h"
 #include "test_helpers.h"
 #include "toolbelt/hexdump.h"
-#include "phaser/runtime/payload_buffer.h"
 
 TEST(PhaserTest, ProtobufCompat) {
   foo::bar::phaser::TestMessage msg;
@@ -274,14 +275,18 @@ TEST(PhaserTest, NewFieldsInFinalizedBuffer) {
 TEST(PhaserTest, PartHandlesBorrowTheMessage) {
   foo::bar::phaser::TestMessage msg;
   EXPECT_TRUE(msg.FieldLocationsKnown());
-  const long owners = msg.runtime.use_count();
+  const auto& owners =
+      static_cast<::phaser::DynamicMutableMessageRuntime*>(msg.runtime)
+          ->owners_;
+  EXPECT_TRUE(msg.OwnsRuntime());
+  EXPECT_EQ(1u, owners.load());
   foo::bar::phaser::InnerMessage element = msg.add_vm();
   foo::bar::phaser::InnerMessage* nested = msg.mutable_m();
   foo::bar::phaser::InnerMessage* member = msg.mutable_u3b();
   foo::bar::phaser::InnerMessage copy = element;
-  EXPECT_EQ(owners, msg.runtime.use_count());
-  EXPECT_EQ(0, element.runtime.use_count());
-  EXPECT_EQ(0, copy.runtime.use_count());
+  EXPECT_EQ(1u, owners.load());
+  EXPECT_FALSE(element.OwnsRuntime());
+  EXPECT_FALSE(copy.OwnsRuntime());
 
   // The handles see the payload buffer after it grows.
   ASSERT_NE(nullptr, msg.allocate_buffer(1 << 20).data());
@@ -309,6 +314,39 @@ TEST(PhaserTest, PartHandlesBorrowTheMessage) {
   EXPECT_FALSE(evolved.FieldLocationsKnown());
   EXPECT_TRUE(evolved.m().FieldLocationsKnown());
   EXPECT_EQ("nested", evolved.m().str());
+}
+
+TEST(PhaserTest, CopiesOfDynamicMessageShareIt) {
+  auto msg = std::make_unique<foo::bar::phaser::TestMessage>();
+  msg->set_x(1);
+  const auto& owners =
+      static_cast<::phaser::DynamicMutableMessageRuntime*>(msg->runtime)
+          ->owners_;
+  foo::bar::phaser::TestMessage copy = *msg;
+  EXPECT_TRUE(copy.OwnsRuntime());
+  EXPECT_EQ(msg->runtime, copy.runtime);
+  EXPECT_EQ(2u, owners.load());
+
+  foo::bar::phaser::TestMessage moved = std::move(copy);
+  EXPECT_FALSE(copy.OwnsRuntime());
+  EXPECT_EQ(nullptr, copy.runtime);
+  EXPECT_EQ(2u, owners.load());
+
+  msg.reset();
+  EXPECT_EQ(1u, owners.load());
+  EXPECT_EQ(1, moved.x());
+  ASSERT_NE(nullptr, moved.allocate_buffer(1 << 20).data());
+  moved.set_y(2);
+
+  // Assigning releases the runtime the handle owned.
+  foo::bar::phaser::TestMessage other;
+  static_cast<::phaser::Message&>(other) = moved;
+  EXPECT_EQ(moved.runtime, other.runtime);
+  EXPECT_EQ(2u, owners.load());
+  EXPECT_EQ(2, other.y());
+  other = foo::bar::phaser::TestMessage();
+  EXPECT_NE(moved.runtime, other.runtime);
+  EXPECT_EQ(1u, owners.load());
 }
 
 TEST(PhaserTest, RepeatedMessagesResizeAndReserve) {

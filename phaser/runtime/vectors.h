@@ -1243,8 +1243,7 @@ class MessageVectorOps {
   // the runtime, not the handle, so that the handle need not be in memory.
   ABSL_ATTRIBUTE_NOINLINE static ::phaser::BufferOffset AddElementSlow(
       MessageRuntime* runtime, ::phaser::BufferOffset header) {
-    const RuntimeHandle borrowed(RuntimeHandle(), runtime);
-    return AddElementAt(borrowed, header);
+    return AddElementAt(runtime, header);
   }
 
   // Makes room for element 'index', which Add() is about to append to the
@@ -1513,7 +1512,7 @@ class MessageVectorField : public FieldBase<Loc> {
       Field::ThrowReadonlyMessage();
     }
     // A mutable message has its compiled layout.
-    MessageRuntime* runtime = message->runtime.get();
+    MessageRuntime* runtime = message->runtime;
     ::phaser::PayloadBuffer* pb = runtime->pb;
     const ::phaser::BufferOffset header =
         message->absolute_binary_offset + Offset();

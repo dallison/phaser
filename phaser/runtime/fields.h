@@ -14,10 +14,10 @@
 #include <initializer_list>
 #include <iterator>
 #include <new>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -28,8 +28,8 @@
 #include "absl/status/statusor.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
-#include "phaser/runtime/wireformat.h"
 #include "phaser/runtime/payload_buffer.h"
+#include "phaser/runtime/wireformat.h"
 
 namespace phaser {
 
@@ -1063,6 +1063,54 @@ class NonEmbeddedStringField
           // ::phaser::StringHeader
 };
 
+namespace internal {
+// The handle of a message field, made when first used.  Unlike
+// std::optional::emplace, Make() has no path that destroys a handle already
+// there, which keeps it small enough to inline.
+template <typename MessageType>
+class HandleSlot {
+ public:
+  HandleSlot() {}
+  HandleSlot(const HandleSlot& other) {
+    if (other.made_) {
+      new (&handle_) MessageType(other.handle_);
+      made_ = true;
+    }
+  }
+  HandleSlot(HandleSlot&& other) noexcept(
+      std::is_nothrow_move_constructible<MessageType>::value) {
+    if (other.made_) {
+      new (&handle_) MessageType(std::move(other.handle_));
+      made_ = true;
+    }
+  }
+  HandleSlot& operator=(const HandleSlot&) = delete;
+  ~HandleSlot() {
+    if (made_) {
+      handle_.~MessageType();
+    }
+  }
+
+  bool has_value() const { return made_; }
+
+  // Requires !has_value().
+  MessageType& Make() {
+    new (&handle_) MessageType(InternalDefault{});
+    made_ = true;
+    return handle_;
+  }
+
+  MessageType& operator*() { return handle_; }
+  MessageType* operator->() { return &handle_; }
+
+ private:
+  union {
+    MessageType handle_;
+  };
+  bool made_ = false;
+};
+}  // namespace internal
+
 // A singular message field.  It is a buffer offset containing the absolute
 // offset of a message in the payload buffer:
 //
@@ -1368,7 +1416,7 @@ class IndirectMessageField
   // made when first used.
   MessageType& Handle() const {
     if (!msg_.has_value()) {
-      msg_.emplace(InternalDefault{});
+      return msg_.Make();
     }
     return *msg_;
   }
@@ -1417,7 +1465,7 @@ class IndirectMessageField
         GetMessageBinaryStart() + abs_offset);
   }
 
-  mutable std::optional<MessageType> msg_;
+  mutable internal::HandleSlot<MessageType> msg_;
 };
 
 namespace internal {
@@ -1458,8 +1506,7 @@ template <typename MessageType>
 class MessageObject {
  public:
   MessageObject() : msg_(InternalDefault{}) {}
-  explicit MessageObject(std::shared_ptr<MessageRuntime> runtime,
-                         uint32_t absolute_binary_offset)
+  explicit MessageObject(RuntimeHandle runtime, uint32_t absolute_binary_offset)
       : msg_(runtime, absolute_binary_offset) {}
   MessageObject(const MessageObject& other)
       : msg_(other.msg_.runtime, other.msg_.absolute_binary_offset),

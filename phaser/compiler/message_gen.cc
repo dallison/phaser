@@ -1956,12 +1956,12 @@ void MessageGenerator::GenerateInternalDefaultConstructor(std::ostream& os,
 void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
   if (decl) {
     os << "  " << MessageName(message_)
-       << "(const std::shared_ptr<::phaser::MessageRuntime>& runtime, "
+       << "(const ::phaser::RuntimeHandle& runtime, "
           "::phaser::BufferOffset "
           "offset);\n";
     os << "  " << MessageName(message_)
        << "(::phaser::MutablePart, "
-          "const std::shared_ptr<::phaser::MessageRuntime>& runtime, "
+          "const ::phaser::RuntimeHandle& runtime, "
           "::phaser::BufferOffset offset);\n";
     return;
   }
@@ -1970,7 +1970,7 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
   GenerateInvalidOffsetofWarningPush(os);
   os << "inline " << MessageName(message_) << "::" << MessageName(message_)
      << "(";
-  os << "const std::shared_ptr<::phaser::MessageRuntime>& runtime_ptr, "
+  os << "const ::phaser::RuntimeHandle& runtime_ptr, "
         "::phaser::BufferOffset "
         "offset) : Message(runtime_ptr, offset, &field_data, "
         "sizeof(field_data))\n";
@@ -1979,7 +1979,7 @@ void MessageGenerator::GenerateMainConstructor(std::ostream& os, bool decl) {
   os << "{}\n\n";
   os << "inline " << MessageName(message_) << "::" << MessageName(message_)
      << "(::phaser::MutablePart, "
-        "const std::shared_ptr<::phaser::MessageRuntime>& runtime_ptr, "
+        "const ::phaser::RuntimeHandle& runtime_ptr, "
         "::phaser::BufferOffset offset) : "
         "Message(::phaser::MutablePart{}, runtime_ptr, offset)\n";
   GenerateFieldInitializers(os, ", ");
@@ -2102,14 +2102,15 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
-        "  auto runtime = "
-        "std::make_shared<::phaser::DynamicMutableMessageRuntime>(pb, "
-        "std::move(free));\n"
-     << InitializeMetadataCall("&runtime->pb")
-     << "  runtime->MarkNewBuffer();\n"
-        "  return "
+        "  "
      << MessageName(message_)
-     << "(runtime, runtime->pb->message);\n"
+     << " _phaser_message(::phaser::InternalDefault{});\n"
+        "  _phaser_message.BindNewMutable(new "
+        "::phaser::DynamicMutableMessageRuntime(pb, std::move(free)), "
+        "pb->message);\n"
+     << InitializeMetadataCall("&_phaser_message.runtime->pb")
+     << "  _phaser_message.runtime->MarkNewBuffer();\n"
+        "  return _phaser_message;\n"
         "}\n\n";
 
   os << MessageName(message_) << " " << MessageName(message_)
@@ -2142,8 +2143,8 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
      << MessageName(message_)
      << "::BinarySize());\n"
-        "  BindNewMutable(std::make_shared<"
-        "::phaser::DynamicMutableMessageRuntime>(pb, ::free), pb->message);\n"
+        "  BindNewMutable(new ::phaser::DynamicMutableMessageRuntime(pb, "
+        "::free), pb->message);\n"
      << InitializeMetadataCall("&runtime->pb")
      << "  runtime->MarkNewBuffer();\n"
         "}\n\n";
@@ -2412,13 +2413,13 @@ void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
 void MessageGenerator::GenerateReleaseAt(std::ostream& os, bool decl) {
   if (decl) {
     os << "  static void PhaserReleaseAt(const "
-          "std::shared_ptr<::phaser::MessageRuntime>& _phaser_runtime, "
+          "::phaser::RuntimeHandle& _phaser_runtime, "
           "::phaser::BufferOffset _phaser_offset);\n";
     return;
   }
   const std::string name = MessageName(message_);
   os << "void " << name
-     << "::PhaserReleaseAt(const std::shared_ptr<::phaser::MessageRuntime>& "
+     << "::PhaserReleaseAt(const ::phaser::RuntimeHandle& "
         "_phaser_runtime, ::phaser::BufferOffset _phaser_offset) {\n";
   if (!unions_.empty()) {
     os << "  " << name << "(::phaser::BorrowedRuntime(_phaser_runtime), "
@@ -5730,7 +5731,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "}\n\n";
 
   os << "static absl::Status " << MessageName(message_)
-     << "SerializeAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, "
+     << "SerializeAtOffset(::phaser::RuntimeHandle runtime, "
         "::phaser::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
   os << "  const " << MessageName(message_) << " message(runtime, offset);\n";
   os << "  return message.Serialize(buffer);\n";
@@ -5738,7 +5739,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
 
   os << "static absl::Status " << MessageName(message_)
      << "DeserializeAtOffset("
-        "std::shared_ptr<::phaser::MessageRuntime> runtime, "
+        "::phaser::RuntimeHandle runtime, "
         "::phaser::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
   os << "  " << MessageName(message_) << " message(runtime, offset);\n";
   os << "  message.InstallMetadata<" << MessageName(message_) << ">();\n";
@@ -5747,14 +5748,14 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
 
   os << "static size_t " << MessageName(message_)
      << "SerializedSizeAtOffset("
-        "std::shared_ptr<::phaser::MessageRuntime> runtime, "
+        "::phaser::RuntimeHandle runtime, "
         "::phaser::BufferOffset offset) {\n";
   os << "  const " << MessageName(message_) << " message(runtime, offset);\n";
   os << "  return message.SerializedSize();\n";
   os << "}\n\n";
 
   os << "static ::phaser::Message* " << MessageName(message_)
-     << "AllocateAtOffset(std::shared_ptr<::phaser::MessageRuntime> runtime, "
+     << "AllocateAtOffset(::phaser::RuntimeHandle runtime, "
         "::phaser::BufferOffset offset) {\n";
   os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
   os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
@@ -5763,7 +5764,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
 
   os << "static std::pair<::phaser::Message *, ::phaser::BufferOffset>\n";
   os << MessageName(message_)
-     << "Allocate(std::shared_ptr<::phaser::MessageRuntime> runtime) {\n";
+     << "Allocate(::phaser::RuntimeHandle runtime) {\n";
   os << "  void *addr = ::phaser::PayloadBuffer::Allocate(&runtime->pb, "
      << MessageName(message_) << "::BinarySize());\n";
   os << "  ::phaser::BufferOffset offset = runtime->pb->ToOffset(addr);\n";
@@ -5789,7 +5790,7 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
   os << "}\n\n";
 
   os << "static const ::phaser::Message *" << MessageName(message_)
-     << "MakeExisting(std::shared_ptr<::phaser::MessageRuntime> runtime, const "
+     << "MakeExisting(::phaser::RuntimeHandle runtime, const "
         "void *data) {\n";
   os << "  return new " << MessageName(message_)
      << "(runtime, runtime->ToOffset(data));\n";

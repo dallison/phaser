@@ -798,15 +798,19 @@ struct DynamicMutableMessageRuntime : public MutableMessageRuntime {
     }
   }
   std::function<void(void*)> free_;
+  // The handles that own the runtime; the last one deletes it.
+  std::atomic<uint32_t> owners_{0};
 };
 
-using RuntimeHandle = std::shared_ptr<MessageRuntime>;
+// Only the runtime of a dynamic message is owned, by the handles of the
+// message itself.  Any other handle borrows its runtime or holds a copy.
+using RuntimeHandle = MessageRuntime*;
 
 // A handle for part of a message, such as an element or a nested message,
 // borrows the message's runtime instead of sharing its ownership, so it is
 // valid only while a handle that owns the runtime exists.
 inline RuntimeHandle BorrowedRuntime(const RuntimeHandle& runtime) {
-  return RuntimeHandle(RuntimeHandle(), runtime.get());
+  return runtime;
 }
 
 namespace internal {
@@ -1159,8 +1163,6 @@ struct Message {
   Message() : readonly_runtime_(nullptr, size_t{0}, false) {}
   Message(const RuntimeHandle& rt, ::phaser::BufferOffset start)
       : Message(rt, start, CopiesRuntime(rt)) {}
-  Message(RuntimeHandle&& rt, ::phaser::BufferOffset start)
-      : Message(std::move(rt), start, CopiesRuntime(rt)) {}
   // For generated messages: 'field_data' is the message type's compiled field
   // metadata.  A readonly message whose metadata is identical has its fields
   // at their compiled locations.
@@ -1176,18 +1178,35 @@ struct Message {
   // might change it as far as the compiler knows.
   Message(MutablePart, const RuntimeHandle& rt, ::phaser::BufferOffset start)
       : readonly_runtime_(nullptr, size_t{0}, false),
-        runtime(BorrowedRuntime(rt)),
+        runtime(rt),
         absolute_binary_offset(start),
         field_locations_known_(true),
         mutable_(true) {}
-  Message(const Message& other) : Message(other.runtime,
-                                          other.absolute_binary_offset) {}
+  Message(const Message& other)
+      : Message(other.runtime, other.absolute_binary_offset) {
+    if (other.owns_runtime_) {
+      ShareRuntime();
+    }
+  }
   Message(Message&& other) noexcept
-      : Message(std::move(other.runtime), other.absolute_binary_offset) {}
+      : Message(other.runtime, other.absolute_binary_offset) {
+    if (other.owns_runtime_) {
+      owns_runtime_ = true;
+      other.owns_runtime_ = false;
+      other.runtime = nullptr;
+    }
+  }
   Message& operator=(const Message& other) {
     if (this != &other) {
-      absolute_binary_offset = other.absolute_binary_offset;
+      if (other.owns_runtime_) {
+        // Before releasing ours, which may be the same runtime.
+        static_cast<DynamicMutableMessageRuntime*>(other.runtime)
+            ->owners_.fetch_add(1, std::memory_order_relaxed);
+      }
+      ReleaseRuntime();
       BindRuntime(other.runtime);
+      owns_runtime_ = other.owns_runtime_;
+      absolute_binary_offset = other.absolute_binary_offset;
       field_locations_known_ = other.field_locations_known_;
       mutable_ = other.mutable_;
     }
@@ -1195,14 +1214,20 @@ struct Message {
   }
   Message& operator=(Message&& other) noexcept {
     if (this != &other) {
+      ReleaseRuntime();
+      BindRuntime(other.runtime);
+      owns_runtime_ = other.owns_runtime_;
+      if (other.owns_runtime_) {
+        other.owns_runtime_ = false;
+        other.runtime = nullptr;
+      }
       absolute_binary_offset = other.absolute_binary_offset;
-      BindRuntime(std::move(other.runtime));
       field_locations_known_ = other.field_locations_known_;
       mutable_ = other.mutable_;
     }
     return *this;
   }
-  virtual ~Message() = default;
+  virtual ~Message() { ReleaseRuntime(); }
 
   virtual const MessageInfo* GetMessageInfo() const { return nullptr; }
   virtual std::string GetName() const { return "Message"; }
@@ -1215,7 +1240,10 @@ struct Message {
   const Message* operator->() const { return this; }
   bool IsBound() const { return runtime != nullptr; }
 
-  RuntimeHandle runtime;
+  // Whether the handle keeps its runtime, that of a dynamic message, alive.
+  bool OwnsRuntime() const { return owns_runtime_; }
+
+  RuntimeHandle runtime = nullptr;
   ::phaser::BufferOffset absolute_binary_offset = 0;
 
   // True if each field is known to be at its compiled offset with its
@@ -1229,10 +1257,10 @@ struct Message {
 
   // For printing.  The fields of the message print at its indent.
   void Indent(int indent) const {
-    print_indent_ = static_cast<int16_t>(print_indent_ + indent);
+    print_indent_ = static_cast<int8_t>(print_indent_ + indent);
   }
   void SetIndent(int indent) const {
-    print_indent_ = static_cast<int16_t>(indent);
+    print_indent_ = static_cast<int8_t>(indent);
   }
   int GetIndent() const { return print_indent_; }
   void PrintIndent(std::ostream& os) const {
@@ -1245,7 +1273,8 @@ struct Message {
   // Fields are constructed after these, so they are set in the constructor.
   bool field_locations_known_ = false;
   bool mutable_ = false;
-  mutable int16_t print_indent_ = 0;
+  bool owns_runtime_ = false;
+  mutable int8_t print_indent_ = 0;
 
   // Comparing larger tables would cost more than the lookups it saves.
   static constexpr size_t kMaxComparedFieldDataSize = 256;
@@ -1494,25 +1523,27 @@ struct Message {
 
  protected:
   static RuntimeHandle BorrowRuntime(MessageRuntime& runtime) {
-    return RuntimeHandle(RuntimeHandle(), &runtime);
+    return &runtime;
   }
 
-  // Points this handle at the new message at 'start' in the mutable runtime
-  // 'rt', which it shares.
-  void BindNewMutable(RuntimeHandle rt, ::phaser::BufferOffset start) {
-    runtime = std::move(rt);
+  // Points this handle at the new message at 'start' in the new runtime 'rt',
+  // which it owns.
+  void BindNewMutable(DynamicMutableMessageRuntime* rt,
+                      ::phaser::BufferOffset start) {
+    rt->owners_.fetch_add(1, std::memory_order_relaxed);
+    ReleaseRuntime();
+    runtime = rt;
+    owns_runtime_ = true;
     absolute_binary_offset = start;
     field_locations_known_ = true;
     mutable_ = true;
   }
 
-  // A borrowed runtime has no owner.  One that may live in another handle is
-  // copied, since that handle may move or be destroyed first.  A dynamic
-  // runtime is used in place because its buffer can move; the message that
-  // owns it keeps it alive.
+  // A runtime that may live in another handle is copied, since that handle
+  // may move or be destroyed first.  A dynamic runtime is used in place
+  // because its buffer can move; the message that owns it keeps it alive.
   static bool CopiesRuntime(const RuntimeHandle& rt) {
-    return rt != nullptr && rt.use_count() == 0 &&
-           rt->Mode() != RuntimeHandleMode::kOwnedDynamic;
+    return rt != nullptr && rt->Mode() != RuntimeHandleMode::kOwnedDynamic;
   }
 
  public:
@@ -1521,7 +1552,8 @@ struct Message {
   // 'rt', which must outlive it.
   template <typename T>
   void BindBorrowed(const RuntimeHandle& rt, ::phaser::BufferOffset start) {
-    runtime = BorrowedRuntime(rt);
+    ReleaseRuntime();
+    runtime = rt;
     absolute_binary_offset = start;
     mutable_ = rt != nullptr && rt->IsMutable();
     field_locations_known_ = mutable_;
@@ -1536,7 +1568,8 @@ struct Message {
   // BindBorrowed() where 'rt' is mutable.
   void BindBorrowedMutable(const RuntimeHandle& rt,
                            ::phaser::BufferOffset start) {
-    runtime = BorrowedRuntime(rt);
+    ReleaseRuntime();
+    runtime = rt;
     absolute_binary_offset = start;
     mutable_ = true;
     field_locations_known_ = true;
@@ -1552,13 +1585,6 @@ struct Message {
         absolute_binary_offset(start),
         field_locations_known_(runtime != nullptr && runtime->IsMutable()),
         mutable_(runtime != nullptr && runtime->IsMutable()) {}
-  Message(RuntimeHandle&& rt, ::phaser::BufferOffset start, bool copy)
-      : readonly_runtime_(copy ? *rt
-                               : MessageRuntime(nullptr, size_t{0}, false)),
-        runtime(copy ? BorrowRuntime(readonly_runtime_) : std::move(rt)),
-        absolute_binary_offset(start),
-        field_locations_known_(runtime != nullptr && runtime->IsMutable()),
-        mutable_(runtime != nullptr && runtime->IsMutable()) {}
 
   void BindRuntime(const RuntimeHandle& other) {
     if (CopiesRuntime(other)) {
@@ -1568,12 +1594,25 @@ struct Message {
       runtime = other;
     }
   }
-  void BindRuntime(RuntimeHandle&& other) {
-    if (CopiesRuntime(other)) {
-      readonly_runtime_ = *other;
-      runtime = BorrowRuntime(readonly_runtime_);
-    } else {
-      runtime = std::move(other);
+
+  // Makes this handle, which points at an owned runtime, another owner.
+  void ShareRuntime() {
+    static_cast<DynamicMutableMessageRuntime*>(runtime)->owners_.fetch_add(
+        1, std::memory_order_relaxed);
+    owns_runtime_ = true;
+  }
+
+  void ReleaseRuntime() {
+    if (ABSL_PREDICT_FALSE(owns_runtime_)) {
+      owns_runtime_ = false;
+      ReleaseOwnedRuntime(runtime);
+    }
+  }
+
+  ABSL_ATTRIBUTE_NOINLINE static void ReleaseOwnedRuntime(MessageRuntime* rt) {
+    auto* owned = static_cast<DynamicMutableMessageRuntime*>(rt);
+    if (owned->owners_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+      delete owned;
     }
   }
 };

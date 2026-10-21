@@ -648,9 +648,9 @@ This base class contains the following:
 ```c++
 struct Message {
   Message() = default;
-  Message(std::shared_ptr<MessageRuntime> rt, ::phaser::BufferOffset start)
+  Message(MessageRuntime *rt, ::phaser::BufferOffset start)
       : runtime(rt), absolute_binary_offset(start) {}
-  virtual ~Message() = default;
+  virtual ~Message();
 
   virtual const MessageInfo *GetMessageInfo() const { return nullptr; }
   virtual std::string GetName() const { return "Message"; }
@@ -658,7 +658,7 @@ struct Message {
   virtual void Clear() {}
   virtual void CopyFrom(const Message &src) {}
 
-  std::shared_ptr<MessageRuntime> runtime;
+  MessageRuntime *runtime;
   ::phaser::BufferOffset absolute_binary_offset;
 };
 ```
@@ -675,10 +675,9 @@ the `PayloadBuffer` (see below).
 The member `runtime` is a pointer to the following struct:
 
 ```c++
-// Each message contains a std::shared_ptr to one of these, allocated from
-// the heap.  This is used when creating a message in the payload buffer
-// so that we know where the metadata for each message is stored.  The
-// metadata offset is held in the message header.
+// Each message points to one of these.  This is used when creating a message
+// in the payload buffer so that we know where the metadata for each message is
+// stored.  The metadata offset is held in the message header.
 struct MessageRuntime {
   MessageRuntime(::phaser::PayloadBuffer *p) : pb(p) {}
   MessageRuntime(::phaser::PayloadBuffer *p, size_t size)
@@ -715,10 +714,17 @@ This diagram shows the general layout of a message.
 
 
 The source message is located either on the stack frame or on the heap.  It refers to a MessageRuntime
-struct through a `std::shared_ptr` which contains a pointer to a `PayloadBuffer` (where the actual message
+struct through a pointer, and the runtime contains a pointer to a `PayloadBuffer` (where the actual message
 contents are stored).  If the message is **mutable** a `MutableMessageRuntime` is used instead and that also
 contains a map that contains information about the location of the message's `metadata` (where the fields
 are located).
+
+Only the runtime of a message made with `CreateDynamicMutable` is allocated from the heap.  The handles of
+that message own it: a copy of the handle shares it, a move passes it on, and the last handle to go
+deletes it and the buffer (`OwnsRuntime()` says whether a handle is one of them).  Any other handle
+borrows its runtime, or holds a copy of it when the runtime is not one that can grow the buffer, so a
+handle for part of a message, such as a nested message or a vector element, is valid only while the
+message's own handle is.
 
 The diagram shows fields that hold where they are, as the fields of a message written by hand do.
 In a generated message, a field's offset and presence id in the binary message and its field number
@@ -1158,18 +1164,18 @@ absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string &message_type,
 
 absl::StatusOr<Message *>
 PhaserBankAllocateAtOffset(const std::string &message_type,
-                           std::shared_ptr<::phaser::MessageRuntime> runtime,
+                           ::phaser::MessageRuntime *runtime,
                            ::phaser::BufferOffset offset);
 
 template <typename T>
 absl::StatusOr<std::pair<T *, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string &message_type,
-                   std::shared_ptr<::phaser::MessageRuntime> runtime);
+                   ::phaser::MessageRuntime *runtime);
 
 template <>
 absl::StatusOr<std::pair<Message *, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string &message_type,
-                   std::shared_ptr<::phaser::MessageRuntime> runtime);              
+                   ::phaser::MessageRuntime *runtime);              
 
 absl::Status PhaserBankClear(const std::string &message_type, Message &msg);
 
@@ -1178,7 +1184,7 @@ absl::Status PhaserBankCopy(const std::string &message_type, const Message &src,
 
 absl::StatusOr<const Message *>
 PhaserBankMakeExisting(const std::string &message_type,
-                       std::shared_ptr<::phaser::MessageRuntime> runtime,
+                       ::phaser::MessageRuntime *runtime,
                        const void *data);
 
 absl::StatusOr<size_t> PhaserBankBinarySize(const std::string &message_type);
@@ -1217,14 +1223,14 @@ struct BankInfo {
   absl::Status (*deserialize_from_buffer)(Message &msg, ProtoBuffer &buffer);
   size_t (*serialized_size)(const Message &msg);
   Message *(*allocate_at_offset)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime,
+      ::phaser::MessageRuntime *runtime,
       ::phaser::BufferOffset offset);
   std::pair<Message *, ::phaser::BufferOffset> (*allocate)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime);
+      ::phaser::MessageRuntime *runtime);
   void (*clear)(Message &msg);
   absl::Status (*copy)(const Message &src, Message &dst);
   const Message *(*make_existing)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime, const void *data);
+      ::phaser::MessageRuntime *runtime, const void *data);
   size_t (*binary_size)();
   const MessageInfo *(*message_info)();
   bool (*has_field)(const Message &msg, int number);

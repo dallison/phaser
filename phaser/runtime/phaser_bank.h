@@ -17,24 +17,22 @@ struct BankInfo {
   absl::Status (*serialize_to_buffer)(const Message& msg, ProtoBuffer& buffer);
   absl::Status (*deserialize_from_buffer)(Message& msg, ProtoBuffer& buffer);
   size_t (*serialized_size)(const Message& msg);
-  absl::Status (*serialize_at_offset)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime,
-      ::phaser::BufferOffset offset, ProtoBuffer& buffer);
-  absl::Status (*deserialize_at_offset)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime,
-      ::phaser::BufferOffset offset, ProtoBuffer& buffer);
-  size_t (*serialized_size_at_offset)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime,
-      ::phaser::BufferOffset offset);
-  Message* (*allocate_at_offset)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime,
-      ::phaser::BufferOffset offset);
+  absl::Status (*serialize_at_offset)(::phaser::RuntimeHandle runtime,
+                                      ::phaser::BufferOffset offset,
+                                      ProtoBuffer& buffer);
+  absl::Status (*deserialize_at_offset)(::phaser::RuntimeHandle runtime,
+                                        ::phaser::BufferOffset offset,
+                                        ProtoBuffer& buffer);
+  size_t (*serialized_size_at_offset)(::phaser::RuntimeHandle runtime,
+                                      ::phaser::BufferOffset offset);
+  Message* (*allocate_at_offset)(::phaser::RuntimeHandle runtime,
+                                 ::phaser::BufferOffset offset);
   std::pair<Message*, ::phaser::BufferOffset> (*allocate)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime);
+      ::phaser::RuntimeHandle runtime);
   void (*clear)(Message& msg);
   absl::Status (*copy)(const Message& src, Message& dst);
-  const Message* (*make_existing)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data);
+  const Message* (*make_existing)(::phaser::RuntimeHandle runtime,
+                                  const void* data);
   size_t (*binary_size)();
   const MessageInfo* (*message_info)();
   bool (*has_field)(const Message& msg, int number);
@@ -61,17 +59,16 @@ absl::Status PhaserBankDeserializeFromBuffer(const std::string& message_type,
                                              Message& msg, ProtoBuffer& buffer);
 absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string& message_type,
                                                 const Message& msg);
-absl::Status PhaserBankSerializeAtOffset(
-    std::string_view message_type,
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
-    ::phaser::BufferOffset offset, ProtoBuffer& buffer);
-absl::Status PhaserBankDeserializeAtOffset(
-    std::string_view message_type,
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
-    ::phaser::BufferOffset offset, ProtoBuffer& buffer);
+absl::Status PhaserBankSerializeAtOffset(std::string_view message_type,
+                                         ::phaser::RuntimeHandle runtime,
+                                         ::phaser::BufferOffset offset,
+                                         ProtoBuffer& buffer);
+absl::Status PhaserBankDeserializeAtOffset(std::string_view message_type,
+                                           ::phaser::RuntimeHandle runtime,
+                                           ::phaser::BufferOffset offset,
+                                           ProtoBuffer& buffer);
 absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
-    std::string_view message_type,
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    std::string_view message_type, ::phaser::RuntimeHandle runtime,
     ::phaser::BufferOffset offset);
 
 // This allocates a message from the heap (using new) with its storage in the
@@ -79,14 +76,12 @@ absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
 // caller, so you can make a std::unique_ptr<Message> from the result or
 // otherwise manage the memory.
 absl::StatusOr<Message*> PhaserBankAllocateAtOffset(
-    const std::string& message_type,
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
+    const std::string& message_type, ::phaser::RuntimeHandle runtime,
     ::phaser::BufferOffset offset);
 
 template <typename T>
 inline absl::StatusOr<std::pair<T*, ::phaser::BufferOffset>> PhaserBankAllocate(
-    const std::string& message_type,
-    std::shared_ptr<::phaser::MessageRuntime> runtime) {
+    const std::string& message_type, ::phaser::RuntimeHandle runtime) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
     return bank_info.status();
@@ -98,7 +93,7 @@ inline absl::StatusOr<std::pair<T*, ::phaser::BufferOffset>> PhaserBankAllocate(
 template <>
 inline absl::StatusOr<std::pair<Message*, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string& message_type,
-                   std::shared_ptr<::phaser::MessageRuntime> runtime) {
+                   ::phaser::RuntimeHandle runtime) {
   absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(message_type);
   if (!bank_info.ok()) {
     return bank_info.status();
@@ -112,8 +107,8 @@ absl::Status PhaserBankCopy(const std::string& message_type, const Message& src,
                             Message& dst);
 
 absl::StatusOr<const Message*> PhaserBankMakeExisting(
-    const std::string& message_type,
-    std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data);
+    const std::string& message_type, ::phaser::RuntimeHandle runtime,
+    const void* data);
 
 absl::StatusOr<size_t> PhaserBankBinarySize(std::string_view message_type);
 

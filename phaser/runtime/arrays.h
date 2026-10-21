@@ -28,8 +28,7 @@
 
 namespace phaser {
 
-inline bool HasMutablePayload(
-    const std::shared_ptr<MessageRuntime>& runtime) {
+inline bool HasMutablePayload(const RuntimeHandle& runtime) {
   return runtime != nullptr && runtime->IsMutable();
 }
 

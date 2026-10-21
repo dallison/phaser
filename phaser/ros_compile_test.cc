@@ -411,7 +411,7 @@ TEST(RosCompileTest, MessageCopyAssignUsesCloneFrom) {
   ASSERT_EQ(dst.xs.size(), 1u);
   EXPECT_EQ(dst.xs[0], 3);
 
-  EXPECT_NE(dst.runtime.get(), src.runtime.get());
+  EXPECT_NE(dst.runtime, src.runtime);
   src.x = 0;
   EXPECT_EQ(dst.x.Get(), 11);
 }
@@ -421,7 +421,7 @@ TEST(RosCompileTest, MessageMoveAssignTransfersStorage) {
   src.x = 21;
   src.name = "moved";
   src.xs.push_back(9);
-  const auto* source_runtime = src.runtime.get();
+  const auto* source_runtime = src.runtime;
 
   RosCompileMessage dst;
   dst = std::move(src);
@@ -430,7 +430,7 @@ TEST(RosCompileTest, MessageMoveAssignTransfersStorage) {
   EXPECT_EQ(dst.name.Get(), "moved");
   ASSERT_EQ(dst.xs.size(), 1u);
   EXPECT_EQ(dst.xs[0], 9);
-  EXPECT_EQ(dst.runtime.get(), source_runtime);
+  EXPECT_EQ(dst.runtime, source_runtime);
   EXPECT_FALSE(src.IsBound());
 }
 
@@ -455,7 +455,7 @@ TEST(RosCompileTest, MessageCopyCtorDeepCopies) {
   EXPECT_EQ(copy.x.Get(), 31);
   ASSERT_EQ(copy.names.size(), 1u);
   EXPECT_EQ(copy.names[0].Get(), "deep");
-  EXPECT_NE(copy.runtime.get(), src.runtime.get());
+  EXPECT_NE(copy.runtime, src.runtime);
 
   src.x = 0;
   EXPECT_EQ(copy.x.Get(), 31);

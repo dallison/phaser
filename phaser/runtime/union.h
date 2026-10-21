@@ -27,13 +27,11 @@ namespace phaser {
 
 class UnionMemberField {
  protected:
-  ::phaser::PayloadBuffer* GetBuffer(
-      const std::shared_ptr<MessageRuntime>& runtime) const {
+  ::phaser::PayloadBuffer* GetBuffer(const RuntimeHandle& runtime) const {
     return runtime->pb;
   }
 
-  ::phaser::PayloadBuffer** GetBufferAddr(
-      const std::shared_ptr<MessageRuntime>& runtime) const {
+  ::phaser::PayloadBuffer** GetBufferAddr(const RuntimeHandle& runtime) const {
     return &runtime->pb;
   }
 };
@@ -43,43 +41,35 @@ class UnionMemberField {
   class Union##cname##Field : public UnionMemberField {                        \
    public:                                                                     \
     Union##cname##Field() = default;                                           \
-    type Get(const std::shared_ptr<MessageRuntime>& runtime,                   \
-             uint32_t abs_offset) const {                                      \
+    type Get(const RuntimeHandle& runtime, uint32_t abs_offset) const {        \
       if (runtime == nullptr) {                                                \
         return type();                                                         \
       }                                                                        \
-      /* Use MessageRuntime::ToAddress so CreateReadonly's trusted size       \
-       * clamps hostile offsets; PayloadBuffer::Get trusts inflated           \
+      /* Use MessageRuntime::ToAddress so CreateReadonly's trusted size        \
+       * clamps hostile offsets; PayloadBuffer::Get trusts inflated            \
        * full_size and can SEGV on receive. */                                 \
-      const type* addr =                                                       \
-          runtime->template ToAddress<const type>(abs_offset);                 \
+      const type* addr = runtime->template ToAddress<const type>(abs_offset);  \
       if (addr == nullptr) {                                                   \
         return type();                                                         \
       }                                                                        \
       return *addr;                                                            \
     }                                                                          \
-    void Print(std::ostream& os, int /*indent*/,                               \
-               const std::shared_ptr<MessageRuntime>& runtime,                 \
+    void Print(std::ostream& os, int /*indent*/, const RuntimeHandle& runtime, \
                uint32_t abs_offset) const {                                    \
       os << Get(runtime, abs_offset);                                          \
     }                                                                          \
-    void Set(type v, const std::shared_ptr<MessageRuntime>& runtime,           \
-             uint32_t abs_offset) {                                            \
+    void Set(type v, const RuntimeHandle& runtime, uint32_t abs_offset) {      \
       GetBuffer(runtime)->Set(abs_offset, v);                                  \
     }                                                                          \
-    void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,         \
-                   uint32_t /*abs_offset*/,                                    \
+    void SetOffset(const RuntimeHandle& /*runtime*/, uint32_t /*abs_offset*/,  \
                    ::phaser::BufferOffset /*msg_offset*/) {}                   \
                                                                                \
-    bool Equal(const Union##cname##Field& other,                               \
-               const std::shared_ptr<MessageRuntime>& runtime,                 \
+    bool Equal(const Union##cname##Field& other, const RuntimeHandle& runtime, \
                uint32_t abs_offset) {                                          \
       return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);       \
     }                                                                          \
-    void Clear(const std::shared_ptr<MessageRuntime>& /*runtime*/,             \
-               uint32_t /*abs_offset*/) {}                                     \
-    size_t SerializedSize(int number,                                          \
-                          const std::shared_ptr<MessageRuntime>& runtime,      \
+    void Clear(const RuntimeHandle& /*runtime*/, uint32_t /*abs_offset*/) {}   \
+    size_t SerializedSize(int number, const RuntimeHandle& runtime,            \
                           uint32_t abs_offset) const {                         \
       if constexpr (FixedSize) {                                               \
         return ProtoBuffer::TagSize(number,                                    \
@@ -92,7 +82,7 @@ class UnionMemberField {
       }                                                                        \
     }                                                                          \
     absl::Status Serialize(int number, ProtoBuffer& buffer,                    \
-                           const std::shared_ptr<MessageRuntime>& runtime,     \
+                           const RuntimeHandle& runtime,                       \
                            uint32_t abs_offset) const {                        \
       if constexpr (FixedSize) {                                               \
         return buffer.SerializeFixed<type>(number, Get(runtime, abs_offset));  \
@@ -102,7 +92,7 @@ class UnionMemberField {
       }                                                                        \
     }                                                                          \
     absl::Status Deserialize(ProtoBuffer& buffer,                              \
-                             const std::shared_ptr<MessageRuntime>& runtime,   \
+                             const RuntimeHandle& runtime,                     \
                              uint32_t abs_offset) {                            \
       absl::StatusOr<type> v;                                                  \
       if constexpr (FixedSize) {                                               \
@@ -142,19 +132,16 @@ class UnionEnumField : public UnionMemberField {
   using T = typename std::underlying_type<Enum>::type;
   UnionEnumField() = default;
 
-  Enum Get(const std::shared_ptr<MessageRuntime>& runtime,
-           uint32_t abs_offset) const {
+  Enum Get(const RuntimeHandle& runtime, uint32_t abs_offset) const {
     return static_cast<Enum>(GetUnderlying(runtime, abs_offset));
   }
 
-  void Print(std::ostream& os, int /*indent*/,
-             const std::shared_ptr<MessageRuntime>& runtime,
+  void Print(std::ostream& os, int /*indent*/, const RuntimeHandle& runtime,
              uint32_t abs_offset) const {
     os << Stringizer()(Get(runtime, abs_offset));
   }
 
-  T GetUnderlying(const std::shared_ptr<MessageRuntime>& runtime,
-                  uint32_t abs_offset) const {
+  T GetUnderlying(const RuntimeHandle& runtime, uint32_t abs_offset) const {
     if (runtime == nullptr) {
       return T();
     }
@@ -165,31 +152,25 @@ class UnionEnumField : public UnionMemberField {
     return *addr;
   }
 
-  void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,
-                 uint32_t /*abs_offset*/,
+  void SetOffset(const RuntimeHandle& /*runtime*/, uint32_t /*abs_offset*/,
                  ::phaser::BufferOffset /*msg_offset*/) {}
 
-  void Set(Enum e, const std::shared_ptr<MessageRuntime>& runtime,
-           uint32_t abs_offset) {
+  void Set(Enum e, const RuntimeHandle& runtime, uint32_t abs_offset) {
     GetBuffer(runtime)->Set(
         abs_offset, static_cast<typename std::underlying_type<Enum>::type>(e));
   }
 
-  void Set(T e, const std::shared_ptr<MessageRuntime>& runtime,
-           uint32_t abs_offset) {
+  void Set(T e, const RuntimeHandle& runtime, uint32_t abs_offset) {
     GetBuffer(runtime)->Set(abs_offset, e);
   }
 
   bool Equal(const UnionEnumField<Enum, Stringizer, Parser>& other,
-             const std::shared_ptr<MessageRuntime>& runtime,
-             uint32_t abs_offset) {
+             const RuntimeHandle& runtime, uint32_t abs_offset) {
     return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);
   }
-  void Clear(const std::shared_ptr<MessageRuntime>& /*runtime*/,
-             uint32_t /*abs_offset*/) {}
+  void Clear(const RuntimeHandle& /*runtime*/, uint32_t /*abs_offset*/) {}
 
-  size_t SerializedSize(int number,
-                        const std::shared_ptr<MessageRuntime>& runtime,
+  size_t SerializedSize(int number, const RuntimeHandle& runtime,
                         uint32_t abs_offset) const {
     return ProtoBuffer::TagSize(number, WireType::kVarint) +
            ProtoBuffer::VarintSize<T, false>(
@@ -197,14 +178,13 @@ class UnionEnumField : public UnionMemberField {
   }
 
   absl::Status Serialize(int number, ProtoBuffer& buffer,
-                         const std::shared_ptr<MessageRuntime>& runtime,
+                         const RuntimeHandle& runtime,
                          uint32_t abs_offset) const {
     return buffer.SerializeVarint<T, false>(number,
                                             GetUnderlying(runtime, abs_offset));
   }
 
-  absl::Status Deserialize(ProtoBuffer& buffer,
-                           const std::shared_ptr<MessageRuntime>& runtime,
+  absl::Status Deserialize(ProtoBuffer& buffer, const RuntimeHandle& runtime,
                            uint32_t abs_offset) {
     absl::StatusOr<T> v = buffer.DeserializeVarint<T, false>();
     if (!v.ok()) {
@@ -221,7 +201,7 @@ class UnionStringField : public UnionMemberField {
  public:
   UnionStringField() = default;
 
-  std::string_view Get(const std::shared_ptr<MessageRuntime>& runtime,
+  std::string_view Get(const RuntimeHandle& runtime,
                        uint32_t abs_offset) const {
     if (runtime == nullptr) {
       return "";
@@ -229,58 +209,48 @@ class UnionStringField : public UnionMemberField {
     return runtime->GetStringView(abs_offset);
   }
 
-  void Print(std::ostream& os, int /*indent*/,
-             const std::shared_ptr<MessageRuntime>& runtime,
+  void Print(std::ostream& os, int /*indent*/, const RuntimeHandle& runtime,
              uint32_t abs_offset) const {
     os << "\"" << std::string(Get(runtime, abs_offset)) << "\"";
   }
 
-  bool IsPresent(const std::shared_ptr<MessageRuntime>& runtime,
-                 uint32_t abs_offset) const {
+  bool IsPresent(const RuntimeHandle& runtime, uint32_t abs_offset) const {
     const ::phaser::BufferOffset* addr =
         runtime->ToAddress<const ::phaser::BufferOffset>(abs_offset);
     return addr != nullptr && *addr != 0;
   }
 
-  void SetOffset(const std::shared_ptr<MessageRuntime>& /*runtime*/,
-                 uint32_t /*abs_offset*/,
+  void SetOffset(const RuntimeHandle& /*runtime*/, uint32_t /*abs_offset*/,
                  ::phaser::BufferOffset /*msg_offset*/) {}
 
   template <typename Str>
-  void Set(Str s, const std::shared_ptr<MessageRuntime>& runtime,
-           uint32_t abs_offset) {
+  void Set(Str s, const RuntimeHandle& runtime, uint32_t abs_offset) {
     ::phaser::PayloadBuffer::SetString(GetBufferAddr(runtime), s, abs_offset);
   }
 
-  absl::Span<char> Allocate(size_t size,
-                            const std::shared_ptr<MessageRuntime>& runtime,
+  absl::Span<char> Allocate(size_t size, const RuntimeHandle& runtime,
                             uint32_t abs_offset) {
     return ::phaser::PayloadBuffer::AllocateString(GetBufferAddr(runtime),
                                                      size, abs_offset);
   }
 
-  bool Equal(const UnionStringField& other,
-             const std::shared_ptr<MessageRuntime>& runtime,
+  bool Equal(const UnionStringField& other, const RuntimeHandle& runtime,
              uint32_t abs_offset) {
     return Get(runtime, abs_offset) == other.Get(runtime, abs_offset);
   }
 
-  size_t size(const std::shared_ptr<MessageRuntime>& runtime,
-              uint32_t abs_offset) const {
+  size_t size(const RuntimeHandle& runtime, uint32_t abs_offset) const {
     return runtime->StringSize(abs_offset);
   }
 
-  const char* data(const std::shared_ptr<MessageRuntime>& runtime,
-                   uint32_t abs_offset) const {
+  const char* data(const RuntimeHandle& runtime, uint32_t abs_offset) const {
     return runtime->StringData(abs_offset);
   }
-  void Clear(const std::shared_ptr<MessageRuntime>& runtime,
-             uint32_t abs_offset) {
+  void Clear(const RuntimeHandle& runtime, uint32_t abs_offset) {
     ::phaser::PayloadBuffer::ClearString(GetBufferAddr(runtime), abs_offset);
   }
 
-  size_t SerializedSize(int number,
-                        const std::shared_ptr<MessageRuntime>& runtime,
+  size_t SerializedSize(int number, const RuntimeHandle& runtime,
                         uint32_t abs_offset) const {
     size_t sz = size(runtime, abs_offset);
     return ProtoBuffer::TagSize(number, WireType::kLengthDelimited) +
@@ -289,14 +259,13 @@ class UnionStringField : public UnionMemberField {
   }
 
   absl::Status Serialize(int number, ProtoBuffer& buffer,
-                         const std::shared_ptr<MessageRuntime>& runtime,
+                         const RuntimeHandle& runtime,
                          uint32_t abs_offset) const {
     return buffer.SerializeLengthDelimited(number, data(runtime, abs_offset),
                                            size(runtime, abs_offset));
   }
 
-  absl::Status Deserialize(ProtoBuffer& buffer,
-                           const std::shared_ptr<MessageRuntime>& runtime,
+  absl::Status Deserialize(ProtoBuffer& buffer, const RuntimeHandle& runtime,
                            uint32_t abs_offset) {
     absl::StatusOr<std::string_view> v = buffer.DeserializeString();
     if (!v.ok()) {
@@ -315,7 +284,7 @@ class UnionMessageField : public UnionMemberField {
  public:
   UnionMessageField() : msg_(InternalDefault{}) {}
 
-  const MessageType& Get(const std::shared_ptr<MessageRuntime>& runtime,
+  const MessageType& Get(const RuntimeHandle& runtime,
                          uint32_t abs_offset) const {
     ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr == 0) {
@@ -326,8 +295,7 @@ class UnionMessageField : public UnionMemberField {
     return msg_;
   }
 
-  void Print(std::ostream& os, int indent,
-             const std::shared_ptr<MessageRuntime>& runtime,
+  void Print(std::ostream& os, int indent, const RuntimeHandle& runtime,
              uint32_t abs_offset) const {
     os << "{\n";
     auto msg = Get(runtime, abs_offset);
@@ -340,14 +308,12 @@ class UnionMessageField : public UnionMemberField {
     os << "}";
   }
 
-  bool IsPresent(const std::shared_ptr<MessageRuntime>& runtime,
-                 uint32_t abs_offset) const {
+  bool IsPresent(const RuntimeHandle& runtime, uint32_t abs_offset) const {
     ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     return addr != nullptr && *addr != 0;
   }
 
-  MessageType* Mutable(const std::shared_ptr<MessageRuntime>& runtime,
-                       uint32_t abs_offset) {
+  MessageType* Mutable(const RuntimeHandle& runtime, uint32_t abs_offset) {
     ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr || *addr != 0) {
       // Already allocated.
@@ -373,8 +339,8 @@ class UnionMessageField : public UnionMemberField {
     return &msg_;
   }
 
-  void SetOffset(const std::shared_ptr<MessageRuntime>& runtime,
-                 uint32_t abs_offset, ::phaser::BufferOffset msg_offset) {
+  void SetOffset(const RuntimeHandle& runtime, uint32_t abs_offset,
+                 ::phaser::BufferOffset msg_offset) {
     ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr) {
       return;
@@ -391,8 +357,7 @@ class UnionMessageField : public UnionMemberField {
     return msg_.DeserializeFromBuffer(buffer);
   }
 
-  void Set(const MessageType& msg,
-           const std::shared_ptr<MessageRuntime>& runtime,
+  void Set(const MessageType& msg, const RuntimeHandle& runtime,
            uint32_t abs_offset) {
     ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr) {
@@ -424,8 +389,7 @@ class UnionMessageField : public UnionMemberField {
     (void)msg_.CloneFrom(msg);
   }
 
-  void Clear(const std::shared_ptr<MessageRuntime>& runtime,
-             uint32_t abs_offset) {
+  void Clear(const RuntimeHandle& runtime, uint32_t abs_offset) {
     ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
     if (addr == nullptr) {
       return;
@@ -445,15 +409,14 @@ class UnionMessageField : public UnionMemberField {
 
   constexpr WireType GetWireType() { return WireType::kLengthDelimited; }
 
-  size_t SerializedSize(int number,
-                        const std::shared_ptr<MessageRuntime>& runtime,
+  size_t SerializedSize(int number, const RuntimeHandle& runtime,
                         uint32_t abs_offset) const {
     return ProtoBuffer::LengthDelimitedSize(
         number, Get(runtime, abs_offset).SerializedSize());
   }
 
   absl::Status Serialize(int number, ProtoBuffer& buffer,
-                         const std::shared_ptr<MessageRuntime>& runtime,
+                         const RuntimeHandle& runtime,
                          uint32_t abs_offset) const {
     if (absl::Status status = buffer.SerializeLengthDelimitedHeader(
             number, Get(runtime, abs_offset).SerializedSize());
@@ -463,8 +426,7 @@ class UnionMessageField : public UnionMemberField {
     return Get(runtime, abs_offset).Serialize(buffer);
   }
 
-  absl::Status Deserialize(ProtoBuffer& buffer,
-                           const std::shared_ptr<MessageRuntime>& runtime,
+  absl::Status Deserialize(ProtoBuffer& buffer, const RuntimeHandle& runtime,
                            uint32_t abs_offset) {
     absl::StatusOr<absl::Span<char>> s = buffer.DeserializeLengthDelimited();
     if (!s.ok()) {
@@ -494,14 +456,12 @@ class UnionMessageField : public UnionMemberField {
     return message;
   }
 
-  void Bind(const std::shared_ptr<MessageRuntime>& runtime,
-            ::phaser::BufferOffset offset) const {
+  void Bind(const RuntimeHandle& runtime, ::phaser::BufferOffset offset) const {
     msg_.template BindBorrowed<MessageType>(runtime, offset);
   }
 
-  ::phaser::BufferOffset* GetIndirectAddress(
-      const std::shared_ptr<MessageRuntime>& runtime,
-      uint32_t abs_offset) const {
+  ::phaser::BufferOffset* GetIndirectAddress(const RuntimeHandle& runtime,
+                                             uint32_t abs_offset) const {
     if (runtime == nullptr) {
       return nullptr;
     }

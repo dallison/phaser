@@ -41,8 +41,7 @@ class AnyMessage : public Message {
       : type_url_(offsetof(AnyMessage, type_url_), HeaderSize() + 0, 0, 1),
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
 
-  AnyMessage(std::shared_ptr<phaser::MessageRuntime> rt,
-             ::phaser::BufferOffset offset)
+  AnyMessage(::phaser::RuntimeHandle rt, ::phaser::BufferOffset offset)
       : Message(rt, offset),
         type_url_(offsetof(AnyMessage, type_url_), HeaderSize() + 0, 0, 1),
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
