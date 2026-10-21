@@ -22,11 +22,12 @@
 #include <type_traits>
 
 #include "absl/base/attributes.h"
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "toolbelt/hexdump.h"
 #include "phaser/runtime/payload_buffer.h"
+#include "toolbelt/hexdump.h"
 
 namespace phaser {
 
@@ -455,9 +456,8 @@ void InitializeMetadata(::phaser::PayloadBuffer** pb) {
   *(*pb)->AddressOf<::phaser::BufferOffset>((*pb)->message) = offset;
 }
 
-// Mutable messages share one of these through an owning shared_ptr. Read-only
-// messages copy this small runtime into the generated handle and use a
-// non-owning shared_ptr alias without allocating a control block.
+// A dynamic message's handles share its runtime.  Other handles copy this small
+// runtime into themselves.
 enum class RuntimeHandleMode : uint8_t {
   kBorrowedReadonly,
   kFixedMutable,
@@ -465,43 +465,64 @@ enum class RuntimeHandleMode : uint8_t {
 };
 
 struct MessageRuntime {
+  // A readonly runtime made without a size trusts the size in the buffer.
   MessageRuntime(::phaser::PayloadBuffer* p, bool is_mutable = false)
-      : pb(p),
-        is_mutable_(is_mutable),
-        mode_(is_mutable ? RuntimeHandleMode::kFixedMutable
-                         : RuntimeHandleMode::kBorrowedReadonly) {}
+      : MessageRuntime(
+            p, is_mutable || p == nullptr ? size_t{0} : size_t{p->full_size},
+            is_mutable) {}
+  // A readonly runtime trusts 'size' bytes of the buffer, clamped to what an
+  // offset can reach.  As offset 0 is never valid, 1 trusts none, so the bound
+  // is never 0.
   MessageRuntime(::phaser::PayloadBuffer* p, size_t size,
                  bool is_mutable = false)
       : pb(p),
-        buffer_size(size),
+        size_or_mark_(is_mutable ? 0
+                                 : static_cast<uint32_t>(std::clamp<size_t>(
+                                       size, 1, UINT32_MAX))),
         is_mutable_(is_mutable),
         mode_(is_mutable ? RuntimeHandleMode::kFixedMutable
                          : RuntimeHandleMode::kBorrowedReadonly) {}
   MessageRuntime(const MessageRuntime&) = default;
   MessageRuntime& operator=(const MessageRuntime&) = default;
-  // Not virtual: a derived runtime is owned by a shared_ptr made for its own
-  // type, which destroys it as that type.
+  // Not virtual: the only derived runtime that is owned is deleted as its own
+  // type.
   ~MessageRuntime() = default;
   ::phaser::PayloadBuffer* pb;
 
-  // This is the size of the buffer.  If it is zero, the size is inside
-  // the payload buffer.  If it's non-zero, it's the size of the received
-  // buffer.  We can't rely on the size inside the payload buffer if we
-  // are looking at received data (someone could set it to anything and we
-  // have no way to check it's valid).
-  size_t buffer_size = 0;
+  // A readonly runtime's BufferSize(), or a mutable one's ResetMark().
+  uint32_t size_or_mark_ = 0;
   bool is_mutable_ = false;
   RuntimeHandleMode mode_ = RuntimeHandleMode::kBorrowedReadonly;
+
+  // The number of bytes of a readonly buffer that are trusted, or 0 for a
+  // mutable buffer, whose size is the one inside the payload buffer.  We can't
+  // rely on the size inside the payload buffer if we are looking at received
+  // data (someone could set it to anything and we have no way to check it's
+  // valid).
+  size_t BufferSize() const { return is_mutable_ ? 0 : size_or_mark_; }
+
+  // BufferSize() of a readonly runtime.  Being known not to be 0, it is not
+  // replaced by the size inside the payload buffer.
+  size_t ReadonlyLimit() const {
+    const size_t limit = size_or_mark_;
+    ABSL_ASSUME(limit != 0);
+    return limit;
+  }
+
   // The start of the free memory of a new buffer holding only its main
   // message and its metadata, or 0.  Everything allocated past it belongs
-  // to the main message, so clearing that can free it all at once.  It fits
-  // in what would be padding, as readonly handles copy the runtime.
-  ::phaser::BufferOffset reset_mark_ = 0;
+  // to the main message, so clearing that can free it all at once.
+  ::phaser::BufferOffset ResetMark() const {
+    return is_mutable_ ? size_or_mark_ : 0;
+  }
 
   // Records that the buffer holds only a new main message and its metadata.
   void MarkNewBuffer() {
-    reset_mark_ = 0;
-    if (pb == nullptr || !is_mutable_) {
+    if (!is_mutable_) {
+      return;
+    }
+    size_or_mark_ = 0;
+    if (pb == nullptr) {
       return;
     }
     for (const ::phaser::BufferOffset head : pb->bitmaps) {
@@ -516,13 +537,13 @@ struct MessageRuntime {
         pb->hwm != free + sizeof(::phaser::FreeBlockHeader)) {
       return;
     }
-    reset_mark_ = free;
+    size_or_mark_ = free;
   }
 
   // Whether clearing the main message at 'message' may free everything
   // allocated since the buffer was new.  ResetFor() decides.
   bool MayResetFor(::phaser::BufferOffset message) const {
-    return reset_mark_ != 0 && message == pb->message;
+    return ResetMark() != 0 && message == pb->message;
   }
 
   // Frees everything allocated since the buffer was new and empties the
@@ -535,8 +556,9 @@ struct MessageRuntime {
     }
     // Nothing allocated since the last reset leaves nothing to free, as
     // nothing is allocated below the mark.
-    if ((pb->free_list != reset_mark_ ||
-         pb->hwm != reset_mark_ + sizeof(::phaser::FreeBlockHeader)) &&
+    const ::phaser::BufferOffset mark = ResetMark();
+    if ((pb->free_list != mark ||
+         pb->hwm != mark + sizeof(::phaser::FreeBlockHeader)) &&
         !FreeSinceMark()) {
       return false;
     }
@@ -548,32 +570,33 @@ struct MessageRuntime {
   // Frees everything allocated since the mark, if nothing that stays has
   // reached past it.  Returns whether it did.
   ABSL_ATTRIBUTE_NOINLINE bool FreeSinceMark() {
-    if (pb->free_list == 0 || pb->metadata >= reset_mark_ ||
-        pb->full_size - sizeof(::phaser::FreeBlockHeader) < reset_mark_) {
+    const ::phaser::BufferOffset mark = ResetMark();
+    if (pb->free_list == 0 || pb->metadata >= mark ||
+        pb->full_size - sizeof(::phaser::FreeBlockHeader) < mark) {
       return false;
     }
     RuntimeControlBlock* control = GetRuntimeControl();
     if (control != nullptr) {
       // Growing in place can take the control block past the mark.
-      if (pb->metadata + RuntimeControlSize(control->capacity) > reset_mark_ ||
-          control->user_metadata >= reset_mark_) {
+      if (pb->metadata + RuntimeControlSize(control->capacity) > mark ||
+          control->user_metadata >= mark) {
         return false;
       }
       // The metadata of types first used after the mark is freed with the
       // rest.
       uint32_t kept = 0;
       for (uint32_t i = 0; i < control->count; ++i) {
-        if (control->entries[i].field_data < reset_mark_) {
+        if (control->entries[i].field_data < mark) {
           control->entries[kept++] = control->entries[i];
         }
       }
       control->count = kept;
     }
-    auto* block = pb->AddressOf<::phaser::FreeBlockHeader>(reset_mark_);
-    block->length = pb->full_size - reset_mark_;
+    auto* block = pb->AddressOf<::phaser::FreeBlockHeader>(mark);
+    block->length = pb->full_size - mark;
     block->next = 0;
-    pb->free_list = reset_mark_;
-    pb->hwm = reset_mark_ + sizeof(::phaser::FreeBlockHeader);
+    pb->free_list = mark;
+    pb->hwm = mark + sizeof(::phaser::FreeBlockHeader);
     for (::phaser::BufferOffset& head : pb->bitmaps) {
       head = 0;
     }
@@ -654,7 +677,8 @@ struct MessageRuntime {
       }
       control = pb->UncheckedAddress<RuntimeControlBlock>(pb->metadata);
     } else {
-      control = pb->ToAddress<RuntimeControlBlock>(pb->metadata, buffer_size);
+      control =
+          pb->ToAddress<RuntimeControlBlock>(pb->metadata, ReadonlyLimit());
     }
     if (control == nullptr || control->magic != kRuntimeControlMagic ||
         control->version != kRuntimeControlVersion) {
@@ -670,7 +694,7 @@ struct MessageRuntime {
     if (is_mutable_) {
       return pb->UncheckedAddress<T>(offset);
     }
-    return pb->ToAddress<T>(offset, buffer_size);
+    return pb->ToAddress<T>(offset, ReadonlyLimit());
   }
 
   template <typename T = void>
@@ -678,15 +702,15 @@ struct MessageRuntime {
     if (is_mutable_) {
       return pb->UncheckedAddress<const T>(offset);
     }
-    return pb->ToAddress<T>(offset, buffer_size);
+    return pb->ToAddress<T>(offset, ReadonlyLimit());
   }
 
   // Number of bytes that are trusted to be available in the buffer.  On the
   // readonly receive path this is the size passed to CreateReadonly; otherwise
   // the buffer is one we own and full_size is authoritative.
   size_t TrustedSize() const {
-    if (buffer_size != 0) {
-      return buffer_size;
+    if (!is_mutable_) {
+      return ReadonlyLimit();
     }
     return pb != nullptr ? size_t(pb->full_size) : 0;
   }
@@ -697,21 +721,21 @@ struct MessageRuntime {
     if (pb == nullptr) {
       return {};
     }
-    return pb->GetStringView(header_offset, buffer_size);
+    return pb->GetStringView(header_offset, BufferSize());
   }
 
   size_t StringSize(::phaser::BufferOffset header_offset) const {
     if (pb == nullptr) {
       return 0;
     }
-    return pb->StringSize(header_offset, buffer_size);
+    return pb->StringSize(header_offset, BufferSize());
   }
 
   const char* StringData(::phaser::BufferOffset header_offset) const {
     if (pb == nullptr) {
       return nullptr;
     }
-    return pb->StringData(header_offset, buffer_size);
+    return pb->StringData(header_offset, BufferSize());
   }
 
   // Size-aware presence-bit read, a byte at a time as PayloadBuffer writes
@@ -764,7 +788,7 @@ struct MessageRuntime {
     if (is_mutable_) {
       return pb->UncheckedOffset(addr);
     }
-    return pb->ToOffset(addr, buffer_size);
+    return pb->ToOffset(addr, ReadonlyLimit());
   }
 
   template <typename T = void>
@@ -772,7 +796,7 @@ struct MessageRuntime {
     if (is_mutable_) {
       return pb->UncheckedOffset<T>(addr);
     }
-    return pb->ToOffset(addr, buffer_size);
+    return pb->ToOffset(addr, ReadonlyLimit());
   }
 };
 

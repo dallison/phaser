@@ -679,25 +679,26 @@ The member `runtime` is a pointer to the following struct:
 // in the payload buffer so that we know where the metadata for each message is
 // stored.  The metadata offset is held in the message header.
 struct MessageRuntime {
-  MessageRuntime(::phaser::PayloadBuffer *p) : pb(p) {}
-  MessageRuntime(::phaser::PayloadBuffer *p, size_t size)
-      : pb(p), buffer_size(size) {}
-  virtual ~MessageRuntime() = default;
+  MessageRuntime(::phaser::PayloadBuffer *p, bool is_mutable = false);
+  MessageRuntime(::phaser::PayloadBuffer *p, size_t size,
+                 bool is_mutable = false);
   ::phaser::PayloadBuffer *pb;
 
-  // This is the size of the buffer.  If it is zero, the size is inside
-  // the payload buffer.  If it's non-zero, it's the size of the received
-  // buffer.  We can't rely on the size inside the payload buffer if we
-  // are looking at received data (someone could set it to anything and we
-  // have no way to check it's valid).
-  size_t buffer_size = 0;
+  // The number of bytes of a readonly buffer that are trusted, or 0 for a
+  // mutable buffer, whose size is the one inside the payload buffer.  We can't
+  // rely on the size inside the payload buffer if we are looking at received
+  // data (someone could set it to anything and we have no way to check it's
+  // valid).
+  size_t BufferSize() const;
+  bool IsMutable() const;
 };
 
 ```
 The members of this are:
 
 1. `pb`: a pointer to a `PayloadBuffer` object that holds the actual binary for the message data
-2. `buffer_size`: the size of the buffer if it was received
+2. `BufferSize()`: the size of the buffer if it was received.  A received buffer made without a
+   size trusts the size inside it.
 
 The `PayloadBuffer` (`phaser/runtime/payload_buffer.h`) is Phaser's own fork of the one
 in my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt), so that Phaser can

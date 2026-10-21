@@ -1271,6 +1271,40 @@ static struct TestMessageBankRegister {
   }
 } TestMessage_bank_register;
 
+// A readonly runtime's buffer size shares a word with a mutable one's reset
+// mark.
+TEST(MessageTest, ReadonlyRuntimeSizeIsNotAResetMark) {
+  if constexpr (sizeof(void*) == 8) {
+    EXPECT_EQ(16u, sizeof(phaser::MessageRuntime));
+    EXPECT_EQ(40u, sizeof(phaser::Message));
+  }
+  char* buffer = static_cast<char*>(calloc(4096, 1));
+  TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
+  EXPECT_EQ(0u, msg.runtime->BufferSize());
+
+  phaser::MessageRuntime readonly(msg.runtime->pb, size_t{4096});
+  readonly.MarkNewBuffer();
+  EXPECT_EQ(4096u, readonly.BufferSize());
+  EXPECT_EQ(4096u, readonly.TrustedSize());
+  EXPECT_EQ(0u, readonly.ResetMark());
+  EXPECT_FALSE(readonly.MayResetFor(msg.absolute_binary_offset));
+  EXPECT_FALSE(
+      readonly.ResetFor(msg.absolute_binary_offset, TestMessage::BinarySize()));
+
+  phaser::MessageRuntime huge(msg.runtime->pb, size_t{1} << 33);
+  EXPECT_EQ(UINT32_MAX, huge.BufferSize());
+
+  // Without a size the buffer's own is trusted; a size of 0 trusts nothing.
+  phaser::MessageRuntime unsized(msg.runtime->pb);
+  EXPECT_EQ(4096u, unsized.TrustedSize());
+  EXPECT_NE(nullptr, unsized.ToAddress<char>(msg.absolute_binary_offset));
+  phaser::MessageRuntime empty(msg.runtime->pb, size_t{0});
+  EXPECT_EQ(nullptr, empty.ToAddress<char>(msg.absolute_binary_offset));
+  EXPECT_EQ(0u, empty.ToOffset(
+                    msg.runtime->ToAddress<char>(msg.absolute_binary_offset)));
+  free(buffer);
+}
+
 TEST(MessageTest, Basic) {
   char* buffer = static_cast<char*>(calloc(4096, 1));
   TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
