@@ -1251,22 +1251,28 @@ struct Message {
   static constexpr size_t kMaxComparedFieldDataSize = 256;
 
   bool MetadataIs(const void* field_data, size_t field_data_size) const {
-    if (field_data_size > kMaxComparedFieldDataSize) {
+    const ::phaser::PayloadBuffer* pb = runtime->pb;
+    if (field_data_size > kMaxComparedFieldDataSize || pb == nullptr ||
+        absolute_binary_offset == 0) {
       return false;
     }
-    const ::phaser::BufferOffset* metadata_word =
-        runtime->ToAddress<::phaser::BufferOffset>(absolute_binary_offset);
-    if (metadata_word == nullptr) {
+    // The bounds hold the magic too, so they are checked first.
+    const size_t limit = runtime->TrustedSize();
+    if (!internal::MetadataRangeFits(absolute_binary_offset, 1,
+                                     sizeof(::phaser::BufferOffset), limit) ||
+        !pb->IsValidMagic()) {
       return false;
     }
-    const ::phaser::BufferOffset metadata_offset = *metadata_word;
-    if (!internal::MetadataRangeFits(metadata_offset, 1, field_data_size,
-                                     runtime->TrustedSize())) {
+    const char* base = reinterpret_cast<const char*>(pb);
+    ::phaser::BufferOffset metadata_offset;
+    memcpy(&metadata_offset, base + absolute_binary_offset,
+           sizeof(metadata_offset));
+    if (metadata_offset == 0 ||
+        !internal::MetadataRangeFits(metadata_offset, 1, field_data_size,
+                                     limit)) {
       return false;
     }
-    const void* metadata = runtime->ToAddress<void>(metadata_offset);
-    return metadata != nullptr &&
-           memcmp(metadata, field_data, field_data_size) == 0;
+    return memcmp(base + metadata_offset, field_data, field_data_size) == 0;
   }
 
  public:
