@@ -121,6 +121,17 @@ static bool ClearReleasesNothing(const google::protobuf::Descriptor* desc) {
   return true;
 }
 
+// Whether every field of 'desc' is a singular scalar outside a oneof, so a
+// PhaserWriter can set them all.
+static bool HasOnlyPlainScalars(const google::protobuf::Descriptor* desc) {
+  for (int i = 0; i < desc->field_count(); ++i) {
+    if (desc->field(i)->containing_oneof() != nullptr) {
+      return false;
+    }
+  }
+  return ClearReleasesNothing(desc);
+}
+
 static bool IsCppReservedWord(const std::string& s) {
   static absl::flat_hash_set<std::string> reserved_words = {
       "alignas",
@@ -1546,6 +1557,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateROSSerialization(os, true);
   GenerateROSDirectSerialization(os, true);
   GenerateROSDirectDeserialization(os, true);
+  GeneratePhaserWriter(os);
 
   // Generate serialized size.
   GenerateSerializedSize(os, true);
@@ -2538,6 +2550,12 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         os << "  " << field->c_type << " add_" << field_name << "() {\n";
         os << "    return " << member_name << ".Add();\n";
         os << "  }\n";
+        if (HasOnlyPlainScalars(field->field->message_type())) {
+          os << "  template <typename F>\n";
+          os << "  void add_" << field_name << "(size_t n, F&& f) {\n";
+          os << "    " << member_name << ".Add(n, std::forward<F>(f));\n";
+          os << "  }\n";
+        }
         os << "  const ::phaser::MessageVectorField<" << field->c_type << ">& "
            << sanitized_field_name << "() const {\n";
         os << "    return " << member_name << ";\n";
@@ -4686,6 +4704,35 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
   }
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
+}
+
+void MessageGenerator::GeneratePhaserWriter(std::ostream& os) {
+  if (!HasOnlyPlainScalars(message_)) {
+    return;
+  }
+  os << "  // Sets the fields of an element that MessageVectorField::Add(n, f) "
+        "is\n"
+        "  // adding, as their setters would.\n";
+  os << "  class PhaserWriter {\n";
+  os << "   public:\n";
+  os << "    explicit PhaserWriter(char* _phaser_binary) : "
+        "_phaser_binary_(_phaser_binary) {}\n";
+  for (const auto& field : fields_in_order_) {
+    std::string value = "_phaser_value";
+    if (field->field->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
+      value = "static_cast<std::underlying_type_t<" + field->c_type +
+              ">>(_phaser_value)";
+    }
+    os << "    void set_" << field->field->name() << "(" << field->c_type
+       << " _phaser_value) {\n";
+    os << "      ::phaser::internal::StoreScalarAt(_phaser_binary_, "
+       << FieldOffset(*field) << ", " << FieldId(*field) << ", " << value
+       << ");\n";
+    os << "    }\n";
+  }
+  os << "\n   private:\n";
+  os << "    char* _phaser_binary_;\n";
+  os << "  };\n";
 }
 
 void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {

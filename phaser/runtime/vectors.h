@@ -1062,6 +1062,14 @@ class EnumVectorField : public Field {
   ::phaser::BufferOffset relative_binary_offset_;
 };
 
+namespace internal {
+template <typename T, typename = void>
+struct HasPhaserWriter : std::false_type {};
+template <typename T>
+struct HasPhaserWriter<T, std::void_t<typename T::PhaserWriter>>
+    : std::true_type {};
+}  // namespace internal
+
 // The vector's data is a ::phaser::MessageVectorBlock holding the messages
 // inline, in chunks that never move as the vector grows.
 template <typename T>
@@ -1204,6 +1212,33 @@ class MessageVectorField : public Field {
       const ::phaser::BufferOffset element = AddElement();
       return T(BorrowedRuntime(GetRuntime()), element);
     }
+  }
+
+  // Appends 'n' elements, calling 'f(writer, i)' to set the fields of the
+  // i'th through 'writer', a T::PhaserWriter that is valid only during the
+  // call.  T has one when its fields are all singular scalars.  'f' must not
+  // change the message: 'writer' may write to a copy of the element, stored
+  // once 'f' returns, and the size includes the new elements only once all
+  // are added.
+  template <typename F>
+  void Add(size_t n, F&& f) {
+    static_assert(internal::HasPhaserWriter<T>::value,
+                  "Add(n, f) needs a message whose fields are all singular "
+                  "scalars");
+    const Message* message = Message::GetMessage(this, source_offset_);
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
+      ThrowReadonlyMessage();
+    }
+    if (n > UINT32_MAX) {
+      throw std::bad_alloc();
+    }
+    // A mutable message has its compiled layout.
+    AddElementsInPlaceAt(
+        message->runtime,
+        message->absolute_binary_offset + relative_binary_offset_,
+        static_cast<uint32_t>(n), [&f](char* binary, uint32_t index) {
+          f(typename T::PhaserWriter(binary), size_t{index});
+        });
   }
 
   // Add() without the handle: appends an empty element and returns its offset.

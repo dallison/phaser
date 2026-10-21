@@ -320,6 +320,36 @@ TEST(RosCompileTest, MessageVectorSyntax) {
   EXPECT_EQ(msg.inners[1]->id.Get(), 22);
 }
 
+TEST(RosCompileTest, MessageVectorAddThroughWriter) {
+  RosCompileMessage msg;
+  msg.inners.Add()->id = 1;
+  int calls = 0;
+  msg.inners.Add(0, [&calls](auto, size_t) { ++calls; });
+  EXPECT_EQ(calls, 0);
+  msg.inners.Add(20, [](RosInner::PhaserWriter inner, size_t i) {
+    inner.set_id(static_cast<int32_t>(10 + i));
+  });
+  // An element the writer sets nothing in has no fields present.
+  msg.inners.Add(1, [](auto, size_t) {});
+  msg.inners.Add()->id = 99;
+  ASSERT_EQ(msg.inners.size(), 23u);
+  EXPECT_EQ(msg.inners[0]->id.Get(), 1);
+  for (int i = 0; i < 20; ++i) {
+    EXPECT_TRUE(msg.inners[1 + i]->id.IsPresent());
+    EXPECT_EQ(msg.inners[1 + i]->id.Get(), 10 + i);
+  }
+  EXPECT_FALSE(msg.inners[21]->id.IsPresent());
+  EXPECT_EQ(msg.inners[22]->id.Get(), 99);
+
+  std::vector<char> buffer(msg.ByteSizeLong());
+  std::memcpy(buffer.data(), msg.Data(), buffer.size());
+  RosCompileMessage ro =
+      RosCompileMessage::CreateReadonly(buffer.data(), buffer.size());
+  EXPECT_THROW(ro.inners.Add(1, [](auto, size_t) {}), std::logic_error);
+  EXPECT_EQ(ro.inners.size(), 23u);
+  EXPECT_EQ(ro.inners[5]->id.Get(), 14);
+}
+
 TEST(RosCompileTest, ProxyAssignmentDoesNotRebind) {
   RosCompileMessage dst;
   RosCompileMessage src;

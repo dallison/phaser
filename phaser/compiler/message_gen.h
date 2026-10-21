@@ -211,6 +211,8 @@ class MessageGenerator {
   // whose fields are all scalars, enums or strings.
   bool CanDeserializeROSDirectly();
   void GenerateROSDirectDeserialization(std::ostream& os, bool decl);
+  // The PhaserWriter of a message whose fields are all singular scalars.
+  void GeneratePhaserWriter(std::ostream& os);
 
   void GenerateProtobufSerialization(std::ostream& os);
   void GenerateIndent(std::ostream& os);

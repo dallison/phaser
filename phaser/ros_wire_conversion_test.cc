@@ -1064,6 +1064,67 @@ TEST(ROSWireConversionTest, ParsedLeavesAppendAfterExistingChunks) {
   EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
 }
 
+// PopulateFixedLeaf() through the PhaserWriter of either frontend.
+template <typename Kind, typename Writer>
+void WriteFixedLeaf(Writer leaf, int i) {
+  leaf.set_id(-i);
+  leaf.set_flag(i % 2 == 1);
+  leaf.set_value(i * 1.5);
+  leaf.set_big(static_cast<uint64_t>(i) << 40);
+  leaf.set_small(static_cast<uint32_t>(i * 50 % 256));
+  leaf.set_level(-100 * i);
+  leaf.set_ratio(static_cast<float>(i) / 4);
+  leaf.set_kind(static_cast<Kind>(i % 3));
+  leaf.set_marker(Kind::DIRECT_KIND_UNSPECIFIED);
+  leaf.set_delta(-(int64_t{i} << 33));
+}
+
+TEST(ROSWireConversionTest, WrittenLeavesMatchTheirSetters) {
+  constexpr int kFirst = 3;
+  DirectElements expected;
+  ProtobufDirectElements protobuf_expected;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto fixed_leaf = expected.fixed_leaves.Add();
+    PopulateFixedLeaf(fixed_leaf, i);
+    auto protobuf_leaf = protobuf_expected.add_fixed_leaves();
+    PopulateProtobufFixedLeaf(protobuf_leaf, i);
+  }
+
+  // The second Add() starts partway through the first chunk and goes on into
+  // new ones.
+  DirectElements message;
+  message.fixed_leaves.reserve(kFirst + 2);
+  message.fixed_leaves.Add(kFirst, [](auto leaf, size_t i) {
+    WriteFixedLeaf<DirectKind>(leaf, static_cast<int>(i));
+  });
+  message.fixed_leaves.Add(kDirectElementCount - kFirst,
+                           [](auto leaf, size_t i) {
+                             WriteFixedLeaf<DirectKind>(
+                                 leaf, kFirst + static_cast<int>(i));
+                           });
+  ProtobufDirectElements protobuf_message;
+  protobuf_message.add_fixed_leaves(
+      kDirectElementCount, [](auto leaf, size_t i) {
+        WriteFixedLeaf<ProtobufDirectKind>(leaf, static_cast<int>(i));
+      });
+
+  ASSERT_EQ(message.fixed_leaves.size(), size_t{kDirectElementCount});
+  ASSERT_EQ(protobuf_message.fixed_leaves_size(),
+            size_t{kDirectElementCount});
+  std::string actual;
+  std::string want;
+  ASSERT_TRUE(message.SerializeToROSString(&actual).ok());
+  ASSERT_TRUE(expected.SerializeToROSString(&want).ok());
+  EXPECT_EQ(actual, want);
+  std::string protobuf_actual;
+  ASSERT_TRUE(protobuf_message.SerializeToROSString(&protobuf_actual).ok());
+  EXPECT_EQ(protobuf_actual, want);
+  // The protobuf encoding includes only the fields marked present.
+  EXPECT_EQ(message.SerializeAsString(), expected.SerializeAsString());
+  EXPECT_EQ(protobuf_message.SerializeAsString(),
+            protobuf_expected.SerializeAsString());
+}
+
 TEST(ROSWireConversionTest, BranchElementsParseLikeTheHandlePath) {
   constexpr int kBranchCount = 6;
   DirectElements message;

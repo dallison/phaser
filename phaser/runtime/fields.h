@@ -157,6 +157,19 @@ class Field {
   mutable int indent_ = 0;
 };
 
+namespace internal {
+// Stores 'v' at 'offset' in the message binary at 'binary' and marks field
+// 'id' present, as the field's setter does.
+template <typename T>
+ABSL_ATTRIBUTE_ALWAYS_INLINE inline void StoreScalarAt(char* binary,
+                                                       uint32_t offset,
+                                                       uint32_t id, T v) {
+  memcpy(binary + offset, &v, sizeof(v));
+  reinterpret_cast<uint8_t*>(binary)[Field::kPresenceMaskOffset + id / 8] |=
+      uint8_t(1U << (id % 8));
+}
+}  // namespace internal
+
 // Common std::string-like API for payload-backed string fields. Read operations
 // remain zero-copy. Operations that can change the string length construct the
 // new value outside the payload first so aliases into a relocating payload stay

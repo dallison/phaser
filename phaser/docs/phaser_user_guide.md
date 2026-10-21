@@ -339,6 +339,16 @@ A handle to an element or a nested message borrows the message it came from:
 it stays valid when that message's payload buffer grows, but not after the
 message is destroyed. The collection `Get()` helpers materialize owning vectors and may allocate.
 
+A repeated message whose fields are all singular scalars also has the bulk
+`Add(n, f)` described under [Repeated fields](#repeated-fields):
+
+```c++
+msg.points.Add(count, [&](auto point, size_t i) {
+  point.set_x(xs[i]);
+  point.set_y(ys[i]);
+});
+```
+
 ### ROS1 intrinsic types
 The ROS frontend recognizes three singular protobuf message declarations and
 presents their fields as the corresponding ROS1 C++ types:
@@ -964,6 +974,32 @@ if the payload buffer relocates but not after the message is destroyed. This is
 a performance enhancement
 for a common protobuf message-building pattern.
 
+When every field of the element type is a singular scalar (a number, `bool` or
+enum, not in a `oneof`), there is also a bulk form of `add`:
+
+```c++
+  template <typename F>
+  void add_vm(size_t n, F&& f);
+```
+
+It appends `n` elements and calls `f(writer, i)` for the `i`th of them.  The
+writer is an `InnerMessage::PhaserWriter`, which has a `set_` function for
+each field and writes straight into the element at the field's compiled
+offset, without a handle:
+
+```c++
+points.add_vm(count, [&](auto point, size_t i) {
+  point.set_x(xs[i]);
+  point.set_y(ys[i]);
+});
+```
+
+The fields are set and marked present just as their setters would.  The writer
+is valid only during the call, and `f` must not change the message: an element
+may be built in a local copy and stored when `f` returns, and the vector's size
+includes the new elements only once all `n` are added.  This makes building a large vector of small messages about
+as fast as filling a `std::vector` of structs.
+
 ### Oneof fields
 A `oneof` field is a discriminated union that holds only one of a number of
 fields at any time (or none of them I guess).  For example, to define
@@ -1538,12 +1574,21 @@ The header for these is 8-bytes long and contains:
 1. The number of elements in the repeated field
 2. The offset (relative to the PayloadBuffer) of the contiguous memory for the fields
 
-The data for the vector is held contiguously in memory and can be moved if the
-vector is expanded.  The contents of the memory depends on the type of the
-repeated field.  The `capacity` of the vector (the amount of memory allocated) is
-held immediately before the data and says how many bytes are allocated, not elements as
-in the header (this is because it's just the size of the block allocated by
-the allocator).
+For scalars and strings, the data for the vector is held contiguously in
+memory and can be moved if the vector is expanded.  The contents of the memory
+depends on the type of the repeated field.  The `capacity` of the vector (the
+amount of memory allocated) is held immediately before the data and says how
+many bytes are allocated, not elements as in the header (this is because it's
+just the size of the block allocated by the allocator).
+
+For messages, the data is a `MessageVectorBlock` holding the element stride,
+the number of elements in the first chunk, the element type's metadata and the
+offset of a chunk directory.  The first chunk follows the block, and each
+element in it is a whole message binary of `stride` bytes.  When a chunk is
+full, a new one doubles the capacity and its offset is added to the directory.
+Chunks never move, so a handle to an element stays valid as the vector grows.
+`reserve(n)` on an empty vector, and parsing a ROS sequence of `n` elements,
+make a first chunk of exactly `n`.
 
 ### Buffer expansion
 The intention of zero-copy systems like Phaser is to allow you to create messages
