@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #include "absl/strings/str_format.h"
@@ -949,9 +950,12 @@ TEST(PhaserTest, Reflection) {
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);
   ASSERT_TRUE(has_x.ok());
 
-  absl::StatusOr<::phaser::Int32Field<>*> x =
-      ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
-          "foo.bar.TestMessage", msg, 100);
+  // The field type is the one declared in the generated message, which has
+  // the field's offset, presence id and number in it.
+  using XField =
+      ::phaser::Int32Field<false, false, ::phaser::FieldSpec<8, 0, 100>>;
+  absl::StatusOr<XField*> x = ::phaser::PhaserBankGetFieldByNumber<XField>(
+      "foo.bar.TestMessage", msg, 100);
   ASSERT_TRUE(x.ok());
   ASSERT_NE(nullptr, *x);
   ASSERT_EQ(1234, (*x)->Get());
@@ -961,12 +965,14 @@ TEST(PhaserTest, Reflection) {
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, 104);
   ASSERT_TRUE(has_vi32.ok());
 
-  auto vi32 = ::phaser::PhaserBankGetFieldByNumber<
-      ::phaser::PrimitiveVectorField<int32_t>>("foo.bar.TestMessage", msg, 104);
+  using Vi32Field =
+      std::remove_cv_t<std::remove_reference_t<decltype(msg.vi32())>>;
+  auto vi32 = ::phaser::PhaserBankGetFieldByNumber<Vi32Field>(
+      "foo.bar.TestMessage", msg, 104);
   ASSERT_TRUE(vi32.ok());
   ASSERT_NE(nullptr, *vi32);
 
-  ::phaser::PrimitiveVectorField<int32_t>& vi32r = **vi32;
+  Vi32Field& vi32r = **vi32;
   ASSERT_EQ(3, vi32r.Size());
   ASSERT_EQ(1, vi32r[0]);
 

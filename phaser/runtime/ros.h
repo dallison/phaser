@@ -154,13 +154,16 @@ struct RosHeaderTraits {
 // A changed value is cached until SyncToPayload() or the handle's destruction,
 // so it also reaches the payload through a temporary handle such as a repeated
 // element.  ROS serialization reads the cache and needs no payload copy.
-template <typename Backend, typename Traits, bool kInline = false>
-class RosMessageField : public IndirectMessageField<Backend, kInline> {
+template <typename Backend, typename Traits, bool kInline = false,
+          typename Loc = StoredFieldLoc>
+class RosMessageField : public IndirectMessageField<Backend, kInline, Loc> {
  public:
-  using Base = IndirectMessageField<Backend, kInline>;
+  using Base = IndirectMessageField<Backend, kInline, Loc>;
   using RosType = typename Traits::RosType;
 
   RosMessageField() = default;
+  explicit RosMessageField(SourceOffset source)
+      : Base(source), in_message_(true) {}
   explicit RosMessageField(uint32_t source_offset,
                            uint32_t relative_binary_offset, int id, int number)
       : Base(source_offset, relative_binary_offset, id, number),
@@ -190,6 +193,12 @@ class RosMessageField : public IndirectMessageField<Backend, kInline> {
     if (this != &other) {
       Set(other.Get());
     }
+    return *this;
+  }
+  template <typename OtherLoc>
+  RosMessageField& operator=(
+      const RosMessageField<Backend, Traits, kInline, OtherLoc>& other) {
+    Set(other.Get());
     return *this;
   }
 
@@ -322,12 +331,13 @@ class RosMessageField : public IndirectMessageField<Backend, kInline> {
   bool in_message_ = false;
 };
 
-template <typename Backend, bool kInline = false>
-using RosTimeField = RosMessageField<Backend, internal::RosTimeTraits, kInline>;
+template <typename Backend, bool kInline = false, typename Loc = StoredFieldLoc>
+using RosTimeField =
+    RosMessageField<Backend, internal::RosTimeTraits, kInline, Loc>;
 
-template <typename Backend, bool kInline = false>
+template <typename Backend, bool kInline = false, typename Loc = StoredFieldLoc>
 using RosDurationField =
-    RosMessageField<Backend, internal::RosDurationTraits, kInline>;
+    RosMessageField<Backend, internal::RosDurationTraits, kInline, Loc>;
 
 // Presents a repeated Phaser message field as a sequence of ROS values, so a
 // ROS `time[]` or `duration[]` reads and writes as `::ros::Time` rather than as
@@ -513,24 +523,24 @@ class RosRepeatedMessageField : public Sequence {
   }
 };
 
-template <typename Backend>
+template <typename Backend, typename Loc = StoredFieldLoc>
 using RosTimeVectorField =
-    RosRepeatedMessageField<MessageVectorField<Backend>,
+    RosRepeatedMessageField<MessageVectorField<Backend, Loc>,
                             internal::RosTimeTraits>;
 
-template <typename Backend>
+template <typename Backend, typename Loc = StoredFieldLoc>
 using RosDurationVectorField =
-    RosRepeatedMessageField<MessageVectorField<Backend>,
+    RosRepeatedMessageField<MessageVectorField<Backend, Loc>,
                             internal::RosDurationTraits>;
 
-template <typename Backend, size_t N>
+template <typename Backend, size_t N, typename Loc = StoredFieldLoc>
 using RosTimeArrayField =
-    RosRepeatedMessageField<MessageArrayField<Backend, N>,
+    RosRepeatedMessageField<MessageArrayField<Backend, N, Loc>,
                             internal::RosTimeTraits>;
 
-template <typename Backend, size_t N>
+template <typename Backend, size_t N, typename Loc = StoredFieldLoc>
 using RosDurationArrayField =
-    RosRepeatedMessageField<MessageArrayField<Backend, N>,
+    RosRepeatedMessageField<MessageArrayField<Backend, N, Loc>,
                             internal::RosDurationTraits>;
 
 template <typename Owner>
@@ -598,10 +608,10 @@ class RosHeaderMutableView {
   FrameIdProxy frame_id;
 };
 
-template <typename Backend, bool kInline = false>
-class RosHeaderField : public IndirectMessageField<Backend, kInline> {
+template <typename Backend, bool kInline = false, typename Loc = StoredFieldLoc>
+class RosHeaderField : public IndirectMessageField<Backend, kInline, Loc> {
  public:
-  using Base = IndirectMessageField<Backend, kInline>;
+  using Base = IndirectMessageField<Backend, kInline, Loc>;
   using MutableView = RosHeaderMutableView<RosHeaderField>;
   using Base::Base;
 
@@ -622,6 +632,12 @@ class RosHeaderField : public IndirectMessageField<Backend, kInline> {
     if (this != &other) {
       Set(other.Get());
     }
+    return *this;
+  }
+  template <typename OtherLoc>
+  RosHeaderField& operator=(
+      const RosHeaderField<Backend, kInline, OtherLoc>& other) {
+    Set(other.Get());
     return *this;
   }
   RosHeaderField& operator=(RosHeaderField&& other) {
@@ -707,13 +723,13 @@ class RosHeaderField : public IndirectMessageField<Backend, kInline> {
 };
 
 namespace internal {
-template <typename Backend, typename Traits, bool kInline>
-struct FieldRelease<RosMessageField<Backend, Traits, kInline>>
-    : FieldRelease<IndirectMessageField<Backend, kInline>> {};
+template <typename Backend, typename Traits, bool kInline, typename L>
+struct FieldRelease<RosMessageField<Backend, Traits, kInline, L>>
+    : FieldRelease<IndirectMessageField<Backend, kInline, L>> {};
 
-template <typename Backend, bool kInline>
-struct FieldRelease<RosHeaderField<Backend, kInline>>
-    : FieldRelease<IndirectMessageField<Backend, kInline>> {};
+template <typename Backend, bool kInline, typename L>
+struct FieldRelease<RosHeaderField<Backend, kInline, L>>
+    : FieldRelease<IndirectMessageField<Backend, kInline, L>> {};
 
 template <typename Sequence, typename Traits>
 struct FieldRelease<RosRepeatedMessageField<Sequence, Traits>>
@@ -721,18 +737,18 @@ struct FieldRelease<RosRepeatedMessageField<Sequence, Traits>>
 
 // Clear() resets the cached ROS value, which needs nothing from the payload
 // unless clearing the backend does.
-template <typename Backend, typename Traits, bool kInline>
-struct FieldResetClear<RosMessageField<Backend, Traits, kInline>>
+template <typename Backend, typename Traits, bool kInline, typename L>
+struct FieldResetClear<RosMessageField<Backend, Traits, kInline, L>>
     : std::integral_constant<
           ResetClear,
-          FieldResetClear<IndirectMessageField<Backend, kInline>>::value ==
+          FieldResetClear<IndirectMessageField<Backend, kInline, L>>::value ==
                   ResetClear::kBefore
               ? ResetClear::kBefore
               : ResetClear::kHandle> {};
 
-template <typename Backend, bool kInline>
-struct FieldResetClear<RosHeaderField<Backend, kInline>>
-    : FieldResetClear<IndirectMessageField<Backend, kInline>> {};
+template <typename Backend, bool kInline, typename L>
+struct FieldResetClear<RosHeaderField<Backend, kInline, L>>
+    : FieldResetClear<IndirectMessageField<Backend, kInline, L>> {};
 
 template <typename Sequence, typename Traits>
 struct FieldResetClear<RosRepeatedMessageField<Sequence, Traits>>

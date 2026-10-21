@@ -108,9 +108,9 @@ TEST(RosIntrinsicsTest, CopyAndMovePreserveDeferredValues) {
   EXPECT_EQ(ReadFrame(moved.header), "map");
 }
 
-template <typename T>
+template <typename T, typename Loc>
 ::phaser::BufferOffset InlineMessageStart(
-    const ::phaser::InlineMessageField<T>& field) {
+    const ::phaser::InlineMessageField<T, Loc>& field) {
   return field.Get().absolute_binary_offset;
 }
 

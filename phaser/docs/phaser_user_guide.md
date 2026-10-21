@@ -719,6 +719,13 @@ contents are stored).  If the message is **mutable** a `MutableMessageRuntime` i
 contains a map that contains information about the location of the message's `metadata` (where the fields
 are located).
 
+The diagram shows fields that hold where they are, as the fields of a message written by hand do.
+In a generated message, a field's offset and presence id in the binary message and its field number
+are part of its C++ type (`::phaser::FieldSpec<offset, id, number>`).  Most fields then hold nothing:
+they take no space in the source message and are at its start, so they find the message from their own
+address.  A field that holds values of its own, such as a singular message field, which holds a handle
+for the nested message, holds only its offset in the source message.
+
 ### Tuning the memory allocator
 The memory for the actual message contents is allocated inside the `PayloadBuffer` using a memory allocator (think malloc and free in a restricted, relocatable area of memory).  There are two modes for this memory allocator:
 
@@ -1281,30 +1288,38 @@ type.  You can:
 1. See if a field is present in the message
 2. Look up a field in a message by number or name
 
-The result of looking up a field is an instance of an internal field class.  In order
+The result of looking up a field is a pointer to an instance of an internal field class.  In order
 to use these, please see the files `runtime/fields.h`, `runtime/union.h` and `runtime/vectors.h`.
 It's beyond the scope of this user guide to explain these, but I will provide further
 documentation to cover them.
 
-However, as an example, here's how to access an int32 field called `x` with number 100.
+The field class you ask for must be the type the field is declared with in the generated
+message, which includes where the field is (see the message layout above).  The generated
+header shows it.
+
+As an example, here's how to access an int32 field called `x` with number 100, declared
+as `::phaser::Int32Field<false, false, ::phaser::FieldSpec<8, 0, 100>> x_;`.
 
 ```c++
   absl::StatusOr<bool> has_x =
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, 100);
 
-  absl::StatusOr<::phaser::Int32Field<> *> x =
-      ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
-          "foo.bar.TestMessage", msg, 100);
+  using XField =
+      ::phaser::Int32Field<false, false, ::phaser::FieldSpec<8, 0, 100>>;
+  absl::StatusOr<XField *> x = ::phaser::PhaserBankGetFieldByNumber<XField>(
+      "foo.bar.TestMessage", msg, 100);
   int x_value = (*x)->Get();
 ```
 
-The class `phaser:;Int32Field` is in `runtime/fields.h`.
+The class `phaser::Int32Field` is in `runtime/fields.h`.
 
-To access a repeated field:
+To access a repeated field, whose accessor returns the field:
 
 ```c++
- auto vi32 = ::phaser::PhaserBankGetFieldByNumber<
-      ::phaser::PrimitiveVectorField<int32_t>>("foo.bar.TestMessage", msg, 104);
+  using Vi32Field =
+      std::remove_cv_t<std::remove_reference_t<decltype(msg.vi32())>>;
+  auto vi32 = ::phaser::PhaserBankGetFieldByNumber<Vi32Field>(
+      "foo.bar.TestMessage", msg, 104);
 ```
 
 ## Message information
@@ -1361,6 +1376,8 @@ struct FieldInfo {
 };
 
 ```
+
+A field that holds nothing is at the start of the source message, so its `offset` is 0.
 
 There is a derived class for all primitive fields (non-oneof fields):
 

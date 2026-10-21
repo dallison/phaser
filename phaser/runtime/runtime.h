@@ -20,12 +20,12 @@
 #include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
-#define DEFINE_PRIMITIVE_FIELD_STREAMER(cname)                          \
-  template <bool FixedSize, bool Signed>                                \
-  inline std::ostream& operator<<(                                      \
-      std::ostream& os, const cname##Field<FixedSize, Signed>& field) { \
-    os << field.GetForPrinting();                                       \
-    return os;                                                          \
+#define DEFINE_PRIMITIVE_FIELD_STREAMER(cname)                               \
+  template <bool FixedSize, bool Signed, typename Loc>                       \
+  inline std::ostream& operator<<(                                           \
+      std::ostream& os, const cname##Field<FixedSize, Signed, Loc>& field) { \
+    os << field.GetForPrinting();                                            \
+    return os;                                                               \
   }
 
 DEFINE_PRIMITIVE_FIELD_STREAMER(Int32)
@@ -75,7 +75,9 @@ inline std::string StringWithOctalNonPrintables(std::string_view str) {
   return result;
 }
 
-inline std::ostream& operator<<(std::ostream& os, const StringField& field) {
+template <typename Loc>
+inline std::ostream& operator<<(std::ostream& os,
+                                const BasicStringField<Loc>& field) {
   os << "\"" << StringWithOctalNonPrintables(field.Get()) << "\"";
   return os;
 }
@@ -86,20 +88,18 @@ inline std::ostream& operator<<(std::ostream& os,
   return os;
 }
 
-template <typename Enum, typename Stringizer, typename Parser>
+template <typename Enum, typename Stringizer, typename Parser, typename Loc>
 inline std::ostream& operator<<(
-    std::ostream& os, const EnumField<Enum, Stringizer, Parser>& field) {
+    std::ostream& os, const EnumField<Enum, Stringizer, Parser, Loc>& field) {
   os << field.GetForPrinting();
   return os;
 }
 
-template <typename T, bool kInline>
-inline std::ostream& operator<<(std::ostream& os,
-                                const IndirectMessageField<T, kInline>& field) {
+template <typename T, bool kInline, typename Loc>
+inline std::ostream& operator<<(
+    std::ostream& os, const IndirectMessageField<T, kInline, Loc>& field) {
   os << "{\n";
-  field.Indent(2);
-  os << field.Get();
-  field.Indent(-2);
+  field.PrintMessage(os, 2);
   field.PrintIndent(os);
   os << "}";
   return os;
@@ -125,7 +125,7 @@ inline std::ostream& operator<<(std::ostream& os, const AnyField& field) {
   if (field.type_url().empty()) {
     return os;
   }
-  os << field.Msg();
+  field.PrintMessage(os, 0);
   return os;
 }
 
@@ -144,7 +144,7 @@ inline std::ostream& operator<<(std::ostream& os, const AnyMessage& msg) {
         PhaserBankMakeExisting(type, msg.runtime, addr);
     if (!s.ok()) {
       os << "Error: " << s.status() << std::endl;
-      msg.value_.Indent(-2);
+      msg.value_.Indent(-4);
       return os;
     }
     std::unique_ptr<const Message> src(*s);
@@ -152,7 +152,7 @@ inline std::ostream& operator<<(std::ostream& os, const AnyMessage& msg) {
             PhaserStreamTo(type, *src, os, msg.value_.GetIndent());
         !st.ok()) {
       os << "Error: " << st << std::endl;
-      msg.value_.Indent(-2);
+      msg.value_.Indent(-4);
       return os;
     }
     msg.value_.Indent(-2);

@@ -161,14 +161,6 @@ struct InnerMessage : public Message {
     return msg;
   }
 
-  void Indent(int indent) {
-    str_.Indent(indent);
-    f_.Indent(indent);
-    e_.Indent(indent);
-    ev_.Indent(indent);
-    uv_.Indent(indent);
-  }
-
   std::string DebugString() const {
     std::ostringstream os;
     os << *this;
@@ -899,19 +891,6 @@ struct TestMessage : public Message {
   }
 
   friend std::ostream& operator<<(std::ostream& os, const TestMessage& msg);
-
-  void Indent(int indent) {
-    x_.Indent(indent);
-    y_.Indent(indent);
-    s_.Indent(indent);
-    m_.Indent(indent);
-    vi32_.Indent(indent);
-    vstr_.Indent(indent);
-    vm_.Indent(indent);
-    u1_.Indent(indent);
-    u2_.Indent(indent);
-    u3_.Indent(indent);
-  }
 
   absl::Status CloneFrom(const TestMessage& src) {
     if (src.x_.IsPresent()) {

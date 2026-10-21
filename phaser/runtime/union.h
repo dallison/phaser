@@ -520,14 +520,12 @@ class UnionMessageField : public UnionMemberField {
 // field itself.  The size of the field data is the max of all the fields
 // in the union.
 template <typename... T>
-class UnionField : public Field {
+class UnionField : public FieldBase<StoredFieldLoc> {
  public:
   UnionField() = default;
   UnionField(uint32_t source_offset, uint32_t relative_binary_offset, int id,
              int number, absl::Span<const uint32_t> field_numbers)
-      : Field(id, number),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset),
+      : FieldBase(source_offset, relative_binary_offset, id, number),
         field_numbers_(field_numbers) {}
 
   size_t index() const {
@@ -600,8 +598,7 @@ class UnionField : public Field {
 
   template <int Id, typename F>
   const F& GetReference() const {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {
       return std::get<Id>(value_).Get(nullptr, 0);
     }
@@ -613,8 +610,7 @@ class UnionField : public Field {
 
   template <int Id, typename F>
   F GetValue() const {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {
       return std::get<Id>(value_).Get(nullptr, 0);
     }
@@ -626,8 +622,7 @@ class UnionField : public Field {
 
   template <int Id>
   void Print(std::ostream& os) const {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {
       return;
     }
@@ -639,7 +634,7 @@ class UnionField : public Field {
       return;
     }
     std::get<Id>(value_).Print(
-        os, indent_, GetRuntime(),
+        os, GetIndent(), GetRuntime(),
         GetMessageBinaryStart() +
             static_cast<::phaser::BufferOffset>(relative_offset) + 4);
   }
@@ -649,13 +644,12 @@ class UnionField : public Field {
     PrepareArm<Id>();
     // Write the field number into the discriminator.
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
     auto& t = std::get<Id>(value_);
-    t.Set(v, GetRuntime(),
-          GetMessageBinaryStart() + relative_binary_offset_ + 4);
+    t.Set(v, GetRuntime(), GetMessageBinaryStart() + Offset() + 4);
   }
 
   template <int Id, typename U>
@@ -663,14 +657,13 @@ class UnionField : public Field {
     PrepareArm<Id>();
     // Write the field number into the discriminator.
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
 
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
     auto& t = std::get<Id>(value_);
-    return t.Mutable(GetRuntime(),
-                     GetMessageBinaryStart() + relative_binary_offset_ + 4);
+    return t.Mutable(GetRuntime(), GetMessageBinaryStart() + Offset() + 4);
   }
 
   // Only valid for strings and bytes.
@@ -679,14 +672,14 @@ class UnionField : public Field {
     PrepareArm<Id>();
     // Write the field number into the discriminator.
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
 
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
     auto& t = std::get<Id>(value_);
     return t.Allocate(size, GetRuntime(),
-                      GetMessageBinaryStart() + relative_binary_offset_ + 4);
+                      GetMessageBinaryStart() + Offset() + 4);
   }
 
   bool Is(int number) const { return Discriminator() == number; }
@@ -699,7 +692,7 @@ class UnionField : public Field {
     // present as they will only be absent if the message definition has been
     // changed and the field removed. In the worst case, the complete union
     // has been removed and none of the fields are present.
-    const Message* msg = Message::GetMessage(this, source_offset_);
+    const Message* msg = Parent();
     int32_t relative_offset = -1;
     for (auto& field_number : field_numbers_) {
       relative_offset = msg->FindFieldOffset(field_number);
@@ -722,7 +715,7 @@ class UnionField : public Field {
   template <int Id>
   void Clear() {
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     if (discrim == nullptr) {
       return;
     }
@@ -731,8 +724,7 @@ class UnionField : public Field {
       return;
     }
     auto& t = std::get<Id>(value_);
-    t.Clear(GetRuntime(),
-            GetMessageBinaryStart() + relative_binary_offset_ + 4);
+    t.Clear(GetRuntime(), GetMessageBinaryStart() + Offset() + 4);
     *discrim = 0;
     // Reset the buffer-offset word in the shared value slot. Scalar/enum arms
     // store their value inline here and their Clear() is a no-op, so without
@@ -740,14 +732,13 @@ class UnionField : public Field {
     // misread the leftover scalar bytes as an allocated buffer offset.
     ::phaser::BufferOffset* slot =
         GetRuntime()->template ToAddress<::phaser::BufferOffset>(
-            GetMessageBinaryStart() + relative_binary_offset_ + 4);
+            GetMessageBinaryStart() + Offset() + 4);
     *slot = 0;
   }
 
   template <int Id>
   size_t SerializedSize(int discriminator) const {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {  // Field not present.
       return 0;
     }
@@ -759,8 +750,7 @@ class UnionField : public Field {
 
   template <int Id>
   absl::Status Serialize(int discriminator, ProtoBuffer& buffer) const {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {  // Field not present.
       return absl::OkStatus();
     }
@@ -772,8 +762,7 @@ class UnionField : public Field {
 
   template <int Id>
   absl::Status Deserialize(int /*discriminator*/, ProtoBuffer& buffer) {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {  // Field not present.
       return absl::OkStatus();
     }
@@ -787,21 +776,20 @@ class UnionField : public Field {
     }
     // Set the discriminator.
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
     return absl::OkStatus();
   }
 
   template <int Id, typename M>
   absl::Status CloneFrom(const M& other) {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {  // Field not present.
       return absl::OkStatus();
     }
     PrepareArm<Id>();
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
     // TODO: this isn't right.  If the field is a message, it can fail to clone.
     std::get<Id>(value_).Set(
@@ -813,8 +801,7 @@ class UnionField : public Field {
 
   template <int Id>
   bool IsPresent() const {
-    int32_t relative_offset = Message::GetMessage(this, source_offset_)
-                                  ->FindFieldOffset(field_numbers_[Id]);
+    int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {
       return false;
     }
@@ -829,14 +816,13 @@ class UnionField : public Field {
   void SetOffset(::phaser::BufferOffset offset) {
     PrepareArm<Id>();
     int32_t* discrim = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     *discrim = static_cast<int32_t>(field_numbers_[Id]);
 
     // Get the variant and set its location.  In binary it is
     // 4 bytes after the discriminator.
     auto& t = std::get<Id>(value_);
-    return t.SetOffset(GetRuntime(),
-                       GetMessageBinaryStart() + relative_binary_offset_ + 4,
+    return t.SetOffset(GetRuntime(), GetMessageBinaryStart() + Offset() + 4,
                        offset);
   }
 
@@ -859,7 +845,7 @@ class UnionField : public Field {
       return;
     }
     int32_t* discriminator = GetRuntime()->template ToAddress<int32_t>(
-        GetMessageBinaryStart() + relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
     if (discriminator != nullptr) {
       *discriminator = 0;
     }
@@ -880,29 +866,12 @@ class UnionField : public Field {
     ClearActive();
     ::phaser::BufferOffset* slot =
         GetRuntime()->template ToAddress<::phaser::BufferOffset>(
-            GetMessageBinaryStart() + relative_binary_offset_ + 4);
+            GetMessageBinaryStart() + Offset() + 4);
     if (slot != nullptr) {
       *slot = 0;
     }
   }
 
-  ::phaser::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::phaser::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-  ::phaser::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::phaser::BufferOffset relative_binary_offset_;
   absl::Span<const uint32_t>
       field_numbers_;  // Static field number for each tuple type.
   mutable std::tuple<T...> value_;

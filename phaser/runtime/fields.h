@@ -38,124 +38,222 @@ constexpr size_t AlignedOffset(size_t offset) {
   return (offset + sizeof(T) - 1) & ~(sizeof(T) - 1);
 }
 
+// What is common to fields wherever they are.
 class Field {
  public:
-  Field() = default;
-  Field(int id, int number) : id_(id), number_(number) {}
-  // 'relative_binary_offset' is where the field is in its message's compiled
-  // layout.
-  Field(int id, int number, uint32_t /*source_offset*/,
-        uint32_t relative_binary_offset)
-      : id_(id),
-        number_(number),
-        compiled_offset_(static_cast<int32_t>(relative_binary_offset)) {}
-  Field(const Field&) = default;
-  Field& operator=(const Field&) = default;
-  // Fields are only destroyed as members of their message, so the
-  // destructor is not virtual.
-  ~Field() = default;
-
-  // The presence bit is in a set of words immediately after
-  // the metadata at the start of the message.
-  void SetPresence(::phaser::PayloadBuffer* buffer, uint32_t binary_offset) {
-    buffer->SetPresenceBit(static_cast<uint32_t>(id_), binary_offset);
-  }
-
-  void ClearPresence(::phaser::PayloadBuffer* buffer,
-                     uint32_t binary_offset) {
-    buffer->ClearPresenceBit(static_cast<uint32_t>(id_), binary_offset);
-  }
-
-  bool IsPresent(uint32_t field_id, const void* field, uint32_t source_offset,
-                 uint32_t binary_offset) const {
-    if (field_id == static_cast<uint32_t>(-1)) {
-      return false;
-    }
-    return Message::GetRuntime(field, source_offset)
-        ->IsPresent(field_id, binary_offset);
-  }
-
-  int Id() const { return id_; }
-  int Number() const { return number_; }
-
-  // A message whose fields are not at their compiled locations was written
-  // with another version of its schema, so its fields are looked up in its
-  // metadata on each access.
-  int32_t FindFieldOffset(uint32_t source_offset) const {
-    const Message* message = Message::GetMessage(this, source_offset);
-    if (message->FieldLocationsKnown()) {
-      return compiled_offset_;
-    }
-    return message->FindField(static_cast<uint32_t>(number_)).offset;
-  }
-
-  int32_t FindFieldId(uint32_t source_offset) const {
-    const Message* message = Message::GetMessage(this, source_offset);
-    if (message->FieldLocationsKnown()) {
-      return id_;
-    }
-    return message->FindField(static_cast<uint32_t>(number_)).id;
-  }
-
-  // For printing.
-  void Indent(int indent) const { indent_ += indent; }
-  void PrintIndent(std::ostream& os) const {
-    for (int i = 0; i < indent_; i++) {
-      os << " ";
-    }
-  }
-
-  int GetIndent() const { return indent_; }
-
- protected:
-  void RequireMutable(uint32_t source_offset) const {
-    (void)MutableBuffer(source_offset);
-  }
-
-  // The buffer of the message holding this field, which must be mutable.
-  ::phaser::PayloadBuffer* MutableBuffer(uint32_t source_offset) const {
-    const Message* message = Message::GetMessage(this, source_offset);
-    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
-      ThrowReadonlyMessage();
-    }
-    return message->runtime->pb;
-  }
+  // The presence mask follows the metadata offset at the start of a message.
+  static constexpr uint32_t kPresenceMaskOffset = 4;
 
   [[noreturn]] ABSL_ATTRIBUTE_NOINLINE static void ThrowReadonlyMessage() {
     throw std::logic_error("cannot mutate a readonly Phaser message");
   }
+};
+
+// The offset of a field in the handle of the message holding it.
+struct SourceOffset {
+  uint32_t value;
+};
+
+// Where a field is: its message's handle, and its offset, presence id and
+// number in the message's compiled layout.
+//
+// A field of a generated message has the last three in its type.  It then
+// holds nothing and is at the start of its message's handle (FieldSpec), or
+// if it holds values of its own it holds only its offset in the handle
+// (FieldSpecAt).  A field of a hand-written message holds all of them
+// (StoredFieldLoc).
+template <uint32_t kOffset, int kId, int kNumber>
+class FieldSpec {
+ public:
+  static constexpr bool kAtMessageStart = true;
+
+  FieldSpec() = default;
+  explicit FieldSpec(SourceOffset /*source*/) {}
+
+  static constexpr uint32_t Offset() { return kOffset; }
+  static constexpr int Id() { return kId; }
+  static constexpr int Number() { return kNumber; }
+
+ protected:
+  const Message* Parent() const {
+    return reinterpret_cast<const Message*>(this);
+  }
+};
+
+template <uint32_t kOffset, int kId, int kNumber>
+class FieldSpecAt {
+ public:
+  static constexpr bool kAtMessageStart = false;
+
+  FieldSpecAt() = default;
+  explicit FieldSpecAt(SourceOffset source) : source_offset_(source.value) {}
+
+  static constexpr uint32_t Offset() { return kOffset; }
+  static constexpr int Id() { return kId; }
+  static constexpr int Number() { return kNumber; }
+
+ protected:
+  const Message* Parent() const {
+    return Message::GetMessage(this, source_offset_);
+  }
+
+ private:
+  uint32_t source_offset_ = 0;
+};
+
+class StoredFieldLoc {
+ public:
+  static constexpr bool kAtMessageStart = false;
+
+  StoredFieldLoc() = default;
+  explicit StoredFieldLoc(uint32_t source_offset, uint32_t offset, int id,
+                          int number)
+      : source_offset_(source_offset),
+        offset_(offset),
+        id_(id),
+        number_(number) {}
+
+  uint32_t Offset() const { return offset_; }
+  int Id() const { return id_; }
+  int Number() const { return number_; }
+
+ protected:
+  const Message* Parent() const {
+    return Message::GetMessage(this, source_offset_);
+  }
+
+ private:
+  uint32_t source_offset_ = 0;
+  uint32_t offset_ = static_cast<uint32_t>(-1);
+  int id_ = 0;
+  int number_ = 0;
+};
+
+namespace internal {
+// The location of a field holding values of its own, given where it is.
+template <typename Loc>
+struct StatefulLoc {
+  using type = Loc;
+};
+template <uint32_t kOffset, int kId, int kNumber>
+struct StatefulLoc<FieldSpec<kOffset, kId, kNumber>> {
+  using type = FieldSpecAt<kOffset, kId, kNumber>;
+};
+}  // namespace internal
+
+// The members of a field that depend on where it is.  Loc is first in the
+// field so that its address is the field's.
+template <typename Loc>
+class FieldBase : public Loc {
+ public:
+  using Loc::Id;
+  using Loc::Loc;
+  using Loc::Number;
+
+  // A message whose fields are not at their compiled locations was written
+  // with another version of its schema, so its fields are looked up in its
+  // metadata on each access.
+  int32_t FindFieldOffset() const {
+    const Message* message = Parent();
+    if (message->FieldLocationsKnown()) {
+      return static_cast<int32_t>(Offset());
+    }
+    return message->FindField(static_cast<uint32_t>(Number())).offset;
+  }
+
+  int32_t FindFieldId() const {
+    const Message* message = Parent();
+    if (message->FieldLocationsKnown()) {
+      return Id();
+    }
+    return message->FindField(static_cast<uint32_t>(Number())).id;
+  }
+
+  // For printing, at the indent of the message holding the field.
+  void Indent(int indent) const { Parent()->Indent(indent); }
+  void PrintIndent(std::ostream& os) const { Parent()->PrintIndent(os); }
+  int GetIndent() const { return Parent()->GetIndent(); }
+
+ protected:
+  using Loc::Offset;
+  using Loc::Parent;
+
+  const RuntimeHandle& GetRuntime() const { return Parent()->runtime; }
+
+  ::phaser::PayloadBuffer* GetBuffer() const { return Parent()->runtime->pb; }
+
+  ::phaser::PayloadBuffer** GetBufferAddr() const {
+    const Message* message = Parent();
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
+      Field::ThrowReadonlyMessage();
+    }
+    return &message->runtime->pb;
+  }
+
+  ::phaser::BufferOffset GetMessageBinaryStart() const {
+    return Parent()->absolute_binary_offset;
+  }
+
+  bool IsPresentBit(uint32_t field_id) const {
+    if (field_id == static_cast<uint32_t>(-1)) {
+      return false;
+    }
+    return GetRuntime()->IsPresent(
+        field_id, GetMessageBinaryStart() + Field::kPresenceMaskOffset);
+  }
+
+  void RequireMutable() const { (void)MutableBuffer(); }
+
+  // The buffer of the message holding this field, which must be mutable.
+  ::phaser::PayloadBuffer* MutableBuffer() const { return *GetBufferAddr(); }
 
   // Writes 'v' at the field's compiled location, where it is in every mutable
   // message, and marks the field present.  Everything is read before the
   // payload is written, which the compiler must assume can change the field.
   template <typename T>
-  void StoreValue(uint32_t source_offset, T v) {
-    const Message* message = Message::GetMessage(this, source_offset);
-    ::phaser::PayloadBuffer* pb = MutableBuffer(source_offset);
+  void StoreValue(T v) {
+    const Message* message = Parent();
+    ::phaser::PayloadBuffer* pb = MutableBuffer();
     const ::phaser::BufferOffset start = message->absolute_binary_offset;
-    const uint32_t id = static_cast<uint32_t>(id_);
-    pb->Set(start + static_cast<uint32_t>(compiled_offset_), v);
-    pb->SetPresenceBit(id, start + kPresenceMaskOffset);
+    const uint32_t id = static_cast<uint32_t>(Id());
+    pb->Set(start + Offset(), v);
+    pb->SetPresenceBit(id, start + Field::kPresenceMaskOffset);
   }
 
-  void ClearValue(uint32_t source_offset) {
-    const Message* message = Message::GetMessage(this, source_offset);
-    MutableBuffer(source_offset)
-        ->ClearPresenceBit(static_cast<uint32_t>(id_),
-                           message->absolute_binary_offset +
-                               kPresenceMaskOffset);
+  void ClearValue() {
+    const Message* message = Parent();
+    MutableBuffer()->ClearPresenceBit(
+        static_cast<uint32_t>(Id()),
+        message->absolute_binary_offset + Field::kPresenceMaskOffset);
   }
-
- public:
-  // The presence mask follows the metadata offset at the start of a message.
-  static constexpr uint32_t kPresenceMaskOffset = 4;
-
- protected:
-  int id_ = 0;
-  int number_ = 0;
-  int32_t compiled_offset_ = -1;
-  mutable int indent_ = 0;
 };
+
+// Names the members of FieldBase in a field class template, which does not
+// otherwise see them in its dependent base.  Leaves the access public.
+#define PHASER_FIELD_BASE_MEMBERS(Base) \
+ public:                                \
+  using Base::Id;                       \
+  using Base::Number;                   \
+  using Base::FindFieldOffset;          \
+  using Base::FindFieldId;              \
+  using Base::Indent;                   \
+  using Base::PrintIndent;              \
+  using Base::GetIndent;                \
+                                        \
+ protected:                             \
+  using Base::Offset;                   \
+  using Base::Parent;                   \
+  using Base::GetRuntime;               \
+  using Base::GetBuffer;                \
+  using Base::GetBufferAddr;            \
+  using Base::GetMessageBinaryStart;    \
+  using Base::IsPresentBit;             \
+  using Base::RequireMutable;           \
+  using Base::MutableBuffer;            \
+  using Base::StoreValue;               \
+  using Base::ClearValue;               \
+                                        \
+ public:
 
 namespace internal {
 // Stores 'v' at 'offset' in the message binary at 'binary' and marks field
@@ -408,110 +506,103 @@ class StringFieldFacade {
   }
 };
 
-#define DEFINE_PRIMITIVE_FIELD(cname, type)                                   \
-  template <bool FixedSize = false, bool Signed = false>                      \
-  class cname##Field : public Field {                                         \
-   public:                                                                    \
-    cname##Field() = default;                                                 \
-    explicit cname##Field(uint32_t boff, uint32_t offset, int id, int number) \
-        : Field(id, number, boff, offset),                                    \
-          source_offset_(boff),                                               \
-          relative_binary_offset_(offset) {}                                  \
-    cname##Field(const cname##Field&) = default;                              \
-    cname##Field(cname##Field&&) = default;                                   \
-    cname##Field& operator=(const cname##Field& other) {                      \
-      if (this == &other) {                                                   \
-        return *this;                                                         \
-      }                                                                       \
-      if (other.IsPresent()) {                                                \
-        Set(other.Get());                                                     \
-      } else {                                                                \
-        Clear();                                                              \
-      }                                                                       \
-      return *this;                                                           \
-    }                                                                         \
-    cname##Field& operator=(cname##Field&& other) noexcept {                  \
-      return operator=(static_cast<const cname##Field&>(other));              \
-    }                                                                         \
-    operator type() const { return Get(); }                                   \
-    cname##Field& operator=(type v) {                                         \
-      Set(v);                                                                 \
-      return *this;                                                           \
-    }                                                                         \
-    type Get() const {                                                        \
-      int32_t offset = FindFieldOffset(source_offset_);                       \
-      if (offset < 0) {                                                       \
-        return type();                                                        \
-      }                                                                       \
-      const type* _phaser_addr =                                              \
-          Message::GetRuntime(this, source_offset_)                          \
-              ->template ToAddress<const type>(                              \
-                  GetMessageBinaryStart() +                                  \
-                  static_cast<::phaser::BufferOffset>(offset));            \
-      if (_phaser_addr == nullptr) {                                          \
-        return type();                                                        \
-      }                                                                       \
-      return *_phaser_addr;                                                   \
-    }                                                                         \
-    type GetForPrinting() const { return Get(); }                             \
-    bool IsPresent() const {                                                  \
-      return Field::IsPresent(                                                \
-          static_cast<uint32_t>(FindFieldId(source_offset_)), this,            \
-          source_offset_, GetPresenceMaskStart());                            \
-    }                                                                         \
-                                                                              \
-    void Set(type v) { StoreValue(source_offset_, v); }                       \
-    void Clear() { ClearValue(source_offset_); }                              \
-    bool operator==(const cname##Field& other) const {                        \
-      return Get() == other.Get();                                            \
-    }                                                                         \
-    bool operator!=(const cname##Field& other) const {                        \
-      return !(*this == other);                                               \
-    }                                                                         \
-    size_t SerializedSize() const {                                           \
-      if constexpr (FixedSize) {                                              \
-        return ProtoBuffer::TagSize(Number(),                                 \
-                                    ProtoBuffer::FixedWireType<type>()) +     \
-               sizeof(type);                                                  \
-      } else {                                                                \
-        return ProtoBuffer::TagSize(Number(), WireType::kVarint) +            \
-               ProtoBuffer::VarintSize<type, Signed>(Get());                  \
-      }                                                                       \
-    }                                                                         \
-    absl::Status Serialize(ProtoBuffer& buffer) const {                       \
-      if constexpr (FixedSize) {                                              \
-        return buffer.SerializeFixed<type>(Number(), Get());                  \
-      } else {                                                                \
-        return buffer.SerializeVarint<type, Signed>(Number(), Get());         \
-      }                                                                       \
-    }                                                                         \
-                                                                              \
-    absl::Status Deserialize(ProtoBuffer& buffer) {                           \
-      absl::StatusOr<type> v;                                                 \
-      if constexpr (FixedSize) {                                              \
-        v = buffer.DeserializeFixed<type>();                                  \
-      } else {                                                                \
-        v = buffer.DeserializeVarint<type, Signed>();                         \
-      }                                                                       \
-      if (!v.ok()) {                                                          \
-        return v.status();                                                    \
-      }                                                                       \
-      Set(*v);                                                                \
-      return absl::OkStatus();                                                \
-    }                                                                         \
-                                                                              \
-   private:                                                                   \
-    ::phaser::PayloadBuffer* GetBuffer() const {                            \
-      return Message::GetBuffer(this, source_offset_);                        \
-    }                                                                         \
-    ::phaser::BufferOffset GetMessageBinaryStart() const {                  \
-      return Message::GetMessageBinaryStart(this, source_offset_);            \
-    }                                                                         \
-    ::phaser::BufferOffset GetPresenceMaskStart() const {                   \
-      return Message::GetMessageBinaryStart(this, source_offset_) + 4;        \
-    }                                                                         \
-    uint32_t source_offset_;                                                  \
-    ::phaser::BufferOffset relative_binary_offset_;                         \
+#define DEFINE_PRIMITIVE_FIELD(cname, type)                                    \
+  template <bool FixedSize = false, bool Signed = false,                       \
+            typename Loc = StoredFieldLoc>                                     \
+  class cname##Field : public FieldBase<Loc> {                                 \
+    PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)                                  \
+    using FieldBase<Loc>::FieldBase;                                           \
+    cname##Field() = default;                                                  \
+    cname##Field(const cname##Field&) = default;                               \
+    cname##Field(cname##Field&&) = default;                                    \
+    cname##Field& operator=(const cname##Field& other) {                       \
+      return Assign(other);                                                    \
+    }                                                                          \
+    cname##Field& operator=(cname##Field&& other) noexcept {                   \
+      return Assign(other);                                                    \
+    }                                                                          \
+    template <typename OtherLoc>                                               \
+    cname##Field& operator=(                                                   \
+        const cname##Field<FixedSize, Signed, OtherLoc>& other) {              \
+      return Assign(other);                                                    \
+    }                                                                          \
+    operator type() const { return Get(); }                                    \
+    cname##Field& operator=(type v) {                                          \
+      Set(v);                                                                  \
+      return *this;                                                            \
+    }                                                                          \
+    type Get() const {                                                         \
+      int32_t offset = FindFieldOffset();                                      \
+      if (offset < 0) {                                                        \
+        return type();                                                         \
+      }                                                                        \
+      const type* _phaser_addr = GetRuntime()->template ToAddress<const type>( \
+          GetMessageBinaryStart() +                                            \
+          static_cast<::phaser::BufferOffset>(offset));                        \
+      if (_phaser_addr == nullptr) {                                           \
+        return type();                                                         \
+      }                                                                        \
+      return *_phaser_addr;                                                    \
+    }                                                                          \
+    type GetForPrinting() const { return Get(); }                              \
+    bool IsPresent() const {                                                   \
+      return IsPresentBit(static_cast<uint32_t>(FindFieldId()));               \
+    }                                                                          \
+                                                                               \
+    void Set(type v) { StoreValue(v); }                                        \
+    void Clear() { ClearValue(); }                                             \
+    template <typename OtherLoc>                                               \
+    bool operator==(                                                           \
+        const cname##Field<FixedSize, Signed, OtherLoc>& other) const {        \
+      return Get() == other.Get();                                             \
+    }                                                                          \
+    template <typename OtherLoc>                                               \
+    bool operator!=(                                                           \
+        const cname##Field<FixedSize, Signed, OtherLoc>& other) const {        \
+      return !(*this == other);                                                \
+    }                                                                          \
+    size_t SerializedSize() const {                                            \
+      if constexpr (FixedSize) {                                               \
+        return ProtoBuffer::TagSize(Number(),                                  \
+                                    ProtoBuffer::FixedWireType<type>()) +      \
+               sizeof(type);                                                   \
+      } else {                                                                 \
+        return ProtoBuffer::TagSize(Number(), WireType::kVarint) +             \
+               ProtoBuffer::VarintSize<type, Signed>(Get());                   \
+      }                                                                        \
+    }                                                                          \
+    absl::Status Serialize(ProtoBuffer& buffer) const {                        \
+      if constexpr (FixedSize) {                                               \
+        return buffer.SerializeFixed<type>(Number(), Get());                   \
+      } else {                                                                 \
+        return buffer.SerializeVarint<type, Signed>(Number(), Get());          \
+      }                                                                        \
+    }                                                                          \
+                                                                               \
+    absl::Status Deserialize(ProtoBuffer& buffer) {                            \
+      absl::StatusOr<type> v;                                                  \
+      if constexpr (FixedSize) {                                               \
+        v = buffer.DeserializeFixed<type>();                                   \
+      } else {                                                                 \
+        v = buffer.DeserializeVarint<type, Signed>();                          \
+      }                                                                        \
+      if (!v.ok()) {                                                           \
+        return v.status();                                                     \
+      }                                                                        \
+      Set(*v);                                                                 \
+      return absl::OkStatus();                                                 \
+    }                                                                          \
+                                                                               \
+   private:                                                                    \
+    template <typename Other>                                                  \
+    cname##Field& Assign(const Other& other) {                                 \
+      if (other.IsPresent()) {                                                 \
+        Set(other.Get());                                                      \
+      } else {                                                                 \
+        Clear();                                                               \
+      }                                                                        \
+      return *this;                                                            \
+    }                                                                          \
   };
 
 DEFINE_PRIMITIVE_FIELD(Int32, int32_t)
@@ -525,35 +616,35 @@ DEFINE_PRIMITIVE_FIELD(Bool, bool)
 #undef DEFINE_PRIMITIVE_FIELD
 
 namespace internal {
-template <bool F, bool S>
-struct FieldRelease<Int32Field<F, S>> : NoFieldRelease {};
-template <bool F, bool S>
-struct FieldRelease<Uint32Field<F, S>> : NoFieldRelease {};
-template <bool F, bool S>
-struct FieldRelease<Int64Field<F, S>> : NoFieldRelease {};
-template <bool F, bool S>
-struct FieldRelease<Uint64Field<F, S>> : NoFieldRelease {};
-template <bool F, bool S>
-struct FieldRelease<DoubleField<F, S>> : NoFieldRelease {};
-template <bool F, bool S>
-struct FieldRelease<FloatField<F, S>> : NoFieldRelease {};
-template <bool F, bool S>
-struct FieldRelease<BoolField<F, S>> : NoFieldRelease {};
+template <bool F, bool S, typename L>
+struct FieldRelease<Int32Field<F, S, L>> : NoFieldRelease {};
+template <bool F, bool S, typename L>
+struct FieldRelease<Uint32Field<F, S, L>> : NoFieldRelease {};
+template <bool F, bool S, typename L>
+struct FieldRelease<Int64Field<F, S, L>> : NoFieldRelease {};
+template <bool F, bool S, typename L>
+struct FieldRelease<Uint64Field<F, S, L>> : NoFieldRelease {};
+template <bool F, bool S, typename L>
+struct FieldRelease<DoubleField<F, S, L>> : NoFieldRelease {};
+template <bool F, bool S, typename L>
+struct FieldRelease<FloatField<F, S, L>> : NoFieldRelease {};
+template <bool F, bool S, typename L>
+struct FieldRelease<BoolField<F, S, L>> : NoFieldRelease {};
 
-template <bool F, bool S>
-struct FieldResetClear<Int32Field<F, S>> : NoResetClear {};
-template <bool F, bool S>
-struct FieldResetClear<Uint32Field<F, S>> : NoResetClear {};
-template <bool F, bool S>
-struct FieldResetClear<Int64Field<F, S>> : NoResetClear {};
-template <bool F, bool S>
-struct FieldResetClear<Uint64Field<F, S>> : NoResetClear {};
-template <bool F, bool S>
-struct FieldResetClear<DoubleField<F, S>> : NoResetClear {};
-template <bool F, bool S>
-struct FieldResetClear<FloatField<F, S>> : NoResetClear {};
-template <bool F, bool S>
-struct FieldResetClear<BoolField<F, S>> : NoResetClear {};
+template <bool F, bool S, typename L>
+struct FieldResetClear<Int32Field<F, S, L>> : NoResetClear {};
+template <bool F, bool S, typename L>
+struct FieldResetClear<Uint32Field<F, S, L>> : NoResetClear {};
+template <bool F, bool S, typename L>
+struct FieldResetClear<Int64Field<F, S, L>> : NoResetClear {};
+template <bool F, bool S, typename L>
+struct FieldResetClear<Uint64Field<F, S, L>> : NoResetClear {};
+template <bool F, bool S, typename L>
+struct FieldResetClear<DoubleField<F, S, L>> : NoResetClear {};
+template <bool F, bool S, typename L>
+struct FieldResetClear<FloatField<F, S, L>> : NoResetClear {};
+template <bool F, bool S, typename L>
+struct FieldResetClear<BoolField<F, S, L>> : NoResetClear {};
 }  // namespace internal
 
 struct InternalIntStringizer {
@@ -565,30 +656,20 @@ struct InternalIntParser {
 };
 
 template <typename Enum = int, typename Stringizer = InternalIntStringizer,
-          typename Parser = InternalIntParser>
-class EnumField : public Field {
- public:
+          typename Parser = InternalIntParser, typename Loc = StoredFieldLoc>
+class EnumField : public FieldBase<Loc> {
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
   using T = typename std::underlying_type<Enum>::type;
+  using FieldBase<Loc>::FieldBase;
   EnumField() = default;
-  explicit EnumField(uint32_t boff, uint32_t offset, int id, int number)
-      : Field(id, number, boff, offset),
-        source_offset_(boff),
-        relative_binary_offset_(offset) {}
   EnumField(const EnumField&) = default;
   EnumField(EnumField&&) = default;
-  EnumField& operator=(const EnumField& other) {
-    if (this == &other) {
-      return *this;
-    }
-    if (other.IsPresent()) {
-      Set(other.Get());
-    } else {
-      Clear();
-    }
-    return *this;
-  }
-  EnumField& operator=(EnumField&& other) noexcept {
-    return operator=(static_cast<const EnumField&>(other));
+  EnumField& operator=(const EnumField& other) { return Assign(other); }
+  EnumField& operator=(EnumField&& other) noexcept { return Assign(other); }
+  template <typename OtherLoc>
+  EnumField& operator=(
+      const EnumField<Enum, Stringizer, Parser, OtherLoc>& other) {
+    return Assign(other);
   }
   operator Enum() const { return Get(); }
   operator T() const { return GetUnderlying(); }
@@ -606,8 +687,7 @@ class EnumField : public Field {
   std::string GetForPrinting() const { return ToString(); }
 
   bool IsPresent() const {
-    return Field::IsPresent(static_cast<uint32_t>(FindFieldId(source_offset_)),
-                            this, source_offset_, GetPresenceMaskStart());
+    return IsPresentBit(static_cast<uint32_t>(FindFieldId()));
   }
 
   std::string ToString() const { return Stringizer()(Get()); }
@@ -615,15 +695,12 @@ class EnumField : public Field {
   Enum ParseFromString(const std::string& s) { Set(Parser(s)); }
 
   T GetUnderlying() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const T* addr =
-        Message::GetRuntime(this, source_offset_)
-            ->template ToAddress<const T>(
-                GetMessageBinaryStart() +
-                static_cast<::phaser::BufferOffset>(offset));
+    const T* addr = GetRuntime()->template ToAddress<const T>(
+        GetMessageBinaryStart() + static_cast<::phaser::BufferOffset>(offset));
     if (addr == nullptr) {
       return 0;
     }
@@ -631,18 +708,23 @@ class EnumField : public Field {
   }
 
   void Set(Enum e) {
-    StoreValue(source_offset_,
-               static_cast<typename std::underlying_type<Enum>::type>(e));
+    StoreValue(static_cast<typename std::underlying_type<Enum>::type>(e));
   }
 
-  void Set(T e) { StoreValue(source_offset_, e); }
+  void Set(T e) { StoreValue(e); }
 
-  void Clear() { ClearValue(source_offset_); }
+  void Clear() { ClearValue(); }
 
-  bool operator==(const EnumField& other) const {
-    return static_cast<Enum>(*this) == static_cast<Enum>(other);
+  template <typename OtherLoc>
+  bool operator==(
+      const EnumField<Enum, Stringizer, Parser, OtherLoc>& other) const {
+    return Get() == other.Get();
   }
-  bool operator!=(const EnumField& other) const { return !(*this == other); }
+  template <typename OtherLoc>
+  bool operator!=(
+      const EnumField<Enum, Stringizer, Parser, OtherLoc>& other) const {
+    return !(*this == other);
+  }
 
   size_t SerializedSize() const {
     return ProtoBuffer::TagSize(Number(), WireType::kVarint) +
@@ -665,42 +747,8 @@ class EnumField : public Field {
   }
 
  private:
-  ::phaser::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-  ::phaser::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-  ::phaser::BufferOffset GetPresenceMaskStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_) + 4;
-  }
-
-  uint32_t source_offset_;
-  ::phaser::BufferOffset relative_binary_offset_;
-};
-
-namespace internal {
-template <typename Enum, typename Stringizer, typename Parser>
-struct FieldRelease<EnumField<Enum, Stringizer, Parser>> : NoFieldRelease {};
-template <typename Enum, typename Stringizer, typename Parser>
-struct FieldResetClear<EnumField<Enum, Stringizer, Parser>> : NoResetClear {};
-}  // namespace internal
-
-// String field with an offset inline in the message.
-class StringField : public Field, public StringFieldFacade<StringField> {
- public:
-  StringField() = default;
-  explicit StringField(uint32_t source_offset, uint32_t relative_binary_offset,
-                       int id, int number)
-      : Field(id, number, source_offset, relative_binary_offset),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
-  StringField(const StringField&) = default;
-  StringField(StringField&&) = default;
-  StringField& operator=(const StringField& other) {
-    if (this == &other) {
-      return *this;
-    }
+  template <typename Other>
+  EnumField& Assign(const Other& other) {
     if (other.IsPresent()) {
       Set(other.Get());
     } else {
@@ -708,19 +756,59 @@ class StringField : public Field, public StringFieldFacade<StringField> {
     }
     return *this;
   }
-  StringField& operator=(StringField&& other) noexcept {
-    return operator=(static_cast<const StringField&>(other));
+};
+
+namespace internal {
+template <typename Enum, typename Stringizer, typename Parser, typename L>
+struct FieldRelease<EnumField<Enum, Stringizer, Parser, L>> : NoFieldRelease {};
+template <typename Enum, typename Stringizer, typename Parser, typename L>
+struct FieldResetClear<EnumField<Enum, Stringizer, Parser, L>> : NoResetClear {
+};
+}  // namespace internal
+
+// String field with an offset inline in the message.
+template <typename Loc>
+class BasicStringField : public FieldBase<Loc>,
+                         public StringFieldFacade<BasicStringField<Loc>> {
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
+  using FieldBase<Loc>::FieldBase;
+  BasicStringField() = default;
+  BasicStringField(const BasicStringField&) = default;
+  BasicStringField(BasicStringField&&) = default;
+  BasicStringField& operator=(const BasicStringField& other) {
+    if (this != &other) {
+      Assign(other);
+    }
+    return *this;
+  }
+  BasicStringField& operator=(BasicStringField&& other) noexcept {
+    return operator=(static_cast<const BasicStringField&>(other));
+  }
+  template <typename OtherLoc>
+  BasicStringField& operator=(const BasicStringField<OtherLoc>& other) {
+    Assign(other);
+    return *this;
+  }
+  using StringFieldFacade<BasicStringField<Loc>>::operator==;
+  using StringFieldFacade<BasicStringField<Loc>>::operator!=;
+  template <typename OtherLoc>
+  bool operator==(const BasicStringField<OtherLoc>& other) const {
+    return Get() == other.Get();
+  }
+  template <typename OtherLoc>
+  bool operator!=(const BasicStringField<OtherLoc>& other) const {
+    return Get() != other.Get();
   }
   operator std::string_view() const { return Get(); }
-  StringField& operator=(const std::string& s) {
+  BasicStringField& operator=(const std::string& s) {
     Set(s);
     return *this;
   }
-  StringField& operator=(std::string_view s) {
+  BasicStringField& operator=(std::string_view s) {
     Set(s);
     return *this;
   }
-  StringField& operator=(const char* s) {
+  BasicStringField& operator=(const char* s) {
     ::phaser::PayloadBuffer::SetString(
         GetBufferAddr(), std::string_view(s, std::strlen(s)),
         StringHeaderOffset());
@@ -728,7 +816,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   }
 
   std::string_view Get() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return std::string_view();
     }
@@ -738,12 +826,12 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   }
 
   bool IsPresent() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return false;
     }
     const ::phaser::BufferOffset* addr =
-        GetRuntime()->ToAddress<const ::phaser::BufferOffset>(
+        GetRuntime()->template ToAddress<const ::phaser::BufferOffset>(
             GetMessageBinaryStart() +
             static_cast<::phaser::BufferOffset>(offset));
     return addr != nullptr && *addr != 0;
@@ -762,7 +850,8 @@ class StringField : public Field, public StringFieldFacade<StringField> {
 
   void SetNoCopy(const void* data) {
     ::phaser::StringHeader* header =
-        GetRuntime()->ToAddress<::phaser::StringHeader>(StringHeaderOffset());
+        GetRuntime()->template ToAddress<::phaser::StringHeader>(
+            StringHeaderOffset());
     *header = GetRuntime()->ToOffset(data);
   }
 
@@ -779,7 +868,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   }
 
   size_t size() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
@@ -789,7 +878,7 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   }
 
   const char* data() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return nullptr;
     }
@@ -819,36 +908,26 @@ class StringField : public Field, public StringFieldFacade<StringField> {
   }
 
  private:
-  template <size_t N>
-  friend class StringArrayField;
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  ::phaser::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::phaser::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-  ::phaser::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
+  template <typename Other>
+  void Assign(const Other& other) {
+    if (other.IsPresent()) {
+      Set(other.Get());
+    } else {
+      Clear();
+    }
   }
 
   ::phaser::BufferOffset StringHeaderOffset() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
-      return GetMessageBinaryStart() + relative_binary_offset_;
+      return GetMessageBinaryStart() + Offset();
     }
     return GetMessageBinaryStart() +
            static_cast<::phaser::BufferOffset>(offset);
   }
-
-  uint32_t source_offset_;
-  ::phaser::BufferOffset relative_binary_offset_;
 };
+
+using StringField = BasicStringField<StoredFieldLoc>;
 
 // This is a string field that is not embedded inside a message. They
 // store the std::shared_ptr to the phaser::Runtime pointer instead of
@@ -1001,33 +1080,30 @@ class NonEmbeddedStringField
 // metadata word is not zero.  The field metadata says which, so a message
 // written with another version of the schema can be read either way.
 
-template <typename MessageType, bool kInline = false>
-class IndirectMessageField : public Field {
- public:
+template <typename MessageType, bool kInline = false,
+          typename Loc = StoredFieldLoc>
+class IndirectMessageField
+    : public FieldBase<typename internal::StatefulLoc<Loc>::type> {
+  using Base = FieldBase<typename internal::StatefulLoc<Loc>::type>;
+  PHASER_FIELD_BASE_MEMBERS(Base)
+  using Base::Base;
   IndirectMessageField() = default;
-  explicit IndirectMessageField(uint32_t source_offset,
-                                uint32_t relative_binary_offset, int id,
-                                int number)
-      : Field(id, number, source_offset, relative_binary_offset),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
   IndirectMessageField(const IndirectMessageField&) = default;
   IndirectMessageField(IndirectMessageField&&) = default;
   IndirectMessageField& operator=(const IndirectMessageField& other) {
-    if (this == &other) {
-      return *this;
-    }
-    if (other.IsPresent()) {
-      if (absl::Status s = Mutable()->CloneFrom(other.Get()); !s.ok()) {
-        return *this;
-      }
-    } else {
-      Clear();
+    if (this != &other) {
+      Assign(other);
     }
     return *this;
   }
   IndirectMessageField& operator=(IndirectMessageField&& other) noexcept {
     return operator=(static_cast<const IndirectMessageField&>(other));
+  }
+  template <typename OtherLoc>
+  IndirectMessageField& operator=(
+      const IndirectMessageField<MessageType, kInline, OtherLoc>& other) {
+    Assign(other);
+    return *this;
   }
   operator const MessageType&() const { return Get(); }
   const MessageType& operator*() const { return Get(); }
@@ -1050,15 +1126,13 @@ class IndirectMessageField : public Field {
   bool IsPresent() const { return MessageAt(Locate()) != 0; }
 
   MessageType* Mutable() {
-    if (ABSL_PREDICT_FALSE(
-            !Message::GetMessage(this, source_offset_)->IsMutable())) {
+    if (ABSL_PREDICT_FALSE(!Parent()->IsMutable())) {
       return ReadonlyMutable();
     }
     if constexpr (kInline) {
       return &Bind(InstallInline());
     }
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(relative_binary_offset_);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(Offset());
     if (addr != nullptr && *addr != 0) {
       // Already allocated.
       return &Bind(*addr);
@@ -1071,7 +1145,7 @@ class IndirectMessageField : public Field {
     MessageType& handle = Bind(msg_offset);
 
     // Buffer might have moved, get address of indirect again.
-    addr = GetIndirectAddress(relative_binary_offset_);
+    addr = GetIndirectAddress(Offset());
     *addr = msg_offset;  // Put message field offset into message.
 
     // Install the metadata into the binary message.
@@ -1081,8 +1155,7 @@ class IndirectMessageField : public Field {
 
   void SetOffset(::phaser::BufferOffset offset) {
     static_assert(!kInline, "an inline message is not at an offset");
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(relative_binary_offset_);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(Offset());
     if (addr == nullptr) {
       return;
     }
@@ -1096,10 +1169,9 @@ class IndirectMessageField : public Field {
 
   void Clear() {
     if constexpr (kInline) {
-      const ::phaser::BufferOffset message =
-          GetMessageBinaryStart() + relative_binary_offset_;
-      if (*MutableBuffer(source_offset_)
-               ->template AddressOf<::phaser::BufferOffset>(message) == 0) {
+      const ::phaser::BufferOffset message = GetMessageBinaryStart() + Offset();
+      if (*MutableBuffer()->template AddressOf<::phaser::BufferOffset>(
+              message) == 0) {
         return;
       }
       if constexpr (internal::HasSyncToPayloadWork<MessageType>::value) {
@@ -1113,8 +1185,7 @@ class IndirectMessageField : public Field {
              MessageType::BinarySize());
       return;
     }
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(relative_binary_offset_);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(Offset());
     if (addr == nullptr || *addr == 0) {
       return;
     }
@@ -1127,16 +1198,20 @@ class IndirectMessageField : public Field {
     // Delete the memory in the payload buffer.
     GetBuffer()->Free(GetRuntime()->ToAddress(old_offset));
     // Zero out the offset to the message.
-    addr = GetIndirectAddress(relative_binary_offset_);
+    addr = GetIndirectAddress(Offset());
     if (addr != nullptr) {
       *addr = 0;
     }
   }
 
-  bool operator==(const IndirectMessageField& other) const {
+  template <typename OtherLoc>
+  bool operator==(
+      const IndirectMessageField<MessageType, kInline, OtherLoc>& other) const {
     return Get() == other.Get();
   }
-  bool operator!=(const IndirectMessageField& other) const {
+  template <typename OtherLoc>
+  bool operator!=(
+      const IndirectMessageField<MessageType, kInline, OtherLoc>& other) const {
     return !(*this == other);
   }
 
@@ -1191,8 +1266,7 @@ class IndirectMessageField : public Field {
     MessageType& handle = Bind(msg_offset);
 
     // Buffer might have moved, get address of indirect again.
-    ::phaser::BufferOffset* addr =
-        GetIndirectAddress(relative_binary_offset_);
+    ::phaser::BufferOffset* addr = GetIndirectAddress(Offset());
     *addr = msg_offset;  // Put message field offset into message.
 
     // Install the metadata into the binary message.
@@ -1220,24 +1294,34 @@ class IndirectMessageField : public Field {
     }
   }
 
-  void Indent(int indent) const {
-    Field::Indent(indent);
-    Handle().Indent(indent);
+  // Prints the message the field holds, 'extra' more indented than the
+  // field.
+  void PrintMessage(std::ostream& os, int extra) const {
+    const ::phaser::BufferOffset message = MessageAt(Locate());
+    if (message == 0) {
+      return;
+    }
+    const MessageType& handle = Bind(message);
+    handle.SetIndent(GetIndent() + extra);
+    os << handle;
   }
 
  protected:
+  template <typename Other>
+  void Assign(const Other& other) {
+    if (other.IsPresent()) {
+      (void)Mutable()->CloneFrom(other.Get());
+    } else {
+      Clear();
+    }
+  }
+
   static const MessageType& DefaultMessage() {
     static const MessageType message(InternalDefault{});
     return message;
   }
 
-  ::phaser::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  bool InMutableMessage() const {
-    return Message::GetMessage(this, source_offset_)->IsMutable();
-  }
+  bool InMutableMessage() const { return Parent()->IsMutable(); }
 
   // Sets every field of the inline message, which is in a mutable message,
   // from the PhaserROSMinSize() bytes of its ROS encoding at 'input', as
@@ -1260,7 +1344,7 @@ class IndirectMessageField : public Field {
   MessageType* ReadonlyMutable() {
     const ::phaser::BufferOffset message = MessageAt(Locate());
     if (message == 0) {
-      ThrowReadonlyMessage();
+      Field::ThrowReadonlyMessage();
     }
     return &Bind(message);
   }
@@ -1268,8 +1352,7 @@ class IndirectMessageField : public Field {
   // The inline message in a mutable message, given its metadata if it has
   // none yet.
   ABSL_ATTRIBUTE_ALWAYS_INLINE ::phaser::BufferOffset InstallInline() {
-    const ::phaser::BufferOffset message =
-        GetMessageBinaryStart() + relative_binary_offset_;
+    const ::phaser::BufferOffset message = GetMessageBinaryStart() + Offset();
     if (*GetRuntime()->pb->template AddressOf<::phaser::BufferOffset>(
             message) == 0) {
       // Finding the metadata can move the buffer.
@@ -1297,12 +1380,12 @@ class IndirectMessageField : public Field {
   }
 
   Location Locate() const {
-    const Message* message = Message::GetMessage(this, source_offset_);
+    const Message* message = Parent();
     if (message->FieldLocationsKnown()) {
-      return {compiled_offset_, kInline};
+      return {static_cast<int32_t>(Offset()), kInline};
     }
     const FieldLocation location =
-        message->FindField(static_cast<uint32_t>(number_));
+        message->FindField(static_cast<uint32_t>(Number()));
     return {location.offset, location.id == kInlineMessageFieldId};
   }
 
@@ -1327,57 +1410,42 @@ class IndirectMessageField : public Field {
         GetMessageBinaryStart() + abs_offset);
   }
 
-  ::phaser::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  ::phaser::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::phaser::BufferOffset relative_binary_offset_;
   mutable std::optional<MessageType> msg_;
 };
 
 namespace internal {
-template <>
-struct FieldRelease<StringField> : std::true_type {
+template <typename L>
+struct FieldRelease<BasicStringField<L>> : std::true_type {
   static void Release(const RuntimeHandle& runtime,
                       ::phaser::BufferOffset field) {
     runtime->pb->FreeAt(OffsetAt(runtime->pb, field));
   }
 };
 
-template <typename MessageType>
-struct FieldRelease<IndirectMessageField<MessageType, false>>
+template <typename MessageType, typename L>
+struct FieldRelease<IndirectMessageField<MessageType, false, L>>
     : IndirectMessageRelease<MessageType> {};
 
-template <typename MessageType>
-struct FieldRelease<IndirectMessageField<MessageType, true>>
+template <typename MessageType, typename L>
+struct FieldRelease<IndirectMessageField<MessageType, true, L>>
     : InlineMessageRelease<MessageType> {};
 
-template <>
-struct FieldResetClear<StringField> : NoResetClear {};
+template <typename L>
+struct FieldResetClear<BasicStringField<L>> : NoResetClear {};
 
 // Clear() clears the handle of a message whose fields' handles hold values
 // from outside the payload.  The reset frees everything else.
-template <typename MessageType, bool kInline>
-struct FieldResetClear<IndirectMessageField<MessageType, kInline>>
+template <typename MessageType, bool kInline, typename L>
+struct FieldResetClear<IndirectMessageField<MessageType, kInline, L>>
     : std::integral_constant<
-          ResetClear, !HasSyncToPayloadWork<MessageType>::value
-                          ? ResetClear::kNone
-                      : ClearsHandlesAlone<MessageType>::value
-                          ? ResetClear::kHandle
-                          : ResetClear::kBefore> {};
+          ResetClear,
+          !HasSyncToPayloadWork<MessageType>::value ? ResetClear::kNone
+          : ClearsHandlesAlone<MessageType>::value  ? ResetClear::kHandle
+                                                    : ResetClear::kBefore> {};
 }  // namespace internal
 
-template <typename MessageType>
-using InlineMessageField = IndirectMessageField<MessageType, true>;
+template <typename MessageType, typename Loc = StoredFieldLoc>
+using InlineMessageField = IndirectMessageField<MessageType, true, Loc>;
 
 template <typename MessageType>
 class MessageObject {

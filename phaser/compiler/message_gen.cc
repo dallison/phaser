@@ -1432,6 +1432,45 @@ std::string MessageGenerator::FieldId(const FieldInfo& field) const {
                               : std::to_string(field.id);
 }
 
+bool MessageGenerator::FieldLocationInType(const FieldInfo& field) const {
+  // An Any field and an array of strings hold handles that find their
+  // message from where they are.
+  return field.member_type != "AnyField" &&
+         field.member_type.rfind("StringArrayField<", 0) != 0;
+}
+
+std::string MessageGenerator::FieldMemberType(const FieldInfo& field) const {
+  const std::string& type = field.member_type;
+  if (!FieldLocationInType(field)) {
+    return type;
+  }
+  const std::string loc = "::phaser::FieldSpec<" + FieldOffset(field) + ", " +
+                          FieldId(field) + ", " +
+                          std::to_string(field.field->number()) + ">";
+  if (type == "StringField") {
+    return "BasicStringField<" + loc + ">";
+  }
+  if (type == "StringVectorField") {
+    return "BasicStringVectorField<" + loc + ">";
+  }
+  assert(!type.empty() && type.back() == '>');
+  std::string args = type.substr(0, type.size() - 1);
+  // A singular message field says whether it is stored inline before its
+  // location.
+  const bool singular_message = type.rfind("IndirectMessageField<", 0) == 0 ||
+                                type.rfind("RosTimeField<", 0) == 0 ||
+                                type.rfind("RosDurationField<", 0) == 0 ||
+                                type.rfind("RosHeaderField<", 0) == 0;
+  const std::string inline_arg = ", true>";
+  const bool says_inline = type.size() >= inline_arg.size() &&
+                           type.compare(type.size() - inline_arg.size(),
+                                        inline_arg.size(), inline_arg) == 0;
+  if (singular_message && !says_inline) {
+    args += ", false";
+  }
+  return args + ", " + loc + ">";
+}
+
 std::string MessageGenerator::GenerateInlineMessageOffsets(std::ostream& os) {
   std::string end = std::to_string(binary_size_);
   for (const auto& field : fields_) {
@@ -1537,7 +1576,6 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
 
   GenerateMessageInfo(os, true);
 
-  GenerateIndent(os);
   GenerateCopy(os, true);
   GenerateDebugString(os);
 
@@ -1786,7 +1824,11 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
 
 void MessageGenerator::GenerateFieldDeclarations(std::ostream& os) {
   for (auto& field : fields_) {
-    os << "  ::phaser::" << field->member_type << " " << field->member_name
+    os << "  ";
+    if (FieldLocationInType(*field)) {
+      os << "[[no_unique_address]] ";
+    }
+    os << "::phaser::" << FieldMemberType(*field) << " " << field->member_name
        << ";\n";
   }
   for (auto& [oneof, u] : unions_) {
@@ -1874,8 +1916,17 @@ void MessageGenerator::GenerateDefaultConstructor(std::ostream& os, bool decl) {
      << "(size_t initial_size, ::phaser::Tuning tuning)\n";
   // Generate field initializers.
   GenerateFieldInitializers(os);
-  os << R"XXX({
-  if (BinarySize() > initial_size) {
+  os << "{\n";
+  // A field located at the start of the message finds it from its own
+  // address.
+  for (auto& field : fields_) {
+    if (FieldLocationInType(*field)) {
+      os << "  static_assert(!decltype(" << field->member_name
+         << ")::kAtMessageStart || offsetof(" << MessageName(message_) << ", "
+         << field->member_name << ") == 0);\n";
+    }
+  }
+  os << R"XXX(  if (BinarySize() > initial_size) {
     initial_size = BinarySize() * 2;
   }
   InitDynamicMutable(initial_size, tuning);
@@ -1943,9 +1994,15 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream& os,
     return;
   }
   for (auto& field : fields_) {
-    os << sep << field->member_name << "(offsetof(" << MessageName(message_)
-       << ", " << field->member_name << "), " << FieldOffset(*field) << ", "
-       << FieldId(*field) << ", " << field->field->number() << ")\n";
+    os << sep << field->member_name;
+    if (FieldLocationInType(*field)) {
+      os << "(::phaser::SourceOffset{offsetof(" << MessageName(message_) << ", "
+         << field->member_name << ")})\n";
+    } else {
+      os << "(offsetof(" << MessageName(message_) << ", " << field->member_name
+         << "), " << FieldOffset(*field) << ", " << FieldId(*field) << ", "
+         << field->field->number() << ")\n";
+    }
     sep = ", ";
   }
   for (auto& [oneof, u] : unions_) {
@@ -2420,29 +2477,6 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
     suffix += "<" + std::to_string(union_index) + ">";
   }
 
-  std::string fixed_size_string =
-      field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_SFIXED32 ||
-              field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_SFIXED64 ||
-              field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_FIXED32 ||
-              field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_FIXED64 ||
-              field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_FLOAT ||
-              field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_DOUBLE
-          ? ", true"
-          : ", false";
-  std::string signed_string =
-      field->field->type() == google::protobuf::FieldDescriptor::TYPE_SINT32 ||
-              field->field->type() ==
-                  google::protobuf::FieldDescriptor::TYPE_SINT64
-          ? ", true"
-          : ", false";
-  std::string packed_string = field->field->is_packed() ? ", true" : ", false";
-
   os << "\n  // Field " << field_name << "\n";
   if (field->field->is_repeated()) {
     // Generate repeated accessor.
@@ -2493,8 +2527,8 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
           os << "  void set_" << field_name << "(size_t index, Str value) {\n";
           os << "    " << member_name << ".Set(index, value);\n";
           os << "  }\n";
-          os << "  const ::phaser::StringVectorField& " << sanitized_field_name
-             << "() const {\n";
+          os << "  const ::phaser::" << FieldMemberType(*field) << "& "
+             << sanitized_field_name << "() const {\n";
           os << "    return " << member_name << ";\n";
           os << "  }\n";
         } else {
@@ -2516,16 +2550,12 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
           os << "  }\n";
           if (field->field->type() ==
               google::protobuf::FieldDescriptor::TYPE_ENUM) {
-            os << "  const ::phaser::EnumVectorField<" << field->c_type << ", "
-               << EnumName(field->field->enum_type()) << "Stringizer, "
-               << EnumName(field->field->enum_type()) << "Parser"
-               << packed_string << ">& " << sanitized_field_name
-               << "() const {\n";
+            os << "  const ::phaser::" << FieldMemberType(*field) << "& "
+               << sanitized_field_name << "() const {\n";
             os << "    return " << member_name << ";\n";
             os << "  }\n";
           } else {
-            os << "  const ::phaser::PrimitiveVectorField<" << field->c_type
-               << fixed_size_string << signed_string << packed_string << ">& "
+            os << "  const ::phaser::" << FieldMemberType(*field) << "& "
                << sanitized_field_name << "() const {\n";
             os << "    return " << member_name << ";\n";
             os << "  }\n";
@@ -2556,7 +2586,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
           os << "    " << member_name << ".Add(n, std::forward<F>(f));\n";
           os << "  }\n";
         }
-        os << "  const ::phaser::MessageVectorField<" << field->c_type << ">& "
+        os << "  const ::phaser::" << FieldMemberType(*field) << "& "
            << sanitized_field_name << "() const {\n";
         os << "    return " << member_name << ";\n";
         os << "  }\n";
@@ -5372,17 +5402,6 @@ void MessageGenerator::GenerateProtobufSerialization(std::ostream& os) {
     return ParseFromArray(_phaser_string.data(), _phaser_string.size());
   }
 )XXX";
-}
-
-void MessageGenerator::GenerateIndent(std::ostream& os) {
-  os << "  void Indent([[maybe_unused]] int _phaser_indent) const {\n";
-  for (auto& field : fields_) {
-    os << "    " << field->member_name << ".Indent(_phaser_indent);\n";
-  }
-  for (auto& [oneof, u] : unions_) {
-    os << "    " << u->member_name << ".Indent(_phaser_indent);\n";
-  }
-  os << "  }\n\n";
 }
 
 void MessageGenerator::GenerateStreamer(std::ostream& os) {

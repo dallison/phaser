@@ -324,7 +324,7 @@ template <typename T>
 inline absl::Status DeserializeMessageVectorFromROSAt(
     const RuntimeHandle& runtime, ::phaser::BufferOffset header,
     uint32_t count, ::phaser::ROSReader& reader) {
-  using Vector = ::phaser::MessageVectorField<T>;
+  using Vector = ::phaser::internal::MessageVectorOps<T>;
   if (count == 0) {
     return absl::OkStatus();
   }

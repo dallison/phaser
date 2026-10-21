@@ -104,6 +104,11 @@ class MessageGenerator {
   // id in the field metadata.
   std::string FieldOffset(const FieldInfo& field) const;
   std::string FieldId(const FieldInfo& field) const;
+  // Whether the field's offset, id and number are in its C++ type rather
+  // than in the field.
+  bool FieldLocationInType(const FieldInfo& field) const;
+  // The C++ type of the field's member, in namespace ::phaser.
+  std::string FieldMemberType(const FieldInfo& field) const;
   // Declares the offsets of the inline messages and returns a C++ constant
   // expression for where the message's binary ends.
   std::string GenerateInlineMessageOffsets(std::ostream& os);
@@ -215,7 +220,6 @@ class MessageGenerator {
   void GeneratePhaserWriter(std::ostream& os);
 
   void GenerateProtobufSerialization(std::ostream& os);
-  void GenerateIndent(std::ostream& os);
   void GenerateStreamer(std::ostream& os);
   bool IsAny(const google::protobuf::Descriptor* desc);
   bool IsAny(const google::protobuf::FieldDescriptor* field);

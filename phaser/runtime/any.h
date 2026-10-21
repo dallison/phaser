@@ -75,11 +75,6 @@ class AnyMessage : public Message {
 
   friend std::ostream& operator<<(std::ostream& os, const AnyMessage& msg);
 
-  void Indent(int indent) {
-    type_url_.Indent(indent);
-    value_.Indent(indent);
-  }
-
   const MessageInfo* GetMessageInfo() const override {
     return nullptr;  // Implement this.
   }

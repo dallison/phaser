@@ -15,6 +15,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1226,10 +1227,25 @@ struct Message {
   // after any store into the payload.
   bool IsMutable() const { return mutable_; }
 
+  // For printing.  The fields of the message print at its indent.
+  void Indent(int indent) const {
+    print_indent_ = static_cast<int16_t>(print_indent_ + indent);
+  }
+  void SetIndent(int indent) const {
+    print_indent_ = static_cast<int16_t>(indent);
+  }
+  int GetIndent() const { return print_indent_; }
+  void PrintIndent(std::ostream& os) const {
+    for (int i = 0; i < print_indent_; i++) {
+      os << " ";
+    }
+  }
+
  private:
   // Fields are constructed after these, so they are set in the constructor.
   bool field_locations_known_ = false;
   bool mutable_ = false;
+  mutable int16_t print_indent_ = 0;
 
   // Comparing larger tables would cost more than the lookups it saves.
   static constexpr size_t kMaxComparedFieldDataSize = 256;

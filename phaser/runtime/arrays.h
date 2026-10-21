@@ -143,18 +143,13 @@ struct FixedArrayConstIterator {
   const_reverse_iterator crend() const { return rend(); }
 
 template <typename T, size_t N, bool FixedSize = false, bool Signed = false,
-          bool Packed = true>
-class PrimitiveArrayField : public Field {
- public:
+          bool Packed = true, typename Loc = StoredFieldLoc>
+class PrimitiveArrayField : public FieldBase<Loc> {
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
   static constexpr size_t kExtent = N;
 
+  using FieldBase<Loc>::FieldBase;
   PrimitiveArrayField() = default;
-  explicit PrimitiveArrayField(uint32_t source_offset,
-                               uint32_t relative_binary_offset, int id,
-                               int number)
-      : Field(id, number, source_offset, relative_binary_offset),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
   PrimitiveArrayField(const PrimitiveArrayField&) = default;
   PrimitiveArrayField(PrimitiveArrayField&&) = default;
 
@@ -207,24 +202,16 @@ class PrimitiveArrayField : public Field {
 #undef CTYPE
 
   void BeginDeserialize() {
-    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                              Header(relative_binary_offset_));
-    parsed_count_ = 0;
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
   }
 
   absl::Status FinalizeDeserialize() {
-    if (parsed_count_ > N) {
-      return absl::InvalidArgumentError("array_size overflow");
-    }
     EnsureExtent();
-    parsed_count_ = 0;
     return absl::OkStatus();
   }
 
   void Clear() {
-    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                              Header(relative_binary_offset_));
-    parsed_count_ = 0;
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
     EnsureStorage(N);
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
     for (size_t i = 0; i < N; i++) {
@@ -235,13 +222,16 @@ class PrimitiveArrayField : public Field {
   void clear() { Clear(); }
 
   PrimitiveArrayField& operator=(const PrimitiveArrayField& other) {
-    if (this == &other) {
-      return *this;
+    if (this != &other) {
+      Assign(other);
     }
-    Clear();
-    for (size_t i = 0; i < N; i++) {
-      (*this)[i] = other.GetAt(i);
-    }
+    return *this;
+  }
+  template <typename OtherLoc>
+  PrimitiveArrayField& operator=(
+      const PrimitiveArrayField<T, N, FixedSize, Signed, Packed, OtherLoc>&
+          other) {
+    Assign(other);
     return *this;
   }
   PrimitiveArrayField& operator=(PrimitiveArrayField&& other) noexcept {
@@ -260,21 +250,23 @@ class PrimitiveArrayField : public Field {
   const T* data() const { return StoragePointer(); }
 
   ::phaser::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(::phaser::VectorHeader);
+    return Offset() + sizeof(::phaser::VectorHeader);
   }
-  ::phaser::BufferOffset BinaryOffset() const {
-    return relative_binary_offset_;
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Offset(); }
 
-  bool operator==(const PrimitiveArrayField& other) const {
+  template <typename OtherLoc>
+  bool operator==(const PrimitiveArrayField<T, N, FixedSize, Signed, Packed,
+                                            OtherLoc>& other) const {
     for (size_t i = 0; i < N; i++) {
-      if (GetAt(i) != other.GetAt(i)) {
+      if (GetAt(i) != other.Get(i)) {
         return false;
       }
     }
     return true;
   }
-  bool operator!=(const PrimitiveArrayField& other) const {
+  template <typename OtherLoc>
+  bool operator!=(const PrimitiveArrayField<T, N, FixedSize, Signed, Packed,
+                                            OtherLoc>& other) const {
     return !(*this == other);
   }
 
@@ -359,7 +351,10 @@ class PrimitiveArrayField : public Field {
     return absl::OkStatus();
   }
 
+  // Between BeginDeserialize() and FinalizeDeserialize() the array holds
+  // the elements parsed so far.
   absl::Status Deserialize(ProtoBuffer& buffer) {
+    size_t parsed = NumElements();
     if constexpr (Packed) {
       absl::StatusOr<absl::Span<char>> payload =
           buffer.DeserializeLengthDelimited();
@@ -373,68 +368,74 @@ class PrimitiveArrayField : public Field {
         }
       }
       size_t count = payload->size() / sizeof(T);
-      if (parsed_count_ + count > N) {
+      if (parsed + count > N) {
         return absl::InvalidArgumentError("array_size overflow");
       }
       if constexpr (FixedSize) {
         EnsureStorage(N);
         T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
-        memcpy(base + parsed_count_, payload->data(), payload->size());
-        parsed_count_ += count;
-        SetActiveCount(parsed_count_);
+        memcpy(base + parsed, payload->data(), payload->size());
+        parsed += count;
+        SetActiveCount(parsed);
       } else {
         ProtoBuffer sub_buffer(*payload);
         while (!sub_buffer.Eof()) {
-          if (parsed_count_ >= N) {
+          if (parsed >= N) {
             return absl::InvalidArgumentError("array_size overflow");
           }
           absl::StatusOr<T> v = sub_buffer.DeserializeVarint<T, Signed>();
           if (!v.ok()) {
             return v.status();
           }
-          EnsureStorage(parsed_count_ + 1);
-          GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] =
-              *v;
-          parsed_count_++;
-          SetActiveCount(parsed_count_);
+          EnsureStorage(parsed + 1);
+          GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+          parsed++;
+          SetActiveCount(parsed);
         }
       }
     } else {
       if constexpr (FixedSize) {
-        if (parsed_count_ >= N) {
+        if (parsed >= N) {
           return absl::InvalidArgumentError("array_size overflow");
         }
         absl::StatusOr<T> v = buffer.DeserializeFixed<T>();
         if (!v.ok()) {
           return v.status();
         }
-        EnsureStorage(parsed_count_ + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-        parsed_count_++;
-        SetActiveCount(parsed_count_);
+        EnsureStorage(parsed + 1);
+        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+        parsed++;
+        SetActiveCount(parsed);
       } else {
-        if (parsed_count_ >= N) {
+        if (parsed >= N) {
           return absl::InvalidArgumentError("array_size overflow");
         }
         absl::StatusOr<T> v = buffer.DeserializeVarint<T, Signed>();
         if (!v.ok()) {
           return v.status();
         }
-        EnsureStorage(parsed_count_ + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-        parsed_count_++;
-        SetActiveCount(parsed_count_);
+        EnsureStorage(parsed + 1);
+        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+        parsed++;
+        SetActiveCount(parsed);
       }
     }
     return absl::OkStatus();
   }
 
  private:
+  template <typename Other>
+  void Assign(const Other& other) {
+    Clear();
+    for (size_t i = 0; i < N; i++) {
+      (*this)[i] = other.Get(i);
+    }
+  }
   friend FieldIterator<PrimitiveArrayField, T>;
   friend FieldIterator<PrimitiveArrayField, const T>;
 
   ::phaser::BufferOffset BaseOffset() const {
-    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     if (hdr == nullptr) {
       return 0;
     }
@@ -443,11 +444,11 @@ class PrimitiveArrayField : public Field {
 
   ::phaser::VectorHeader* Header(uint32_t offset) const {
     return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
-        Message::GetMessageBinaryStart(this, source_offset_) + offset);
+        GetMessageBinaryStart() + offset);
   }
 
   size_t NumElements() const {
-    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     if (hdr == nullptr) {
       return 0;
     }
@@ -456,17 +457,15 @@ class PrimitiveArrayField : public Field {
   }
 
   void SetActiveCount(size_t count) {
-    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
   void EnsureStorage(size_t count) {
-    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
-                                                Header(relative_binary_offset_),
-                                                count);
-    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
-                                                 Header(relative_binary_offset_),
-                                                 count);
+    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), Header(Offset()),
+                                              count);
+    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(Offset()),
+                                             count);
   }
 
   void EnsureExtent() {
@@ -519,37 +518,17 @@ class PrimitiveArrayField : public Field {
   }
 
   bool IsMutable() const { return HasMutablePayload(GetRuntime()); }
-
-  ::phaser::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::phaser::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::phaser::BufferOffset relative_binary_offset_;
-  size_t parsed_count_ = 0;
 };
 
-template <typename Enum, size_t N,
-          typename Stringizer = InternalIntStringizer,
-          typename Parser = InternalIntParser, bool Packed = true>
-class EnumArrayField : public Field {
- public:
+template <typename Enum, size_t N, typename Stringizer = InternalIntStringizer,
+          typename Parser = InternalIntParser, bool Packed = true,
+          typename Loc = StoredFieldLoc>
+class EnumArrayField : public FieldBase<Loc> {
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
   static constexpr size_t kExtent = N;
 
+  using FieldBase<Loc>::FieldBase;
   EnumArrayField() = default;
-  explicit EnumArrayField(uint32_t source_offset,
-                          uint32_t relative_binary_offset, int id, int number)
-      : Field(id, number, source_offset, relative_binary_offset),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
   EnumArrayField(const EnumArrayField&) = default;
   EnumArrayField(EnumArrayField&&) = default;
 
@@ -607,24 +586,16 @@ class EnumArrayField : public Field {
 #undef CTYPE
 
   void BeginDeserialize() {
-    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                              Header(relative_binary_offset_));
-    parsed_count_ = 0;
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
   }
 
   absl::Status FinalizeDeserialize() {
-    if (parsed_count_ > N) {
-      return absl::InvalidArgumentError("array_size overflow");
-    }
     EnsureExtent();
-    parsed_count_ = 0;
     return absl::OkStatus();
   }
 
   void Clear() {
-    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                              Header(relative_binary_offset_));
-    parsed_count_ = 0;
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
     EnsureStorage(N);
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
     for (size_t i = 0; i < N; i++) {
@@ -635,13 +606,15 @@ class EnumArrayField : public Field {
   void clear() { Clear(); }
 
   EnumArrayField& operator=(const EnumArrayField& other) {
-    if (this == &other) {
-      return *this;
+    if (this != &other) {
+      Assign(other);
     }
-    Clear();
-    for (size_t i = 0; i < N; i++) {
-      (*this)[i] = other.GetAt(i);
-    }
+    return *this;
+  }
+  template <typename OtherLoc>
+  EnumArrayField& operator=(const EnumArrayField<Enum, N, Stringizer, Parser,
+                                                 Packed, OtherLoc>& other) {
+    Assign(other);
     return *this;
   }
   EnumArrayField& operator=(EnumArrayField&& other) noexcept {
@@ -663,21 +636,23 @@ class EnumArrayField : public Field {
   }
 
   ::phaser::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(::phaser::VectorHeader);
+    return Offset() + sizeof(::phaser::VectorHeader);
   }
-  ::phaser::BufferOffset BinaryOffset() const {
-    return relative_binary_offset_;
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Offset(); }
 
-  bool operator==(const EnumArrayField& other) const {
+  template <typename OtherLoc>
+  bool operator==(const EnumArrayField<Enum, N, Stringizer, Parser, Packed,
+                                       OtherLoc>& other) const {
     for (size_t i = 0; i < N; i++) {
-      if (GetAt(i) != other.GetAt(i)) {
+      if (GetAt(i) != other.Get(i)) {
         return false;
       }
     }
     return true;
   }
-  bool operator!=(const EnumArrayField& other) const {
+  template <typename OtherLoc>
+  bool operator!=(const EnumArrayField<Enum, N, Stringizer, Parser, Packed,
+                                       OtherLoc>& other) const {
     return !(*this == other);
   }
 
@@ -737,7 +712,10 @@ class EnumArrayField : public Field {
     return absl::OkStatus();
   }
 
+  // Between BeginDeserialize() and FinalizeDeserialize() the array holds
+  // the elements parsed so far.
   absl::Status Deserialize(ProtoBuffer& buffer) {
+    size_t parsed = NumElements();
     if constexpr (Packed) {
       absl::StatusOr<absl::Span<char>> data =
           buffer.DeserializeLengthDelimited();
@@ -746,42 +724,49 @@ class EnumArrayField : public Field {
       }
       ProtoBuffer sub_buffer(*data);
       while (!sub_buffer.Eof()) {
-        if (parsed_count_ >= N) {
+        if (parsed >= N) {
           return absl::InvalidArgumentError("array_size overflow");
         }
         absl::StatusOr<T> v = sub_buffer.DeserializeVarint<T, false>();
         if (!v.ok()) {
           return v.status();
         }
-        EnsureStorage(parsed_count_ + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-        parsed_count_++;
-        SetActiveCount(parsed_count_);
+        EnsureStorage(parsed + 1);
+        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+        parsed++;
+        SetActiveCount(parsed);
       }
     } else {
-      if (parsed_count_ >= N) {
+      if (parsed >= N) {
         return absl::InvalidArgumentError("array_size overflow");
       }
       absl::StatusOr<T> v = buffer.DeserializeVarint<T, false>();
       if (!v.ok()) {
         return v.status();
       }
-      EnsureStorage(parsed_count_ + 1);
-      GetRuntime()->template ToAddress<T>(BaseOffset())[parsed_count_] = *v;
-      parsed_count_++;
-      SetActiveCount(parsed_count_);
+      EnsureStorage(parsed + 1);
+      GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+      parsed++;
+      SetActiveCount(parsed);
     }
     return absl::OkStatus();
   }
 
  private:
+  template <typename Other>
+  void Assign(const Other& other) {
+    Clear();
+    for (size_t i = 0; i < N; i++) {
+      (*this)[i] = other.Get(i);
+    }
+  }
   friend EnumFieldIterator<EnumArrayField, Enum>;
   friend EnumFieldIterator<EnumArrayField, const Enum>;
   friend FieldIterator<EnumArrayField, Enum>;
   friend FieldIterator<EnumArrayField, const Enum>;
 
   ::phaser::BufferOffset BaseOffset() const {
-    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     if (hdr == nullptr) {
       return 0;
     }
@@ -790,11 +775,11 @@ class EnumArrayField : public Field {
 
   ::phaser::VectorHeader* Header(uint32_t offset) const {
     return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
-        Message::GetMessageBinaryStart(this, source_offset_) + offset);
+        GetMessageBinaryStart() + offset);
   }
 
   size_t NumElements() const {
-    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     if (hdr == nullptr) {
       return 0;
     }
@@ -803,17 +788,15 @@ class EnumArrayField : public Field {
   }
 
   void SetActiveCount(size_t count) {
-    ::phaser::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
   void EnsureStorage(size_t count) {
-    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(),
-                                                Header(relative_binary_offset_),
-                                                count);
-    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(),
-                                               Header(relative_binary_offset_),
-                                               count);
+    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), Header(Offset()),
+                                              count);
+    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(Offset()),
+                                             count);
   }
 
   void EnsureExtent() {
@@ -866,40 +849,22 @@ class EnumArrayField : public Field {
   }
 
   bool IsMutable() const { return HasMutablePayload(GetRuntime()); }
-
-  ::phaser::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::phaser::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::phaser::BufferOffset relative_binary_offset_;
-  size_t parsed_count_ = 0;
 };
 
-template <typename T, size_t N>
-class MessageArrayField : public MessageVectorField<T> {
+template <typename T, size_t N, typename Loc = StoredFieldLoc>
+class MessageArrayField : public MessageVectorField<T, Loc> {
+  using Vector = MessageVectorField<T, Loc>;
+
  public:
   static constexpr size_t kExtent = N;
 
+  using Vector::Vector;
   MessageArrayField() = default;
-  explicit MessageArrayField(uint32_t source_offset,
-                             uint32_t relative_binary_offset, int id,
-                             int number)
-      : MessageVectorField<T>(source_offset, relative_binary_offset, id,
-                              number) {}
   MessageArrayField(const MessageArrayField&) = default;
   MessageArrayField(MessageArrayField&&) = default;
 
   T operator[](size_t index) const {
-    return MessageVectorField<T>::operator[](static_cast<int>(index));
+    return Vector::operator[](static_cast<int>(index));
   }
 
   T operator[](size_t index) { return MutableObject(index); }
@@ -909,83 +874,65 @@ class MessageArrayField : public MessageVectorField<T> {
   T back() { return (*this)[N - 1]; }
   T back() const { return (*this)[N - 1]; }
 
-  using typename MessageVectorField<T>::iterator;
-  using typename MessageVectorField<T>::const_iterator;
-  using typename MessageVectorField<T>::reverse_iterator;
-  using typename MessageVectorField<T>::const_reverse_iterator;
+  using typename Vector::const_iterator;
+  using typename Vector::const_reverse_iterator;
+  using typename Vector::iterator;
+  using typename Vector::reverse_iterator;
 
   iterator begin() {
     EnsureExtent();
-    return MessageVectorField<T>::begin();
+    return Vector::begin();
   }
   iterator end() {
     EnsureExtent();
-    return MessageVectorField<T>::end();
+    return Vector::end();
   }
-  const_iterator begin() const {
-    return MessageVectorField<T>::begin();
-  }
-  const_iterator end() const {
-    return MessageVectorField<T>::end();
-  }
+  const_iterator begin() const { return Vector::begin(); }
+  const_iterator end() const { return Vector::end(); }
   const_iterator cbegin() const { return begin(); }
   const_iterator cend() const { return end(); }
   reverse_iterator rbegin() {
     EnsureExtent();
-    return MessageVectorField<T>::rbegin();
+    return Vector::rbegin();
   }
   reverse_iterator rend() {
     EnsureExtent();
-    return MessageVectorField<T>::rend();
+    return Vector::rend();
   }
-  const_reverse_iterator rbegin() const {
-    return MessageVectorField<T>::rbegin();
-  }
-  const_reverse_iterator rend() const {
-    return MessageVectorField<T>::rend();
-  }
+  const_reverse_iterator rbegin() const { return Vector::rbegin(); }
+  const_reverse_iterator rend() const { return Vector::rend(); }
   const_reverse_iterator crbegin() const { return rbegin(); }
   const_reverse_iterator crend() const { return rend(); }
 
-  void BeginDeserialize() {
-    MessageVectorField<T>::Clear();
-    parsed_count_ = 0;
-  }
+  void BeginDeserialize() { Vector::Clear(); }
 
   absl::Status FinalizeDeserialize() {
-    if (parsed_count_ > N) {
-      return absl::InvalidArgumentError("array_size overflow");
+    while (Vector::size() < N) {
+      Vector::Add();
     }
-    while (MessageVectorField<T>::size() < N) {
-      MessageVectorField<T>::Add();
-    }
-    parsed_count_ = 0;
     return absl::OkStatus();
   }
 
   void Clear() {
-    if (!HasMutablePayload(MessageVectorField<T>::GetRuntime())) {
+    if (!HasMutablePayload(Vector::GetRuntime())) {
       return;
     }
-    MessageVectorField<T>::Clear();
-    parsed_count_ = 0;
+    Vector::Clear();
     for (size_t i = 0; i < N; i++) {
-      MessageVectorField<T>::Add();
+      Vector::Add();
     }
   }
   void clear() { Clear(); }
 
   MessageArrayField& operator=(const MessageArrayField& other) {
-    if (this == &other) {
-      return *this;
+    if (this != &other) {
+      Assign(other);
     }
-    Clear();
-    for (size_t i = 0; i < N; i++) {
-      if (absl::Status s = MutableObject(i).CloneFrom(other.Get(i));
-          !s.ok()) {
-        return *this;
-      }
-    }
+    return *this;
+  }
+  template <typename OtherLoc>
+  MessageArrayField& operator=(const MessageArrayField<T, N, OtherLoc>& other) {
+    Assign(other);
     return *this;
   }
   MessageArrayField& operator=(MessageArrayField&& other) noexcept {
@@ -1002,13 +949,12 @@ class MessageArrayField : public MessageVectorField<T> {
   T Mutable(size_t index) { return MutableObject(index); }
 
   ::phaser::BufferOffset BinaryEndOffset() const {
-    return MessageVectorField<T>::BinaryEndOffset();
+    return Vector::BinaryEndOffset();
   }
-  ::phaser::BufferOffset BinaryOffset() const {
-    return MessageVectorField<T>::BinaryOffset();
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Vector::BinaryOffset(); }
 
-  bool operator==(const MessageArrayField& other) const {
+  template <typename OtherLoc>
+  bool operator==(const MessageArrayField<T, N, OtherLoc>& other) const {
     for (size_t i = 0; i < N; i++) {
       if (Get(i) != other.Get(i)) {
         return false;
@@ -1016,7 +962,8 @@ class MessageArrayField : public MessageVectorField<T> {
     }
     return true;
   }
-  bool operator!=(const MessageArrayField& other) const {
+  template <typename OtherLoc>
+  bool operator!=(const MessageArrayField<T, N, OtherLoc>& other) const {
     return !(*this == other);
   }
 
@@ -1024,7 +971,7 @@ class MessageArrayField : public MessageVectorField<T> {
     size_t length = 0;
     for (size_t i = 0; i < parsed_count_for_serialize(); i++) {
       length += phaser::ProtoBuffer::LengthDelimitedSize(
-          Field::Number(), (*this)[i].SerializedSize());
+          this->Number(), (*this)[i].SerializedSize());
     }
     return length;
   }
@@ -1033,7 +980,7 @@ class MessageArrayField : public MessageVectorField<T> {
     size_t count = parsed_count_for_serialize();
     for (size_t i = 0; i < count; i++) {
       if (absl::Status status = buffer.SerializeLengthDelimitedHeader(
-              Field::Number(), (*this)[i].SerializedSize());
+              this->Number(), (*this)[i].SerializedSize());
           !status.ok()) {
         return status;
       }
@@ -1044,50 +991,56 @@ class MessageArrayField : public MessageVectorField<T> {
     return absl::OkStatus();
   }
 
+  // Between BeginDeserialize() and FinalizeDeserialize() the array holds
+  // the elements parsed so far.
   absl::Status Deserialize(ProtoBuffer& buffer) {
-    if (parsed_count_ >= N) {
+    if (Vector::size() >= N) {
       return absl::InvalidArgumentError("array_size overflow");
     }
     absl::StatusOr<absl::Span<char>> v = buffer.DeserializeLengthDelimited();
     if (!v.ok()) {
       return v.status();
     }
-    T msg = parsed_count_ < MessageVectorField<T>::size()
-                ? MessageVectorField<T>::Mutable(parsed_count_)
-                : MessageVectorField<T>::Add();
+    T msg = Vector::Add();
     ProtoBuffer msg_buffer(*v);
-    if (absl::Status status = msg.Deserialize(msg_buffer); !status.ok()) {
-      return status;
-    }
-    parsed_count_++;
-    return absl::OkStatus();
+    return msg.Deserialize(msg_buffer);
   }
 
  private:
+  template <typename Other>
+  void Assign(const Other& other) {
+    Clear();
+    for (size_t i = 0; i < N; i++) {
+      if (absl::Status s = MutableObject(i).CloneFrom(other.Get(i)); !s.ok()) {
+        return;
+      }
+    }
+  }
+
   T MutableObject(size_t index) {
-    if (!HasMutablePayload(MessageVectorField<T>::GetRuntime())) {
-      return MessageVectorField<T>::operator[](static_cast<int>(index));
+    if (!HasMutablePayload(Vector::GetRuntime())) {
+      return Vector::operator[](static_cast<int>(index));
     }
-    while (MessageVectorField<T>::size() <= index) {
-      MessageVectorField<T>::Add();
+    while (Vector::size() <= index) {
+      Vector::Add();
     }
-    while (MessageVectorField<T>::size() < N) {
-      MessageVectorField<T>::Add();
+    while (Vector::size() < N) {
+      Vector::Add();
     }
-    return MessageVectorField<T>::Mutable(index);
+    return Vector::Mutable(index);
   }
 
   void EnsureExtent() {
-    if (!HasMutablePayload(MessageVectorField<T>::GetRuntime())) {
+    if (!HasMutablePayload(Vector::GetRuntime())) {
       return;
     }
-    while (MessageVectorField<T>::size() < N) {
-      MessageVectorField<T>::Add();
+    while (Vector::size() < N) {
+      Vector::Add();
     }
   }
 
   size_t parsed_count_for_serialize() const {
-    size_t count = MessageVectorField<T>::size();
+    size_t count = Vector::size();
     if (count == 0) {
       return 0;
     }
@@ -1096,28 +1049,19 @@ class MessageArrayField : public MessageVectorField<T> {
     }
     return count;
   }
-
-  size_t parsed_count_ = 0;
 };
 
+// The array holds a handle for each string, so it holds where it is.
 template <size_t N>
-class StringArrayField : public Field {
+class StringArrayField : public FieldBase<StoredFieldLoc> {
  public:
   static constexpr size_t kExtent = N;
 
+  using FieldBase::FieldBase;
   StringArrayField() = default;
-  explicit StringArrayField(uint32_t source_offset,
-                            uint32_t relative_binary_offset, int id,
-                            int number)
-      : Field(id, number, source_offset, relative_binary_offset),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
   StringArrayField(const StringArrayField&) = default;
   StringArrayField(StringArrayField&& other) noexcept
-      : Field(std::move(other)),
-        source_offset_(other.source_offset_),
-        relative_binary_offset_(other.relative_binary_offset_),
-        parsed_count_(other.parsed_count_) {}
+      : FieldBase(std::move(other)), parsed_count_(other.parsed_count_) {}
 
   std::string_view operator[](size_t index) const { return Get(index); }
 
@@ -1285,11 +1229,9 @@ class StringArrayField : public Field {
   }
 
   ::phaser::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(::phaser::VectorHeader);
+    return Offset() + sizeof(::phaser::VectorHeader);
   }
-  ::phaser::BufferOffset BinaryOffset() const {
-    return relative_binary_offset_;
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Offset(); }
 
   bool operator==(const StringArrayField& other) const {
     for (size_t i = 0; i < N; i++) {
@@ -1345,8 +1287,8 @@ class StringArrayField : public Field {
     data[parsed_count_] = hdr_offset;
     hdr = Header();
     data = GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
-    strings_[parsed_count_] = NonEmbeddedStringField(
-        Message::GetMessage(this, source_offset_), data[parsed_count_]);
+    strings_[parsed_count_] =
+        NonEmbeddedStringField(Parent(), data[parsed_count_]);
     parsed_count_++;
     SetActiveCount(parsed_count_);
     return absl::OkStatus();
@@ -1355,8 +1297,7 @@ class StringArrayField : public Field {
  private:
   ::phaser::VectorHeader* Header() const {
     return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
-        Message::GetMessageBinaryStart(this, source_offset_) +
-        relative_binary_offset_);
+        GetMessageBinaryStart() + Offset());
   }
 
   size_t NumElements() const {
@@ -1434,7 +1375,7 @@ class StringArrayField : public Field {
     if (index >= N) {
       return empty_;
     }
-    if (FindFieldOffset(source_offset_) < 0) {
+    if (FindFieldOffset() < 0) {
       return empty_;
     }
     ::phaser::VectorHeader* hdr = Header();
@@ -1455,8 +1396,7 @@ class StringArrayField : public Field {
       return empty_;
     }
     auto* self = const_cast<StringArrayField*>(this);
-    self->strings_[index] = NonEmbeddedStringField(
-        Message::GetMessage(this, source_offset_), data[index]);
+    self->strings_[index] = NonEmbeddedStringField(Parent(), data[index]);
     return strings_[index];
   }
 
@@ -1472,8 +1412,7 @@ class StringArrayField : public Field {
           hdr->data);
       data[index] = GetRuntime()->ToOffset(str_hdr);
     }
-    strings_[index] = NonEmbeddedStringField(
-        Message::GetMessage(this, source_offset_), data[index]);
+    strings_[index] = NonEmbeddedStringField(Parent(), data[index]);
   }
 
   void BindExistingSlots(size_t start, size_t end) const {
@@ -1503,28 +1442,13 @@ class StringArrayField : public Field {
         continue;
       }
       if (self->strings_[i].IsPlaceholder()) {
-        self->strings_[i] = NonEmbeddedStringField(
-            Message::GetMessage(this, source_offset_), data[i]);
+        self->strings_[i] = NonEmbeddedStringField(Parent(), data[i]);
       }
     }
   }
 
   bool IsMutable() const { return HasMutablePayload(GetRuntime()); }
 
-  ::phaser::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::phaser::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::phaser::BufferOffset relative_binary_offset_;
   mutable std::array<NonEmbeddedStringField, N> strings_;
   size_t parsed_count_ = 0;
   NonEmbeddedStringField empty_;
@@ -1533,30 +1457,32 @@ class StringArrayField : public Field {
 #undef DECLARE_FIXED_ARRAY_BITS
 
 namespace internal {
-template <typename T, size_t N, bool FixedSize, bool Signed, bool Packed>
-struct FieldRelease<PrimitiveArrayField<T, N, FixedSize, Signed, Packed>>
+template <typename T, size_t N, bool FixedSize, bool Signed, bool Packed,
+          typename L>
+struct FieldRelease<PrimitiveArrayField<T, N, FixedSize, Signed, Packed, L>>
     : VectorDataRelease {};
 
 template <typename Enum, size_t N, typename Stringizer, typename Parser,
-          bool Packed>
-struct FieldRelease<EnumArrayField<Enum, N, Stringizer, Parser, Packed>>
+          bool Packed, typename L>
+struct FieldRelease<EnumArrayField<Enum, N, Stringizer, Parser, Packed, L>>
     : VectorDataRelease {};
 
-template <typename T, size_t N>
-struct FieldRelease<MessageArrayField<T, N>> : MessageVectorRelease<T> {};
+template <typename T, size_t N, typename L>
+struct FieldRelease<MessageArrayField<T, N, L>> : MessageVectorRelease<T> {};
 
 // Clearing an array makes its N elements again.
-template <typename T, size_t N, bool FixedSize, bool Signed, bool Packed>
-struct FieldResetClear<PrimitiveArrayField<T, N, FixedSize, Signed, Packed>>
+template <typename T, size_t N, bool FixedSize, bool Signed, bool Packed,
+          typename L>
+struct FieldResetClear<PrimitiveArrayField<T, N, FixedSize, Signed, Packed, L>>
     : ResetClearAfter {};
 
 template <typename Enum, size_t N, typename Stringizer, typename Parser,
-          bool Packed>
-struct FieldResetClear<EnumArrayField<Enum, N, Stringizer, Parser, Packed>>
+          bool Packed, typename L>
+struct FieldResetClear<EnumArrayField<Enum, N, Stringizer, Parser, Packed, L>>
     : ResetClearAfter {};
 
-template <typename T, size_t N>
-struct FieldResetClear<MessageArrayField<T, N>> : ResetClearAfter {};
+template <typename T, size_t N, typename L>
+struct FieldResetClear<MessageArrayField<T, N, L>> : ResetClearAfter {};
 
 template <size_t N>
 struct FieldResetClear<StringArrayField<N>> : ResetClearAfter {};
