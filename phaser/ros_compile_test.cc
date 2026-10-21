@@ -1,6 +1,8 @@
 // Compile and runtime fixture for frontend=ros generated messages.
 #include <cstring>
+#include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -318,6 +320,104 @@ TEST(RosCompileTest, MessageVectorSyntax) {
   allocated[1].id = 22;
   EXPECT_EQ(msg.inners[0]->id.Get(), 21);
   EXPECT_EQ(msg.inners[1]->id.Get(), 22);
+}
+
+TEST(RosCompileTest, InsertAndEmplaceMatchStdVector) {
+  RosCompileMessage msg;
+  std::vector<int32_t> xs;
+  std::vector<std::string> names;
+  std::vector<RosColor> colors;
+  std::vector<int32_t> ids;
+  // The positions cover the front, the back and between, as the vectors grow
+  // over several chunks.
+  for (int32_t i = 0; i < 100; ++i) {
+    const size_t pos = static_cast<size_t>(i) * 7 % (xs.size() + 1);
+    const auto at = static_cast<ptrdiff_t>(pos);
+
+    EXPECT_EQ(*msg.xs.insert(msg.xs.begin() + pos, i), i);
+    xs.insert(xs.begin() + at, i);
+
+    const std::string name = "name " + std::to_string(i);
+    const auto name_pos = std::next(msg.names.begin(), at);
+    EXPECT_EQ(*(i % 2 == 0 ? msg.names.insert(name_pos, name)
+                           : msg.names.emplace(name_pos, name.c_str())),
+              name);
+    names.insert(names.begin() + at, name);
+
+    const auto color = static_cast<RosColor>(i % 3);
+    EXPECT_EQ(*msg.colors.emplace(msg.colors.begin() + pos, color), color);
+    colors.insert(colors.begin() + at, color);
+
+    const auto inner_pos = std::next(msg.inners.begin(), at);
+    if (i % 2 == 0) {
+      (*msg.inners.emplace(inner_pos))->id = i;
+    } else {
+      RosInner inner;
+      inner.id = i;
+      EXPECT_EQ((*msg.inners.insert(inner_pos, inner))->id.Get(), i);
+    }
+    ids.insert(ids.begin() + at, i);
+  }
+
+  // A value of the vector itself, including a string long enough to grow the
+  // buffer.
+  msg.xs.insert(msg.xs.begin(), msg.xs[50]);
+  xs.insert(xs.begin(), xs[50]);
+  msg.names[10] = std::string(100000, 'q');
+  names[10] = std::string(100000, 'q');
+  msg.names.insert(std::next(msg.names.begin(), 3), msg.names.Get(10));
+  names.insert(names.begin() + 3, names[10]);
+  msg.colors.insert(msg.colors.begin(), msg.colors[7]);
+  colors.insert(colors.begin(), colors[7]);
+  msg.inners.insert(std::next(msg.inners.begin(), 5), msg.inners[20]);
+  ids.insert(ids.begin() + 5, ids[20]);
+
+  const auto expect_values = [&](const RosCompileMessage& m) {
+    EXPECT_EQ(m.xs, xs);
+    EXPECT_EQ(m.names, names);
+    EXPECT_EQ(m.colors, colors);
+    ASSERT_EQ(m.inners.size(), ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+      EXPECT_EQ(m.inners[i]->id.Get(), ids[i]) << i;
+    }
+  };
+  expect_values(msg);
+
+  std::string wire;
+  ASSERT_TRUE(msg.SerializeToROSString(&wire).ok());
+  RosCompileMessage parsed;
+  ASSERT_TRUE(
+      parsed.ParseFromROS(absl::Span<const char>(wire.data(), wire.size()))
+          .ok());
+  expect_values(parsed);
+}
+
+TEST(RosCompileTest, InsertIntoReadonlyMessageThrows) {
+  RosCompileMessage msg;
+  msg.xs = {1, 2};
+  msg.names = {"a"};
+  msg.colors = {RosColor::ROS_COLOR_RED};
+  msg.inners.Add()->id = 3;
+  const auto* data = static_cast<const char*>(msg.Data());
+  const std::vector<char> payload(data, data + msg.Size());
+
+  auto readonly =
+      RosCompileMessage::CreateReadonly(payload.data(), payload.size());
+  EXPECT_THROW(readonly.xs.insert(readonly.xs.begin(), 0), std::logic_error);
+  EXPECT_THROW(readonly.names.insert(readonly.names.begin(), "b"),
+               std::logic_error);
+  EXPECT_THROW(
+      readonly.colors.insert(readonly.colors.begin(), RosColor::ROS_COLOR_BLUE),
+      std::logic_error);
+  EXPECT_THROW(readonly.inners.emplace(readonly.inners.begin()),
+               std::logic_error);
+  EXPECT_THROW(readonly.inners.insert(readonly.inners.begin(), RosInner()),
+               std::logic_error);
+  EXPECT_EQ(readonly.xs, std::vector<int32_t>({1, 2}));
+  EXPECT_EQ(readonly.names, std::vector<std::string>({"a"}));
+  EXPECT_EQ(readonly.colors, std::vector<RosColor>({RosColor::ROS_COLOR_RED}));
+  ASSERT_EQ(readonly.inners.size(), 1u);
+  EXPECT_EQ(readonly.inners[0]->id.Get(), 3);
 }
 
 TEST(RosCompileTest, MessageVectorAddThroughWriter) {

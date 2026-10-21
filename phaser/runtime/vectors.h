@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <algorithm>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -108,6 +109,17 @@ class ProtoBuffer;
   const_reverse_iterator rend() const { return relay.rend(); }           \
   const_reverse_iterator crbegin() const { return relay.crbegin(); }     \
   const_reverse_iterator crend() const { return relay.crend(); }
+
+namespace internal {
+// Moves the last of the 'size' values at 'base' to 'index', moving those from
+// 'index' up by one.
+template <typename T>
+void MoveLastTo(T* base, size_t size, size_t index) {
+  const T last = base[size - 1];
+  memmove(base + index + 1, base + index, (size - 1 - index) * sizeof(T));
+  base[index] = last;
+}
+}  // namespace internal
 
 // This is a variable length vector of T.  It looks like a std::vector<T>.
 // The binary message contains a ::phaser::VectorHeader at the binary offset.
@@ -246,9 +258,8 @@ class PrimitiveVectorField : public FieldBase<Loc> {
   iterator insert(Iterator pos, const T& value) {
     const size_t index = static_cast<size_t>((pos.offset - BaseOffset()) /
                                              static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<T> values = Get();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
-    assign(values.begin(), values.end());
+    push_back(value);
+    internal::MoveLastTo(data(), size(), index);
     return begin() + index;
   }
   template <typename Iterator, typename... Args>
@@ -764,9 +775,9 @@ class EnumVectorField : public FieldBase<Loc> {
   iterator insert(Iterator pos, Enum value) {
     const size_t index = static_cast<size_t>((pos.offset - BaseOffset()) /
                                              static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<Enum> values = Get();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
-    assign(values.begin(), values.end());
+    push_back(value);
+    internal::MoveLastTo(GetRuntime()->template ToAddress<T>(BaseOffset()),
+                         size(), index);
     return begin() + index;
   }
   template <typename Iterator, typename... Args>
@@ -1198,6 +1209,64 @@ class MessageVectorOps {
   static void StartElement(char* binary, ::phaser::BufferOffset metadata) {
     memset(binary, 0, Stride());
     memcpy(binary, &metadata, sizeof(metadata));
+  }
+
+  // Moves the elements from 'index' of the vector whose VectorHeader is at
+  // 'header' up by one, over its last element, which must be empty, and
+  // returns the offset of element 'index', made empty.  An element holds only
+  // values and buffer offsets, so its bytes can move.
+  static ::phaser::BufferOffset OpenElementAt(const RuntimeHandle& runtime,
+                                              ::phaser::BufferOffset header,
+                                              uint32_t index) {
+    char* base = reinterpret_cast<char*>(runtime->pb);
+    const auto* hdr =
+        reinterpret_cast<const ::phaser::VectorHeader*>(base + header);
+    const MessageVectorLayout layout =
+        LoadMessageVectorLayout(*runtime, hdr->data);
+    const auto chunk_begin = [&layout](uint32_t k) -> uint32_t {
+      return k == 0 ? 0 : layout.first_capacity << (k - 1);
+    };
+    const auto chunk_data = [&layout, base](uint32_t k) -> char* {
+      if (k == 0) {
+        return base + layout.block + sizeof(::phaser::MessageVectorBlock);
+      }
+      ::phaser::BufferOffset chunk;
+      memcpy(&chunk, base + layout.directory + k * sizeof(chunk),
+             sizeof(chunk));
+      return base + chunk;
+    };
+    // Element 'end' is free.  Each pass moves the elements of chunk k from
+    // 'index' up to 'end', then the last of chunk k - 1 to the start of k.
+    uint32_t end = hdr->num_elements - 1;
+    uint32_t k = 0;
+    while (k < layout.num_chunks && chunk_begin(k + 1) <= end) {
+      ++k;
+    }
+    uint32_t begin = chunk_begin(k);
+    char* chunk = chunk_data(k);
+    for (;;) {
+      const uint32_t low = std::max(begin, index);
+      memmove(chunk + size_t{low + 1 - begin} * Stride(),
+              chunk + size_t{low - begin} * Stride(),
+              size_t{end - low} * Stride());
+      if (low == index) {
+        break;
+      }
+      char* const first = chunk;
+      --k;
+      begin = chunk_begin(k);
+      chunk = chunk_data(k);
+      end = low - 1;
+      memcpy(first, chunk + size_t{end - begin} * Stride(), Stride());
+      if (end == index) {
+        break;
+      }
+    }
+    char* opened = chunk + size_t{index - begin} * Stride();
+    StartElement(opened, reinterpret_cast<const ::phaser::MessageVectorBlock*>(
+                             base + layout.block)
+                             ->metadata);
+    return static_cast<::phaser::BufferOffset>(opened - base);
   }
 
   // The first chunk of a vector that was not reserved holds about this many
@@ -1636,16 +1705,36 @@ class MessageVectorField : public FieldBase<Loc> {
     assign(values.begin(), values.end());
   }
 
+  // A handle to an element from 'pos' on refers to the one before it
+  // afterwards, so it must not be in use across the insertion.
   iterator insert(const_iterator pos, const T& value) {
+    const MessageRuntime* runtime = GetRuntime();
+    if (value.runtime != nullptr && runtime != nullptr &&
+        value.runtime->pb == runtime->pb) {
+      // Copying from this buffer while adding to it could read memory that
+      // the buffer has moved from.  A value cached in 'value' is stored first,
+      // where 'value' is now, as it can be an element that moves.
+      if constexpr (internal::HasSyncToPayloadWork<T>::value) {
+        value.SyncToPayload();
+      }
+      T copy;
+      (void)copy.CloneFrom(value);
+      return insert(pos, copy);
+    }
     const size_t index = pos.Index();
-    std::vector<T> values = CopyValues();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
-    assign(values.begin(), values.end());
+    (void)T(BorrowedRuntime(GetRuntime()), InsertElement(index))
+        .CloneFrom(value);
     return iterator(this, index);
   }
   template <typename... Args>
   iterator emplace(const_iterator pos, Args&&... args) {
-    return insert(pos, T(std::forward<Args>(args)...));
+    if constexpr (sizeof...(Args) == 0) {
+      const size_t index = pos.Index();
+      (void)InsertElement(index);
+      return iterator(this, index);
+    } else {
+      return insert(pos, T(std::forward<Args>(args)...));
+    }
   }
   iterator erase(const_iterator pos) {
     const size_t index = pos.Index();
@@ -1839,6 +1928,16 @@ class MessageVectorField : public FieldBase<Loc> {
       result.push_back(std::move(copy));
     }
     return result;
+  }
+
+  // Inserts an empty element at 'index' and returns its offset.
+  ::phaser::BufferOffset InsertElement(size_t index) {
+    (void)AddElement();
+    // A mutable message has its compiled layout.
+    const Message* message = Parent();
+    return Ops::OpenElementAt(message->runtime,
+                              message->absolute_binary_offset + Offset(),
+                              static_cast<uint32_t>(index));
   }
 
   // The offset of element 'index', or 0 if there is no such element.
@@ -2213,16 +2312,29 @@ class BasicStringVectorField : public FieldBase<Loc> {
   }
 
   iterator insert(const_iterator pos, std::string_view value) {
+    const ::phaser::PayloadBuffer* pb = *GetBufferAddr();
+    const auto at = reinterpret_cast<uintptr_t>(value.data());
+    const auto start = reinterpret_cast<uintptr_t>(pb);
+    if (at >= start && at < start + pb->full_size) {
+      // Adding to the buffer can move it from under 'value'.
+      const std::string copy(value);
+      return insert(pos, copy);
+    }
     const size_t index = pos.Index();
-    std::vector<std::string> values = CopyValues();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index),
-                  std::string(value));
-    assign(values.begin(), values.end());
+    push_back(value);
+    ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+    internal::MoveLastTo(
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data),
+        hdr->num_elements, index);
     return iterator(this, index);
   }
   template <typename... Args>
   iterator emplace(const_iterator pos, Args&&... args) {
-    return insert(pos, std::string(std::forward<Args>(args)...));
+    if constexpr (std::is_constructible_v<std::string_view, Args&&...>) {
+      return insert(pos, std::string_view(std::forward<Args>(args)...));
+    } else {
+      return insert(pos, std::string(std::forward<Args>(args)...));
+    }
   }
   iterator erase(const_iterator pos) {
     const size_t index = pos.Index();

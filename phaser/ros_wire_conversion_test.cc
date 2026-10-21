@@ -4,8 +4,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -993,6 +995,100 @@ TEST(ROSWireConversionTest, MutableVectorElementsMatchTheHandlePath) {
   std::string protobuf_reencoded;
   ASSERT_TRUE(protobuf_decoded.SerializeToROSString(&protobuf_reencoded).ok());
   EXPECT_EQ(protobuf_reencoded, expected);
+}
+
+TEST(ROSWireConversionTest, InsertedElementsMatchAppendedOnes) {
+  DirectElements appended;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto element = appended.elements.Add();
+    PopulateDirectElement(element, i, 1);
+  }
+
+  // The same elements, inserted in another order at the positions that put
+  // each in the same place, so that the insertions move elements across the
+  // vector's chunks.
+  DirectElements inserted;
+  std::vector<int> order;
+  for (int n = 0; n < kDirectElementCount; ++n) {
+    const int i = n * 17 % kDirectElementCount;
+    const auto at = std::lower_bound(order.begin(), order.end(), i);
+    const auto pos = std::next(inserted.elements.begin(), at - order.begin());
+    order.insert(at, i);
+    if (n % 3 == 0) {
+      auto element = *inserted.elements.emplace(pos);
+      PopulateDirectElement(element, i, 1);
+      continue;
+    }
+    DirectElement source;
+    PopulateDirectElement(source, i, 1);
+    const auto element = n % 3 == 1 ? inserted.elements.insert(pos, source)
+                                    : inserted.elements.emplace(pos, source);
+    EXPECT_EQ((*element).id.Get(), i);
+  }
+
+  std::string expected;
+  ASSERT_TRUE(appended.SerializeToROSString(&expected).ok());
+  std::string actual;
+  ASSERT_TRUE(inserted.SerializeToROSString(&actual).ok());
+  EXPECT_EQ(actual, expected);
+  EXPECT_EQ(inserted.SerializeAsString(), appended.SerializeAsString());
+}
+
+TEST(ROSWireConversionTest, InsertedElementOfTheSameVectorIsCopied) {
+  // Large enough that copying it grows the buffer.
+  const std::string label(1 << 20, 'x');
+  DirectElements message;
+  for (int i = 0; i < 10; ++i) {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, i, 1);
+  }
+  message.elements[7].label = label;
+  message.elements.insert(std::next(message.elements.begin(), 2),
+                          message.elements[7]);
+
+  DirectElements expected;
+  for (const int i : {0, 1, 7, 2, 3, 4, 5, 6, 7, 8, 9}) {
+    auto element = expected.elements.Add();
+    PopulateDirectElement(element, i, 1);
+    if (i == 7) {
+      element.label = label;
+    }
+  }
+  std::string expected_wire;
+  ASSERT_TRUE(expected.SerializeToROSString(&expected_wire).ok());
+  std::string actual_wire;
+  ASSERT_TRUE(message.SerializeToROSString(&actual_wire).ok());
+  EXPECT_EQ(actual_wire, expected_wire);
+}
+
+TEST(ROSWireConversionTest, InsertedHandleKeepsItsChangesWithItsElement) {
+  const ::ros::Time stamp(77, 88);
+  DirectElements message;
+  for (int i = 0; i < 4; ++i) {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, i, 0);
+  }
+  {
+    // The handle holds its stamp until it is destroyed, after its element
+    // has moved.
+    auto element = message.elements[2];
+    element.stamp = stamp;
+    message.elements.insert(message.elements.begin(), element);
+  }
+
+  DirectElements expected;
+  for (const int i : {2, 0, 1, 2, 3}) {
+    auto element = expected.elements.Add();
+    PopulateDirectElement(element, i, 0);
+    if (i == 2) {
+      element.stamp = stamp;
+    }
+  }
+  std::string expected_wire;
+  ASSERT_TRUE(expected.SerializeToROSString(&expected_wire).ok());
+  std::string actual_wire;
+  ASSERT_TRUE(message.SerializeToROSString(&actual_wire).ok());
+  EXPECT_EQ(actual_wire, expected_wire);
 }
 
 TEST(ROSWireConversionTest, LeafElementsParseLikeTheirSetters) {
