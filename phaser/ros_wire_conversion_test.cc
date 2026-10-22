@@ -1360,22 +1360,34 @@ TEST(ROSWireConversionTest, BranchElementsParseLikeTheHandlePath) {
   ASSERT_TRUE(protobuf_decoded.SerializeToROSString(&protobuf_reencoded).ok());
   EXPECT_EQ(protobuf_reencoded, ros);
 
-  // A root message reads its own fields through handles, so it stores each
-  // as the field setters do.
+  // DeserializeFromROSUncleared() reads a message's own fields through
+  // handles, so it stores each as the field setters do.
   for (int i = 0; i < kBranchCount; ++i) {
     std::string branch_ros;
     ASSERT_TRUE(message.branches[i].SerializeToROSString(&branch_ros).ok());
     const absl::Span<const char> branch_input(branch_ros.data(),
                                               branch_ros.size());
+    DirectBranch handled;
+    ::phaser::ROSReader reader(branch_ros);
+    ASSERT_TRUE(handled.DeserializeFromROSUncleared(reader).ok());
+    EXPECT_EQ(decoded.branches[i].SerializeAsString(),
+              handled.SerializeAsString())
+        << i;
     DirectBranch root;
     ASSERT_TRUE(root.ParseFromROS(branch_input).ok());
-    EXPECT_EQ(decoded.branches[i].SerializeAsString(), root.SerializeAsString())
+    EXPECT_EQ(root.SerializeAsString(), handled.SerializeAsString()) << i;
+    ProtobufDirectBranch protobuf_handled;
+    ::phaser::ROSReader protobuf_reader(branch_ros);
+    ASSERT_TRUE(protobuf_handled.DeserializeFromROSUncleared(protobuf_reader)
+                    .ok());
+    EXPECT_EQ(protobuf_decoded.branches(static_cast<size_t>(i))
+                  .SerializeAsString(),
+              protobuf_handled.SerializeAsString())
         << i;
     ProtobufDirectBranch protobuf_root;
     ASSERT_TRUE(protobuf_root.ParseFromROS(branch_input).ok());
-    EXPECT_EQ(protobuf_decoded.branches(static_cast<size_t>(i))
-                  .SerializeAsString(),
-              protobuf_root.SerializeAsString())
+    EXPECT_EQ(protobuf_root.SerializeAsString(),
+              protobuf_handled.SerializeAsString())
         << i;
   }
 
@@ -1493,6 +1505,32 @@ TEST(ROSWireConversionTest, ClearingAMainMessageResetsItsCachedROSValues) {
                   .ok());
   EXPECT_EQ(message.stamp.Get().sec, 3u);
   EXPECT_EQ(message.stamp.Get().nsec, 4u);
+}
+
+TEST(ROSWireConversionTest, ParsingDropsROSValuesNotYetWritten) {
+  DirectBranch expected;
+  expected.stamp = ::ros::Time(1, 2);
+  expected.header->stamp = ::ros::Time(3, 4);
+  expected.header->frame_id = "map";
+  expected.label = "parsed";
+  std::string expected_ros;
+  ASSERT_TRUE(expected.SerializeToROSString(&expected_ros).ok());
+
+  DirectBranch message;
+  message.stamp = ::ros::Time(5, 6);
+  message.header->stamp = ::ros::Time(7, 8);
+  message.header->frame_id = "odom";
+  message.label = "old";
+  ASSERT_TRUE(message
+                  .ParseFromROS(absl::Span<const char>(expected_ros.data(),
+                                                       expected_ros.size()))
+                  .ok());
+  EXPECT_EQ(message.stamp.Get().sec, 1u);
+  EXPECT_EQ(message.header->stamp.sec, 3u);
+  EXPECT_EQ(message.label.Get(), "parsed");
+  std::string message_ros;
+  ASSERT_TRUE(message.SerializeToROSString(&message_ros).ok());
+  EXPECT_EQ(message_ros, expected_ros);
 }
 
 TEST(ROSWireConversionTest,

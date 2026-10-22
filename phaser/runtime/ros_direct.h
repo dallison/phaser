@@ -277,7 +277,15 @@ template <typename T>
 inline absl::Status DeserializeFromROSAt(const RuntimeHandle& runtime,
                                          ::phaser::BufferOffset offset,
                                          ::phaser::ROSReader& reader) {
-  if constexpr (HasROSParseAt<T>::value) {
+  if constexpr (HasROSUncheckedParseAt<T>::value) {
+    if (reader.Remaining() < T::PhaserROSMinSize()) {
+      return reader.TruncatedError(T::PhaserROSMinSize());
+    }
+    T::PhaserDeserializeFromROSUncheckedAt(
+        runtime->pb->template AddressOf<char>(offset),
+        reader.ReadRawUnchecked(T::PhaserROSMinSize()));
+    return absl::OkStatus();
+  } else if constexpr (HasROSParseAt<T>::value) {
     return T::PhaserDeserializeFromROSAt(runtime, offset, reader);
   } else {
     return T(BorrowedRuntime(runtime), offset)

@@ -5041,6 +5041,14 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   os << "absl::Status " << name
      << "::DeserializeFromROS(::phaser::ROSReader& _phaser_buffer) {\n";
   os << "  Clear();\n";
+  if (CanDeserializeROSDirectly()) {
+    // Clearing leaves the fields' handles holding nothing, so the payload
+    // can be written without them.
+    os << "  if (IsMutable()) {\n";
+    os << "    return PhaserDeserializeFromROSAt(::phaser::Message::runtime, "
+          "::phaser::Message::absolute_binary_offset, _phaser_buffer);\n";
+    os << "  }\n";
+  }
   os << "  return DeserializeFromROSUncleared(_phaser_buffer);\n";
   os << "}\n\n";
 
