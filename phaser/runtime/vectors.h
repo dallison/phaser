@@ -1595,7 +1595,7 @@ class MessageVectorField : public FieldBase<Loc> {
 
   // The handle borrows the runtime of the message this vector is in, so it is
   // valid only while the handle it was made from exists.
-  T Add() {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE T Add() {
     if constexpr (std::is_constructible_v<T, MutablePart, const RuntimeHandle&,
                                           ::phaser::BufferOffset>) {
       // Read before the element is stored, which the compiler must assume
@@ -1603,7 +1603,11 @@ class MessageVectorField : public FieldBase<Loc> {
       const RuntimeHandle runtime = BorrowedRuntime(GetRuntime());
       const ::phaser::BufferOffset element = AddElement();
       if (element == 0) {
-        return DetachedMessage();
+        // Made like the element's handle: one made through its address would
+        // keep both in memory, and every field store would reload them.
+        const internal::AllocationFailureSink sink =
+            internal::AllocationFailureSinkFor<T>();
+        return T(MutablePart{}, sink.runtime, sink.message);
       }
       return T(MutablePart{}, runtime, element);
     } else {
@@ -1615,7 +1619,7 @@ class MessageVectorField : public FieldBase<Loc> {
     }
   }
 
-  static T DetachedMessage() {
+  ABSL_ATTRIBUTE_NOINLINE static T DetachedMessage() {
     T msg(InternalDefault{});
     internal::BindToAllocationFailureSink(msg);
     return msg;

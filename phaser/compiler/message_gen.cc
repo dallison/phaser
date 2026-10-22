@@ -2103,16 +2103,11 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
      << MessageName(message_)
      << "::TryCreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) "
         "{\n"
-        "  if (addr == nullptr || size < sizeof(::phaser::PayloadBuffer) + "
-        "sizeof(::phaser::FreeBlockHeader) || size > UINT32_MAX) {\n"
-        "    return absl::InvalidArgumentError(\"phaser: buffer is too "
-        "small\");\n"
-        "  }\n"
-        "  ::phaser::PayloadBuffer *pb = ::phaser::NewFixedBuffer<"
+        "  ::phaser::PayloadBuffer *pb = ::phaser::NewMutableFixedBuffer<"
      << MetadataTypeList()
      << ">(addr, size, tuning);\n"
-        "  if (pb == nullptr || pb->AllocationFailed() || pb->message == 0) {\n"
-        "    return ::phaser::internal::AllocationFailedError();\n"
+        "  if (pb == nullptr) {\n"
+        "    return ::phaser::NewMutableFixedBufferError(addr, size);\n"
         "  }\n"
         "  "
      << MessageName(message_)
@@ -2121,16 +2116,24 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  return msg;\n"
         "}\n"
         "\n";
+  // Not a wrapper of TryCreateMutable: moving the message out of the StatusOr
+  // reloads the runtime just stored, which stalls.
   os << "// Create a mutable message in the given memory.  Aborts if the "
         "memory is too\n// small for the message's fixed parts.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
-        "  auto message = TryCreateMutable(addr, size, tuning);\n"
-        "  if (!message.ok()) {\n"
+        "  ::phaser::PayloadBuffer *pb = ::phaser::NewMutableFixedBuffer<"
+     << MetadataTypeList()
+     << ">(addr, size, tuning);\n"
+        "  if (pb == nullptr) {\n"
         "    ::phaser::internal::Fatal(\"buffer is too small for "
         "CreateMutable\");\n"
         "  }\n"
-        "  return std::move(*message);\n"
+        "  "
+     << MessageName(message_)
+     << " msg{::phaser::InternalDefault{}};\n"
+        "  msg.BindNewFixed(pb);\n"
+        "  return msg;\n"
         "}\n"
         "\n";
 

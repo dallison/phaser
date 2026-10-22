@@ -1801,12 +1801,18 @@ class NewBufferImage {
   uint32_t size_ = 0;
 };
 
+// True if the 'size' bytes at 'addr' can hold an empty fixed-size buffer.
+inline bool CanHoldFixedBuffer(const void* addr, size_t size) {
+  return addr != nullptr &&
+         size >= sizeof(::phaser::PayloadBuffer) +
+                     sizeof(::phaser::FreeBlockHeader) &&
+         size <= UINT32_MAX;
+}
+
 template <typename Root, typename... Reachable>
 ::phaser::PayloadBuffer* MakeFixedBuffer(void* addr, size_t size,
                                          bool bitmaps) {
-  if (addr == nullptr ||
-      size < sizeof(::phaser::PayloadBuffer) + sizeof(::phaser::FreeBlockHeader) ||
-      size > UINT32_MAX) {
+  if (!CanHoldFixedBuffer(addr, size)) {
     return nullptr;
   }
   auto* pb = new (addr)
@@ -1836,19 +1842,52 @@ template <typename Root, typename... Reachable>
                                              tuning == Tuning::kPerformance);
 }
 
+// NewFixedBuffer() for a mutable message, or null if the memory is too small
+// for the message's fixed parts.
+template <typename Root, typename... Reachable>
+::phaser::PayloadBuffer* NewMutableFixedBuffer(void* addr, size_t size,
+                                               Tuning tuning) {
+  if (!CanHoldFixedBuffer(addr, size)) {
+    return nullptr;
+  }
+  ::phaser::PayloadBuffer* pb =
+      NewFixedBuffer<Root, Reachable...>(addr, size, tuning);
+  if (pb == nullptr || pb->AllocationFailed() || pb->message == 0) {
+    return nullptr;
+  }
+  return pb;
+}
+
+// Why NewMutableFixedBuffer() returned null: InvalidArgument if the memory
+// cannot hold a buffer, ResourceExhausted if the buffer has no room for the
+// message's fixed parts.
+inline absl::Status NewMutableFixedBufferError(const void* addr, size_t size) {
+  if (!CanHoldFixedBuffer(addr, size)) {
+    return absl::InvalidArgumentError("phaser: buffer is too small");
+  }
+  return internal::AllocationFailedError();
+}
+
 namespace internal {
 
-// Binds 'msg' to detached per-thread storage after the allocation for it
-// failed.  Callers that must hand back a writable message use this so writes
-// through the handle stay in bounds.  The owning buffer has already recorded
-// the failure, and nothing reads the storage back.  Allocations made through
-// the detached handle always fail because its buffer has no free space.
+// A mutable runtime and the offset of an empty message in it.
+struct AllocationFailureSink {
+  MessageRuntime* runtime;
+  ::phaser::BufferOffset message;
+};
+
+// An empty MessageType in detached per-thread storage, for a handle whose
+// allocation failed.  Callers that must hand back a writable message use this
+// so writes through the handle stay in bounds.  The owning buffer has already
+// recorded the failure, and nothing reads the storage back.  Allocations made
+// through the sink always fail because its buffer has no free space.
 template <typename MessageType>
-void BindToAllocationFailureSink(MessageType& msg) {
+ABSL_ATTRIBUTE_NOINLINE AllocationFailureSink AllocationFailureSinkFor() {
   constexpr size_t kSize =
       (sizeof(::phaser::PayloadBuffer) + MessageType::BinarySize() + 64 + 7) &
       ~size_t{7};
   alignas(8) static thread_local char storage[kSize];
+  static thread_local MessageRuntime runtime(nullptr);
   auto* pb = new (storage)
       ::phaser::PayloadBuffer(static_cast<uint32_t>(kSize), false);
   if (::phaser::PayloadBuffer::AllocateMainMessage(
@@ -1862,8 +1901,15 @@ void BindToAllocationFailureSink(MessageType& msg) {
   // The sink is full: further allocations must fail rather than reuse the
   // space just taken by the empty message.
   pb->MarkAllocationFailed();
-  MessageRuntime runtime(pb, true);
-  msg.BindDetached(runtime, pb->message);
+  runtime = MessageRuntime(pb, true);
+  return {&runtime, pb->message};
+}
+
+// Binds 'msg' to its own copy of the sink's runtime.
+template <typename MessageType>
+ABSL_ATTRIBUTE_NOINLINE void BindToAllocationFailureSink(MessageType& msg) {
+  const AllocationFailureSink sink = AllocationFailureSinkFor<MessageType>();
+  msg.BindDetached(*sink.runtime, sink.message);
 }
 
 }  // namespace internal
