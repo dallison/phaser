@@ -743,12 +743,18 @@ struct MessageRuntime {
     if (pb == nullptr) {
       return {};
     }
+    if (is_mutable_) {
+      return MutableStringView(header_offset);
+    }
     return pb->GetStringView(header_offset, BufferSize());
   }
 
   size_t StringSize(::phaser::BufferOffset header_offset) const {
     if (pb == nullptr) {
       return 0;
+    }
+    if (is_mutable_) {
+      return MutableStringView(header_offset).size();
     }
     return pb->StringSize(header_offset, BufferSize());
   }
@@ -757,7 +763,24 @@ struct MessageRuntime {
     if (pb == nullptr) {
       return nullptr;
     }
+    if (is_mutable_) {
+      return MutableStringView(header_offset).data();
+    }
     return pb->StringData(header_offset, BufferSize());
+  }
+
+  // The string whose StringHeader is at 'header_offset' in a mutable buffer,
+  // which this process built.
+  std::string_view MutableStringView(
+      ::phaser::BufferOffset header_offset) const {
+    const ::phaser::BufferOffset str =
+        *pb->UncheckedAddress<const ::phaser::BufferOffset>(header_offset);
+    if (str == 0) {
+      return {};
+    }
+    const auto* length = pb->UncheckedAddress<const uint32_t>(str);
+    return std::string_view(reinterpret_cast<const char*>(length + 1),
+                            *length);
   }
 
   // Size-aware presence-bit read, a byte at a time as PayloadBuffer writes
