@@ -246,6 +246,32 @@ class ROSBuffer {
 
   void Clear() { size_ = 0; }
 
+  // Makes room for 'length' more bytes, growing the buffer if it owns it.
+  absl::Status EnsureSpace(size_t length) {
+    // size_ never exceeds capacity_, so the subtraction cannot wrap.
+    if (ABSL_PREDICT_TRUE(data_ != nullptr && !allocation_failed_ &&
+                          length <= capacity_ - size_)) {
+      return absl::OkStatus();
+    }
+    return EnsureSpaceSlow(length);
+  }
+
+  // Calls 'write' with the start and end of the free space.  It returns the
+  // end of what it wrote there, which is appended, or null if that did not
+  // fit, and then nothing is.
+  template <typename Write>
+  bool TryWrite(Write&& write) {
+    if (ABSL_PREDICT_FALSE(data_ == nullptr || allocation_failed_)) {
+      return false;
+    }
+    char* const end = write(data_ + size_, data_ + capacity_);
+    if (end == nullptr) {
+      return false;
+    }
+    size_ = static_cast<size_t>(end - data_);
+    return true;
+  }
+
   // Appends 'length' bytes for the caller to write and returns where they
   // start.  They must all be written before the buffer is used again.
   absl::StatusOr<char*> Extend(size_t length) {
@@ -412,15 +438,6 @@ class ROSBuffer {
   }
 
  private:
-  absl::Status EnsureSpace(size_t length) {
-    // size_ never exceeds capacity_, so the subtraction cannot wrap.
-    if (ABSL_PREDICT_TRUE(data_ != nullptr && !allocation_failed_ &&
-                          length <= capacity_ - size_)) {
-      return absl::OkStatus();
-    }
-    return EnsureSpaceSlow(length);
-  }
-
   ABSL_ATTRIBUTE_NOINLINE absl::Status EnsureSpaceSlow(size_t length) {
     if (allocation_failed_) {
       return absl::ResourceExhaustedError(

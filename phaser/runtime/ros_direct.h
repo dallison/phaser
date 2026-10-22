@@ -18,6 +18,8 @@
 #include <string_view>
 #include <type_traits>
 
+#include "absl/base/optimization.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "phaser/runtime/message.h"
@@ -83,12 +85,14 @@ inline ::phaser::BufferOffset MessageAt(const ::phaser::PayloadBuffer* pb,
 
 // Calls 'f' with the offset of each element of the vector of messages whose
 // VectorHeader is at 'header', in order.  If 'f' returns a status, stops at
-// the first error and returns it.
+// the first error and returns it; if it returns a bool, stops at the first
+// false and returns false.
 template <typename F>
 inline auto ForEachMessageVectorElement(const ::phaser::PayloadBuffer* pb,
                                         ::phaser::BufferOffset header, F&& f) {
   using Result = std::invoke_result_t<F, ::phaser::BufferOffset>;
   constexpr bool kReturnsStatus = std::is_same_v<Result, absl::Status>;
+  constexpr bool kReturnsBool = std::is_same_v<Result, bool>;
   const auto hdr = LoadAt<::phaser::VectorHeader>(pb, header);
   uint32_t remaining = hdr.data == 0 ? 0 : hdr.num_elements;
   if (remaining != 0) {
@@ -104,6 +108,10 @@ inline auto ForEachMessageVectorElement(const ::phaser::PayloadBuffer* pb,
         if constexpr (kReturnsStatus) {
           if (absl::Status status = f(element); !status.ok()) {
             return status;
+          }
+        } else if constexpr (kReturnsBool) {
+          if (!f(element)) {
+            return false;
           }
         } else {
           f(element);
@@ -123,16 +131,79 @@ inline auto ForEachMessageVectorElement(const ::phaser::PayloadBuffer* pb,
   }
   if constexpr (kReturnsStatus) {
     return absl::OkStatus();
+  } else if constexpr (kReturnsBool) {
+    return true;
   }
 }
 
+// The direct ROS writers write at 'out', in space that ends at 'end', and
+// return the end of what they wrote, or null if it does not fit.  The output
+// position is passed and returned by value: one kept in memory would be
+// reloaded after every byte written, as the bytes could alias it.
+
+template <typename T>
+inline char* WriteROSValue(char* out, char* end, T value) {
+  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < sizeof(T))) {
+    return nullptr;
+  }
+  ::phaser::ROSBuffer::Encode(out, value);
+  return out + sizeof(T);
+}
+
+// 's' is a string in a Phaser buffer, so its length fits in 32 bits.
+inline char* WriteROSString(char* out, char* end, std::string_view s) {
+  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) <
+                         sizeof(uint32_t) + s.size())) {
+    return nullptr;
+  }
+  ::phaser::ROSBuffer::Encode(out, static_cast<uint32_t>(s.size()));
+  CopyString(out + sizeof(uint32_t), s.data(), s.size());
+  return out + sizeof(uint32_t) + s.size();
+}
+
+inline char* WriteROSRaw(char* out, char* end, const void* data,
+                         size_t length) {
+  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < length)) {
+    return nullptr;
+  }
+  if (length != 0) {
+    memcpy(out, data, length);
+  }
+  return out + length;
+}
+
+// 'values' are the elements of a Phaser vector, so there are fewer than 2^32.
+template <typename T>
+inline char* WriteROSArray(char* out, char* end, absl::Span<const T> values) {
+  static_assert(std::is_arithmetic_v<T> || std::is_enum_v<T>);
+  using Wire = std::conditional_t<std::is_enum_v<T>, int32_t, T>;
+  static_assert(sizeof(Wire) == sizeof(T), "ROS enum storage must be 32 bits");
+  const size_t byte_size = values.size() * sizeof(Wire);
+  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < byte_size)) {
+    return nullptr;
+  }
+  const uint16_t endian_marker = 1;
+  if (std::is_same_v<std::remove_cv_t<T>, bool> ||
+      *reinterpret_cast<const uint8_t*>(&endian_marker) == 1) {
+    if (byte_size != 0) {
+      memcpy(out, values.data(), byte_size);
+    }
+  } else {
+    for (size_t i = 0; i < values.size(); ++i) {
+      ::phaser::ROSBuffer::Encode(out + i * sizeof(Wire),
+                                  static_cast<Wire>(values[i]));
+    }
+  }
+  return out + byte_size;
+}
+
 // Generated messages whose fields can all be read straight from the payload
-// have static PhaserSerializeToROSAt and PhaserROSSerializedSizeAt functions.
+// have static PhaserWriteROSAt and PhaserROSSerializedSizeAt functions.
 template <typename T, typename = void>
 struct HasROSAt : std::false_type {};
 
 template <typename T>
-struct HasROSAt<T, std::void_t<decltype(&T::PhaserSerializeToROSAt)>>
+struct HasROSAt<T, std::void_t<decltype(&T::PhaserWriteROSAt)>>
     : std::true_type {};
 
 // Those of a fixed ROS size made of scalars also have
@@ -162,27 +233,30 @@ inline const std::string& DefaultROSBytes() {
 }
 
 // Writes the message of type T at 'offset' in the mutable buffer of
-// 'runtime', or a default T if 'offset' is 0.
+// 'runtime', or a default T if 'offset' is 0, as the writers above do.
 template <typename T>
-inline absl::Status SerializeToROSAt(const RuntimeHandle& runtime,
-                                     ::phaser::BufferOffset offset,
-                                     ::phaser::ROSBuffer& buffer) {
+inline char* WriteROSAt(const RuntimeHandle& runtime,
+                        ::phaser::BufferOffset offset, char* out, char* end) {
   if (offset == 0) {
     const std::string& bytes = DefaultROSBytes<T>();
-    return buffer.WriteRaw(bytes.data(), bytes.size());
+    return WriteROSRaw(out, end, bytes.data(), bytes.size());
   }
   if constexpr (HasROSUncheckedSerializeAt<T>::value) {
-    absl::StatusOr<char*> output = buffer.Extend(T::PhaserROSFixedSize());
-    if (!output.ok()) {
-      return output.status();
+    constexpr size_t kSize = T::PhaserROSFixedSize();
+    if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < kSize)) {
+      return nullptr;
     }
     T::PhaserSerializeToROSUncheckedAt(
-        reinterpret_cast<const char*>(runtime->pb) + offset, *output);
-    return absl::OkStatus();
+        reinterpret_cast<const char*>(runtime->pb) + offset, out);
+    return out + kSize;
   } else if constexpr (HasROSAt<T>::value) {
-    return T::PhaserSerializeToROSAt(runtime, offset, buffer);
+    return T::PhaserWriteROSAt(runtime, offset, out, end);
   } else {
-    return T(BorrowedRuntime(runtime), offset).SerializeToROS(buffer);
+    ::phaser::ROSBuffer buffer(out, static_cast<size_t>(end - out));
+    if (!T(BorrowedRuntime(runtime), offset).SerializeToROS(buffer).ok()) {
+      return nullptr;
+    }
+    return out + buffer.size();
   }
 }
 
@@ -204,33 +278,33 @@ inline size_t ROSSerializedSizeAt(const RuntimeHandle& runtime,
 }
 
 // Writes the elements of the vector of T whose VectorHeader is at 'header',
-// without the sequence length.
+// without the sequence length, as the writers above do.
 template <typename T>
-inline absl::Status SerializeMessageVectorToROS(const RuntimeHandle& runtime,
-                                                ::phaser::BufferOffset header,
-                                                ::phaser::ROSBuffer& buffer) {
+inline char* WriteMessageVectorROS(const RuntimeHandle& runtime,
+                                   ::phaser::BufferOffset header, char* out,
+                                   char* end) {
+  const ::phaser::PayloadBuffer* pb = runtime->pb;
   if constexpr (HasROSUncheckedSerializeAt<T>::value) {
     constexpr size_t kSize = T::PhaserROSFixedSize();
-    const ::phaser::PayloadBuffer* pb = runtime->pb;
-    absl::StatusOr<char*> output =
-        buffer.Extend(size_t{VectorSizeAt(pb, header)} * kSize);
-    if (!output.ok()) {
-      return output.status();
+    if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) <
+                           size_t{VectorSizeAt(pb, header)} * kSize)) {
+      return nullptr;
     }
     const char* base = reinterpret_cast<const char*>(pb);
-    char* out = *output;
     ForEachMessageVectorElement(pb, header,
                                 [base, &out](::phaser::BufferOffset element) {
                                   T::PhaserSerializeToROSUncheckedAt(
                                       base + element, out);
                                   out += kSize;
                                 });
-    return absl::OkStatus();
+    return out;
   } else {
-    return ForEachMessageVectorElement(
-        runtime->pb, header, [&](::phaser::BufferOffset element) {
-          return SerializeToROSAt<T>(runtime, element, buffer);
+    const bool written = ForEachMessageVectorElement(
+        pb, header, [&](::phaser::BufferOffset element) {
+          out = WriteROSAt<T>(runtime, element, out, end);
+          return out != nullptr;
         });
+    return written ? out : nullptr;
   }
 }
 
@@ -414,6 +488,28 @@ inline size_t MessageVectorROSSize(const RuntimeHandle& runtime,
                                 });
     return size;
   }
+}
+
+// SerializeMessageVectorToROS() of a vector of 'size' ROS bytes that 'write'
+// did not fit in the free space of 'buffer'.
+absl::Status SerializeMessageVectorToROSSlow(
+    ::phaser::ROSBuffer& buffer, size_t size,
+    absl::FunctionRef<char*(char*, char*)> write);
+
+// Writes the elements of the vector of T whose VectorHeader is at 'header',
+// without the sequence length.
+template <typename T>
+inline absl::Status SerializeMessageVectorToROS(const RuntimeHandle& runtime,
+                                                ::phaser::BufferOffset header,
+                                                ::phaser::ROSBuffer& buffer) {
+  const auto write = [&](char* out, char* end) {
+    return WriteMessageVectorROS<T>(runtime, header, out, end);
+  };
+  if (ABSL_PREDICT_TRUE(buffer.TryWrite(write))) {
+    return absl::OkStatus();
+  }
+  return SerializeMessageVectorToROSSlow(
+      buffer, MessageVectorROSSize<T>(runtime, header), write);
 }
 
 }  // namespace phaser::internal

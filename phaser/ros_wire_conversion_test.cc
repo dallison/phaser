@@ -14,6 +14,7 @@
 #include <variant>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "phaser/runtime/ros_wireformat.h"
 #include "phaser/testdata/RosCompile.pb.h"
@@ -996,6 +997,33 @@ TEST(ROSWireConversionTest, MutableVectorElementsMatchTheHandlePath) {
   std::string protobuf_reencoded;
   ASSERT_TRUE(protobuf_decoded.SerializeToROSString(&protobuf_reencoded).ok());
   EXPECT_EQ(protobuf_reencoded, expected);
+}
+
+TEST(ROSWireConversionTest, MutableVectorElementsNeedTheWholeFixedBuffer) {
+  DirectElements message;
+  for (int i = 0; i < kDirectElementCount; ++i) {
+    auto element = message.elements.Add();
+    PopulateDirectElement(element, i, 1);
+    auto leaf = message.leaves.Add();
+    PopulateLeaf(leaf, i);
+  }
+  ::phaser::ROSBuffer growing_output;
+  ASSERT_TRUE(message.SerializeToROS(growing_output).ok());
+  const std::string expected = growing_output.AsString();
+
+  std::vector<char> exact(expected.size());
+  ::phaser::ROSBuffer exact_output(exact.data(), exact.size());
+  ASSERT_TRUE(message.SerializeToROS(exact_output).ok());
+  EXPECT_EQ(exact_output.AsString(), expected);
+
+  // Storage of exactly 'size' bytes, so that a write past it is caught.
+  for (size_t size = 0; size < expected.size(); size += 7) {
+    std::vector<char> storage(size);
+    ::phaser::ROSBuffer short_output(storage.data(), storage.size());
+    ASSERT_EQ(message.SerializeToROS(short_output).code(),
+              absl::StatusCode::kResourceExhausted)
+        << size;
+  }
 }
 
 TEST(ROSWireConversionTest, InsertedElementsMatchAppendedOnes) {

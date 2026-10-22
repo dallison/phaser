@@ -120,5 +120,22 @@ absl::Status ReadNewString(::phaser::PayloadBuffer** pb,
   return absl::OkStatus();
 }
 
+absl::Status SerializeMessageVectorToROSSlow(
+    ::phaser::ROSBuffer& buffer, size_t size,
+    absl::FunctionRef<char*(char*, char*)> write) {
+  if (absl::Status status = buffer.EnsureSpace(size); !status.ok()) {
+    return status;
+  }
+  // A buffer with room for nothing may have no storage, which TryWrite()
+  // needs.
+  if (size == 0 || buffer.TryWrite(write)) {
+    return absl::OkStatus();
+  }
+  // With room for it all, only a message ROS cannot hold, such as a
+  // populated google.protobuf.Any, stops the write.
+  return absl::UnimplementedError(
+      "ROS serialization of a message in the vector is unsupported");
+}
+
 }  // namespace internal
 }  // namespace phaser

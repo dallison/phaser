@@ -205,6 +205,7 @@ cc_test(
         "//phaser/testdata:ros_compile_phaser",
         "//phaser/testdata:ros_intrinsics_phaser",
         "//phaser/testdata:ros_intrinsics_protobuf_phaser",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],

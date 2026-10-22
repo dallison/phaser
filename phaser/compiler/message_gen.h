@@ -183,9 +183,12 @@ class MessageGenerator {
   void GenerateROSFieldSize(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
       const std::string& value_expression, const std::string& indent);
+  // With 'to_cursor', writes a scalar or string with the direct ROS writers,
+  // at '_phaser_out' in space ending at '_phaser_end'.
   void GenerateROSFieldWrite(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& value_expression, const std::string& indent);
+      const std::string& value_expression, const std::string& indent,
+      bool to_cursor = false);
   void GenerateROSFieldRead(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
       const std::string& target_expression, const std::string& indent,
