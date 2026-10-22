@@ -22,6 +22,7 @@
 #include <type_traits>
 
 #include "absl/base/attributes.h"
+#include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -539,6 +540,9 @@ struct MessageRuntime {
     }
     size_or_mark_ = free;
   }
+
+  // MarkNewBuffer() for a buffer from NewFixedBuffer(), which is new.
+  void MarkNewFixedBuffer() { size_or_mark_ = pb->free_list; }
 
   // Whether clearing the main message at 'message' may free everything
   // allocated since the buffer was new.  ResetFor() decides.
@@ -1640,6 +1644,56 @@ struct Message {
     }
   }
 };
+
+// The start of a new fixed-size buffer holding a new message: the buffer's
+// header, the message, its metadata and the header of the free block after
+// them.  Only the buffer's size and the length of that free block depend on
+// the size of the buffer, so a new buffer of any size the image fits in can
+// be copied from it.
+class NewBufferImage {
+ public:
+  // 'make' makes a new buffer, with the small block allocator if 'bitmaps',
+  // in the 'size' bytes at 'addr', throwing std::bad_alloc if it does not
+  // fit.
+  using Maker = ::phaser::PayloadBuffer* (*)(void* addr, size_t size,
+                                             bool bitmaps);
+  explicit NewBufferImage(Maker make);
+
+  // The new buffer in the 'size' bytes at 'addr', or null if the image does
+  // not fit in them.
+  ::phaser::PayloadBuffer* CopyTo(void* addr, size_t size) const;
+
+ private:
+  std::unique_ptr<char[]> bytes_;
+  uint32_t size_ = 0;
+};
+
+template <typename Root, typename... Reachable>
+::phaser::PayloadBuffer* MakeFixedBuffer(void* addr, size_t size,
+                                         bool bitmaps) {
+  auto* pb = new (addr)
+      ::phaser::PayloadBuffer(static_cast<uint32_t>(size), bitmaps);
+  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, Root::BinarySize());
+  InitializeMetadata<Root, Reachable...>(&pb);
+  return pb;
+}
+
+// A new fixed-size buffer in the 'size' bytes at 'addr', holding a new Root,
+// which reaches the message types 'Reachable'.
+template <typename Root, typename... Reachable>
+::phaser::PayloadBuffer* NewFixedBuffer(void* addr, size_t size,
+                                        Tuning tuning) {
+  if (tuning == Tuning::kPerformance) {
+    // Not destroyed, as messages can be made by other static destructors.
+    static const absl::NoDestructor<NewBufferImage> image(
+        &MakeFixedBuffer<Root, Reachable...>);
+    if (::phaser::PayloadBuffer* pb = image->CopyTo(addr, size)) {
+      return pb;
+    }
+  }
+  return MakeFixedBuffer<Root, Reachable...>(addr, size,
+                                             tuning == Tuning::kPerformance);
+}
 
 ::phaser::PayloadBuffer* NewDynamicBuffer(
     size_t initial_size, Tuning tuning = Tuning::kPerformance);

@@ -122,6 +122,8 @@ class MessageGenerator {
   // The message types this message can reach, starting with itself.
   std::vector<const google::protobuf::Descriptor*> ReachableMessageTypes()
       const;
+  // ReachableMessageTypes() as template arguments.
+  std::string MetadataTypeList();
   // The InitializeMetadata call that sets up the new buffer at 'pb', a
   // PayloadBuffer** expression, for this message.
   std::string InitializeMetadataCall(const std::string& pb);

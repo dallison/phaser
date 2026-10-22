@@ -5,10 +5,53 @@
 #include "phaser/runtime/message.h"
 
 #include <cstring>
+#include <limits>
 
 #include "toolbelt/hexdump.h"
 
 namespace phaser {
+
+namespace {
+// Keeping a bigger image would cost more memory than copying it saves time.
+constexpr size_t kMaxNewBufferImageSize = 64 * 1024;
+}  // namespace
+
+NewBufferImage::NewBufferImage(Maker make) {
+  for (size_t scratch_size = 4096; scratch_size <= 2 * kMaxNewBufferImageSize;
+       scratch_size *= 2) {
+    // Zeroed, so that the unused ends of small blocks are defined.
+    auto scratch = std::make_unique<char[]>(scratch_size);
+    ::phaser::PayloadBuffer* pb;
+    try {
+      pb = make(scratch.get(), scratch_size, true);
+    } catch (const std::bad_alloc&) {
+      continue;
+    }
+    MessageRuntime runtime(pb, true);
+    runtime.MarkNewBuffer();
+    if (runtime.ResetMark() == 0 || pb->hwm > kMaxNewBufferImageSize) {
+      return;
+    }
+    size_ = pb->hwm;
+    bytes_ = std::make_unique<char[]>(size_);
+    memcpy(bytes_.get(), scratch.get(), size_);
+    return;
+  }
+}
+
+::phaser::PayloadBuffer* NewBufferImage::CopyTo(void* addr,
+                                                size_t size) const {
+  if (size_ == 0 || size < size_ ||
+      size > std::numeric_limits<uint32_t>::max()) {
+    return nullptr;
+  }
+  memcpy(addr, bytes_.get(), size_);
+  auto* pb = static_cast<::phaser::PayloadBuffer*>(addr);
+  pb->full_size = static_cast<uint32_t>(size);
+  pb->AddressOf<::phaser::FreeBlockHeader>(pb->free_list)->length =
+      static_cast<uint32_t>(size) - pb->free_list;
+  return pb;
+}
 
 ::phaser::PayloadBuffer* NewDynamicBuffer(size_t initial_size,
                                             Tuning tuning) {

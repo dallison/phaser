@@ -245,6 +245,22 @@ ExerciseResult ExerciseWireDeserialization(std::string_view any_wire,
   return result;
 }
 
+// A new TestMessage buffer made in place, as CreateMutable makes one when it
+// has no image of one to copy.
+::phaser::PayloadBuffer* MakeTestMessageBuffer(void* addr, size_t size,
+                                               bool bitmaps) {
+  return ::phaser::MakeFixedBuffer<
+      foo::bar::phaser::TestMessage, foo::bar::phaser::InnerMessage,
+      ::phaser::AnyMessage, foo::bar::phaser::TestMessage_ValuesEntry>(
+      addr, size, bitmaps);
+}
+
+// The bytes a new TestMessage buffer uses.
+size_t NewTestMessageSize() {
+  std::vector<char> storage(32768);
+  return MakeTestMessageBuffer(storage.data(), storage.size(), true)->hwm;
+}
+
 }  // namespace
 
 void* operator new(size_t size) { return Allocate(size); }
@@ -486,6 +502,55 @@ TEST(OutputAllocationTest, MetadataEntriesAreReusedAndTypedAnyCanGrowTable) {
       ->MutableAny<foo::bar::phaser::HybridLookupMessage>()
       .set_dense_10(1);
   EXPECT_GT(dynamic.runtime->GetRuntimeControl()->capacity, initial_capacity);
+}
+
+TEST(OutputAllocationTest, CreateMutableMatchesABufferMadeInPlace) {
+  const size_t used = NewTestMessageSize();
+  // Below 'used' there is no image to copy.
+  for (size_t size : {used - 8, used - 1, used, used + 1, used + 4096,
+                      size_t{1} << 20}) {
+    std::vector<char> created(size, '\x5a');
+    std::vector<char> made(size);
+    auto message =
+        foo::bar::phaser::TestMessage::CreateMutable(created.data(), size);
+    const ::phaser::PayloadBuffer* pb =
+        MakeTestMessageBuffer(made.data(), size, true);
+    ASSERT_EQ(message.runtime->pb->hwm, pb->hwm) << size;
+    EXPECT_EQ(message.runtime->pb->full_size, size);
+    EXPECT_EQ(std::memcmp(created.data(), made.data(), pb->hwm), 0) << size;
+    if (size < used + 4096) {
+      continue;
+    }
+    message.set_x(42);
+    message.set_s("root");
+    message.add_vm()->set_str("element");
+    message.mutable_any()
+        ->MutableAny<foo::bar::phaser::RosCompileMessage>()
+        .name = "any";
+    EXPECT_EQ(message.x(), 42);
+    EXPECT_EQ(message.s(), "root");
+    EXPECT_EQ(message.vm(0).str(), "element");
+  }
+}
+
+TEST(OutputAllocationTest, CreateMutableInABufferTooSmallThrows) {
+  std::vector<char> storage(64);
+  EXPECT_THROW((void)foo::bar::phaser::TestMessage::CreateMutable(
+                   storage.data(), storage.size()),
+               std::bad_alloc);
+}
+
+TEST(OutputAllocationTest, CreateMutableTunedForSizeHasNoBitmaps) {
+  constexpr size_t kSize = 32768;
+  std::vector<char> created(kSize);
+  std::vector<char> made(kSize);
+  auto message = foo::bar::phaser::TestMessage::CreateMutable(
+      created.data(), kSize, ::phaser::Tuning::kSize);
+  const ::phaser::PayloadBuffer* pb =
+      MakeTestMessageBuffer(made.data(), kSize, false);
+  EXPECT_FALSE(message.runtime->pb->BitmapsEnabled());
+  ASSERT_EQ(message.runtime->pb->hwm, pb->hwm);
+  EXPECT_EQ(std::memcmp(created.data(), made.data(), pb->hwm), 0);
 }
 
 TEST(OutputAllocationTest, LegacyMetadataSlotRemainsReadable) {

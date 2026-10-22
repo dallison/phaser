@@ -2054,15 +2054,11 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
   os << "// Create a mutable message in the given memory.\n";
   os << MessageName(message_) << " " << MessageName(message_)
      << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
-        "  ::phaser::PayloadBuffer *pb = new (addr) "
-        "::phaser::PayloadBuffer(static_cast<uint32_t>(size), tuning == "
-        "::phaser::Tuning::kPerformance);\n"
-        "  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, "
-     << MessageName(message_)
-     << "::BinarySize());\n"
-     << InitializeMetadataCall("&pb")
-     << "  ::phaser::MessageRuntime runtime(pb, true);\n"
-        "  runtime.MarkNewBuffer();\n"
+        "  ::phaser::PayloadBuffer *pb = ::phaser::NewFixedBuffer<"
+     << MetadataTypeList()
+     << ">(addr, size, tuning);\n"
+        "  ::phaser::MessageRuntime runtime(pb, true);\n"
+        "  runtime.MarkNewFixedBuffer();\n"
         "  return "
      << MessageName(message_)
      << "(BorrowRuntime(runtime), pb->message);\n"
@@ -2168,7 +2164,8 @@ void MessageGenerator::GenerateSizeFunctions(std::ostream& os) {
         "        _phaser_runtime_control != nullptr\n"
         "            ? _phaser_runtime_control->user_metadata\n"
         "            : runtime->pb->metadata;\n"
-        "    const size_t _phaser_size = Size();\n"
+     << "    " << MessageName(message_) << "::SyncToPayload();\n"
+     << "    const size_t _phaser_size = runtime->pb->Size();\n"
         "    runtime->pb->full_size = static_cast<uint32_t>(_phaser_size);\n"
         "    runtime->pb->free_list = 0;\n"
         "    runtime->pb->metadata = _phaser_user_metadata;\n"
@@ -2203,7 +2200,7 @@ MessageGenerator::ReachableMessageTypes() const {
   return reachable;
 }
 
-std::string MessageGenerator::InitializeMetadataCall(const std::string& pb) {
+std::string MessageGenerator::MetadataTypeList() {
   std::string types;
   for (const auto* descriptor : ReachableMessageTypes()) {
     if (!types.empty()) {
@@ -2211,7 +2208,12 @@ std::string MessageGenerator::InitializeMetadataCall(const std::string& pb) {
     }
     types += MessageName(descriptor, true);
   }
-  return "  ::phaser::InitializeMetadata<" + types + ">(" + pb + ");\n";
+  return types;
+}
+
+std::string MessageGenerator::InitializeMetadataCall(const std::string& pb) {
+  return "  ::phaser::InitializeMetadata<" + MetadataTypeList() + ">(" + pb +
+         ");\n";
 }
 
 void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {
