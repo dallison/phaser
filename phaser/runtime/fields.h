@@ -1328,9 +1328,29 @@ class IndirectMessageField
   // there is nothing to write until the handle has been made.
   void SyncToPayload() const {
     if constexpr (internal::HasSyncToPayloadWork<MessageType>::value) {
-      if (msg_.has_value() && IsPresent()) {
-        Get().SyncToPayload();
+      if (!SyncPending()) {
+        return;
       }
+      const ::phaser::BufferOffset message = MessageAt(Locate());
+      if (message == 0) {
+        return;
+      }
+      MessageType& handle = Handle();
+      if (Parent()->IsMutable()) {
+        handle.BindBorrowedMutable(GetRuntime(), message);
+      } else {
+        handle.template BindBorrowed<MessageType>(GetRuntime(), message);
+      }
+      handle.MessageType::SyncToPayload();
+    }
+  }
+
+  // Whether the handle holds values SyncToPayload() would write.
+  bool SyncPending() const {
+    if constexpr (internal::HasSyncToPayloadWork<MessageType>::value) {
+      return msg_.has_value() && internal::SyncPending(*msg_);
+    } else {
+      return false;
     }
   }
 

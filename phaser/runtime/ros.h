@@ -280,6 +280,8 @@ class RosMessageField : public IndirectMessageField<Backend, kInline, Loc> {
     cache_loaded_ = true;
   }
 
+  bool SyncPending() const { return dirty_ || Base::SyncPending(); }
+
   size_t SerializedSize() const {
     SyncToPayload();
     return Base::SerializedSize();

@@ -1698,6 +1698,40 @@ void MessageGenerator::GenerateRosSyncToPayload(std::ostream& os) {
     os << "    }\n";
   }
   os << "  }\n\n";
+
+  if (!HasSyncToPayloadWork(message_)) {
+    return;
+  }
+  bool union_syncs = false;
+  for (const auto& [oneof, union_info] : unions_) {
+    for (const auto& member : union_info->members) {
+      if (member->field->type() ==
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
+          NeedsPayloadSync(member->field->message_type())) {
+        union_syncs = true;
+      }
+    }
+  }
+  os << "  // Whether SyncToPayload() might write anything.  It reads only the "
+        "fields'\n"
+        "  // handles, which can be bound to a message no longer there.\n";
+  os << "  bool PhaserSyncPending() const {\n";
+  if (union_syncs) {
+    os << "    return true;\n";
+  } else {
+    os << "    return false";
+    for (const auto& field : fields_) {
+      if (field->field->type() !=
+              google::protobuf::FieldDescriptor::TYPE_MESSAGE ||
+          field->field->is_repeated() || IsAny(field->field) ||
+          !NeedsPayloadSync(field->field->message_type())) {
+        continue;
+      }
+      os << " ||\n           " << field->member_name << ".SyncPending()";
+    }
+    os << ";\n";
+  }
+  os << "  }\n\n";
 }
 
 void MessageGenerator::GenerateRosOwnerCopyMove(std::ostream& os, bool decl) {

@@ -310,6 +310,24 @@ struct HasSyncToPayloadWork<
     T, std::void_t<decltype(T::kPhaserHasSyncToPayloadWork)>>
     : std::bool_constant<T::kPhaserHasSyncToPayloadWork> {};
 
+template <typename T, typename = void>
+struct HasSyncPending : std::false_type {};
+template <typename T>
+struct HasSyncPending<
+    T, std::void_t<decltype(std::declval<const T&>().PhaserSyncPending())>>
+    : std::true_type {};
+
+// Whether SyncToPayload() of 'message' might write anything, judged from its
+// fields' handles alone.
+template <typename T>
+bool SyncPending(const T& message) {
+  if constexpr (HasSyncPending<T>::value) {
+    return message.PhaserSyncPending();
+  } else {
+    return HasSyncToPayloadWork<T>::value;
+  }
+}
+
 // True for generated messages whose PhaserClearHandles() is all that is left
 // to clear when the buffer holding them is reset.
 template <typename T, typename = void>

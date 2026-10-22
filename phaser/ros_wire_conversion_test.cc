@@ -1533,6 +1533,41 @@ TEST(ROSWireConversionTest, ParsingDropsROSValuesNotYetWritten) {
   EXPECT_EQ(message_ros, expected_ros);
 }
 
+TEST(ROSWireConversionTest, EachSyncWritesWhatChangedSinceTheLast) {
+  DirectBranch message;
+  message.stamp = ::ros::Time(7, 0);
+  message.element->timeout = ::ros::Duration(-3, 0);
+  for (uint32_t round = 1; round <= 3; ++round) {
+    message.header->stamp = ::ros::Time(round, 1);
+    message.element->stamp = ::ros::Time(round, 2);
+    message.element->timeout->nsec = static_cast<int32_t>(round);
+    message.stamp->nsec = round;
+
+    DirectBranch expected;
+    expected.header->stamp = ::ros::Time(round, 1);
+    expected.element->stamp = ::ros::Time(round, 2);
+    expected.element->timeout =
+        ::ros::Duration(-3, static_cast<int32_t>(round));
+    expected.stamp = ::ros::Time(7, round);
+    std::string expected_ros;
+    ASSERT_TRUE(expected.SerializeToROSString(&expected_ros).ok());
+
+    // Size() writes the cached values to the payload, which PhaserToROS()
+    // reads alone.  The second has nothing left to write.
+    for (int sync = 0; sync < 2; ++sync) {
+      const size_t size = message.Size();
+      ::phaser::ROSBuffer payload_ros;
+      ASSERT_TRUE(DirectBranch::PhaserToROS(
+                      absl::Span<const char>(
+                          reinterpret_cast<const char*>(message.Data()), size),
+                      payload_ros)
+                      .ok());
+      EXPECT_EQ(payload_ros.AsString(), expected_ros)
+          << "round " << round << " sync " << sync;
+    }
+  }
+}
+
 TEST(ROSWireConversionTest,
      ClearingAMainMessageResetsTheCachedROSValuesOfItsMessages) {
   DirectBranch expected;
