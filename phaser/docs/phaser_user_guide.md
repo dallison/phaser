@@ -1497,7 +1497,8 @@ bytes `00 'P' 'H'` followed by a flags byte:
 | Bit | Meaning |
 |-----|---------|
 | 7 | Always 1 |
-| 2-6 | Format version (`::phaser::kBufferFormatVersion`, currently 1) |
+| 6 | Allocation failed (`::phaser::kAllocationFailedFlag`). A receiver rejects the buffer; the process that filled it can still read what was stored |
+| 2-5 | Format version (`::phaser::kBufferFormatVersion`, currently 1) |
 | 1 | Movable buffer (`::phaser::kMovableBufferMagic`) rather than fixed (`::phaser::kFixedBufferMagic`) |
 | 0 | Bitmap allocator on (`::phaser::kBitMapFlag`) |
 

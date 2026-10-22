@@ -40,14 +40,15 @@ void PayloadBuffer::AllocateMetadata(PayloadBuffer **self, void *md,
 char *PayloadBuffer::NewStringSlow(PayloadBuffer **self, const char *s,
                                    size_t len, BufferOffset header_offset) {
   if (len > UINT32_MAX - sizeof(uint32_t)) {
-    throw std::bad_alloc();
+    (*self)->MarkAllocationFailed();
+    return nullptr;
   }
   const StringSource source(*self, std::string_view(s, len));
   const uint32_t length = uint32_t(len);
   char *block = static_cast<char *>(
       AllocateSlow(self, length + uint32_t(sizeof(uint32_t)), false, true));
   if (block == nullptr) {
-    throw std::bad_alloc();
+    return nullptr;
   }
   memcpy(block, &length, sizeof(length));
   internal::CopyString(block + sizeof(length), source.In(*self).data(),
@@ -63,7 +64,8 @@ ABSL_ATTRIBUTE_NOINLINE char *ReplaceString(PayloadBuffer **self,
                                             const char *s, size_t len,
                                             BufferOffset header_offset) {
   if (len > UINT32_MAX - sizeof(uint32_t)) {
-    throw std::bad_alloc();
+    (*self)->MarkAllocationFailed();
+    return nullptr;
   }
   // Get address of the string header
   BufferOffset *hdr = (*self)->ToAddress<BufferOffset>(header_offset);
@@ -94,7 +96,7 @@ ABSL_ATTRIBUTE_NOINLINE char *ReplaceString(PayloadBuffer **self,
     str = PayloadBuffer::Allocate(self, len + 4, false);
   }
   if (str == nullptr) {
-    throw std::bad_alloc();
+    return nullptr;
   }
   uint32_t *p = reinterpret_cast<uint32_t *>(str);
   p[0] = uint32_t(len);
@@ -346,7 +348,7 @@ inline uint32_t AlignSize(uint32_t s,
 void *PayloadBuffer::AllocateSlow(PayloadBuffer **buffer, uint32_t n,
                               bool clear,
                               bool enable_small_block) {
-  if (n == 0) {
+  if (n == 0 || (*buffer)->AllocationFailed()) {
     return nullptr;
   }
   if (enable_small_block && (*buffer)->BitmapsEnabled()) {
@@ -365,6 +367,7 @@ void *PayloadBuffer::AllocateSlow(PayloadBuffer **buffer, uint32_t n,
       Resizer *resizer = (*buffer)->GetResizer();
       if (resizer == nullptr) {
         // Really out of memory.
+        (*buffer)->MarkAllocationFailed();
         return nullptr;
       }
       size_t old_size = (*buffer)->full_size;

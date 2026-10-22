@@ -271,8 +271,10 @@ class UnionStringField : public UnionMemberField {
     if (!v.ok()) {
       return v.status();
     }
-    ::phaser::PayloadBuffer::SetString(GetBufferAddr(runtime), *v,
-                                         abs_offset);
+    if (::phaser::PayloadBuffer::SetString(GetBufferAddr(runtime), *v,
+                                           abs_offset) == nullptr) {
+      return internal::AllocationFailedError();
+    }
     return absl::OkStatus();
   }
 
@@ -325,11 +327,18 @@ class UnionMessageField : public UnionMemberField {
     // Allocate a new message.
     void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      internal::BindToAllocationFailureSink(msg_);
+      return &msg_;
+    }
     ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.template BindBorrowed<MessageType>(runtime, msg_offset);
-    msg_.template InstallMetadata<MessageType>();
+    if (!msg_.template InstallMetadata<MessageType>()) {
+      internal::BindToAllocationFailureSink(msg_);
+      return &msg_;
+    }
 
     // Buffer might have moved, get address of indirect again.
     addr = GetIndirectAddress(runtime, abs_offset);
@@ -368,10 +377,18 @@ class UnionMessageField : public UnionMemberField {
       Bind(runtime, old_offset);
       msg_.Clear();
       GetBuffer(runtime)->Free(runtime->ToAddress(old_offset));
+      addr = GetIndirectAddress(runtime, abs_offset);
+      if (addr == nullptr) {
+        return;
+      }
+      *addr = 0;
     }
     // Allocate a new message.
     void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      return;
+    }
     ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
@@ -434,11 +451,16 @@ class UnionMessageField : public UnionMemberField {
     }
     void* msg_addr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(runtime), MessageType::BinarySize());
+    if (msg_addr == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ::phaser::BufferOffset msg_offset =
         GetBuffer(runtime)->ToOffset(msg_addr);
     // Assign to the message.
     msg_.template BindBorrowed<MessageType>(runtime, msg_offset);
-    msg_.template InstallMetadata<MessageType>();
+    if (!msg_.template InstallMetadata<MessageType>()) {
+      return internal::AllocationFailedError();
+    }
 
     // Buffer might have moved, get address of indirect again.
     ::phaser::BufferOffset* addr = GetIndirectAddress(runtime, abs_offset);
@@ -515,7 +537,7 @@ class UnionField : public FieldBase<StoredFieldLoc> {
   template <typename Alternative>
   decltype(auto) get() const {
     if (!holds_alternative<Alternative>()) {
-      throw std::bad_variant_access();
+      PHASER_THROW(std::bad_variant_access());
     }
     if constexpr (Alternative::kIsMessage) {
       return GetReference<Alternative::kIndex,
@@ -529,7 +551,7 @@ class UnionField : public FieldBase<StoredFieldLoc> {
   template <typename Alternative>
   decltype(auto) get() {
     if (!holds_alternative<Alternative>()) {
-      throw std::bad_variant_access();
+      PHASER_THROW(std::bad_variant_access());
     }
     if constexpr (Alternative::kIsMessage) {
       return *Mutable<Alternative::kIndex, typename Alternative::value_type>();
@@ -816,7 +838,7 @@ class UnionField : public FieldBase<StoredFieldLoc> {
     static_assert(Id >= 0 && Id < static_cast<int>(sizeof...(T)),
                   "oneof arm index is out of range");
     if (!GetRuntime()->IsMutable()) {
-      throw std::logic_error("cannot mutate a readonly Phaser message");
+      PHASER_THROW(std::logic_error("cannot mutate a readonly Phaser message"));
     }
     const int32_t desired = static_cast<int32_t>(field_numbers_[Id]);
     const int32_t current = Discriminator();

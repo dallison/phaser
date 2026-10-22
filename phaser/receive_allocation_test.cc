@@ -533,11 +533,15 @@ TEST(OutputAllocationTest, CreateMutableMatchesABufferMadeInPlace) {
   }
 }
 
-TEST(OutputAllocationTest, CreateMutableInABufferTooSmallThrows) {
+TEST(OutputAllocationTest, CreateMutableInABufferTooSmallFails) {
   std::vector<char> storage(64);
-  EXPECT_THROW((void)foo::bar::phaser::TestMessage::CreateMutable(
-                   storage.data(), storage.size()),
-               std::bad_alloc);
+  absl::StatusOr<foo::bar::phaser::TestMessage> message =
+      foo::bar::phaser::TestMessage::TryCreateMutable(storage.data(),
+                                                      storage.size());
+  ASSERT_FALSE(message.ok());
+  EXPECT_TRUE(message.status().code() == absl::StatusCode::kInvalidArgument ||
+              message.status().code() == absl::StatusCode::kResourceExhausted)
+      << message.status();
 }
 
 TEST(OutputAllocationTest, CreateMutableTunedForSizeHasNoBitmaps) {

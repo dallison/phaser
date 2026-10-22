@@ -379,12 +379,13 @@ inline T* ResizeVectorAt(const RuntimeHandle& runtime,
   if (runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header)
           ->data == 0) {
     if (size_t{n} * sizeof(T) > UINT32_MAX) {
-      throw std::bad_alloc();
+      runtime->pb->MarkAllocationFailed();
+      return nullptr;
     }
     void* data = ::phaser::PayloadBuffer::Allocate(
         &runtime->pb, static_cast<uint32_t>(size_t{n} * sizeof(T)));
     if (data == nullptr) {
-      throw std::bad_alloc();
+      return nullptr;
     }
     // Allocating can move the buffer.
     auto* vector_header =
@@ -393,15 +394,18 @@ inline T* ResizeVectorAt(const RuntimeHandle& runtime,
     vector_header->num_elements = n;
     return static_cast<T*>(data);
   }
-  ::phaser::PayloadBuffer::VectorResize<T>(
-      &runtime->pb,
-      runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header),
-      n);
+  if (!::phaser::PayloadBuffer::VectorResize<T>(
+          &runtime->pb,
+          runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(
+              header),
+          n)) {
+    return nullptr;
+  }
   T* data = runtime->pb->template UncheckedAddress<T>(
       runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header)
           ->data);
   if (data == nullptr && n != 0) {
-    throw std::bad_alloc();
+    return nullptr;
   }
   return data;
 }

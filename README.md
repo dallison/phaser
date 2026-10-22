@@ -269,6 +269,38 @@ Dynamic messages, reflection/debug output, unknown `Any` error handling, and
 explicit owning conversions such as `RosHeaderView::ToOwned()` are outside this
 guarantee.
 
+#### When a fixed buffer runs out of space
+
+A caller-provided buffer cannot grow, so every write checks for space and stays
+inside the buffer. `TryCreateMutable` reports a buffer that is too small for the
+message:
+
+```c++
+absl::StatusOr<foo::bar::phaser::TestMessage> msg =
+    foo::bar::phaser::TestMessage::TryCreateMutable(buffer, size);
+if (!msg.ok()) {
+  // InvalidArgument for a buffer smaller than its header, ResourceExhausted
+  // when the message itself does not fit.
+}
+```
+
+`CreateMutable` aborts in the same cases. Once the message exists, a write that
+needs more space than is left does nothing and marks the buffer:
+
+- Setters keep the previous value.
+- Repeated fields keep their previous elements.
+- `mutable_` accessors, `add_` accessors and array elements return a detached
+  handle whose writes go to per-thread scratch storage.
+- `msg.AllocationFailed()` is true from then on.
+- `Serialize` and `SerializeToArray` fail, and `Deserialize` returns
+  `ResourceExhausted`.
+- `CreateReadonly` treats the marked buffer as empty, so a receiver never sees a
+  partly written message.
+
+Phaser and its generated code build with `-fno-exceptions -fno-rtti`. Without
+exceptions, misuse that would otherwise throw, such as `at()` out of range or
+mutating a readonly message, aborts.
+
 ### 3. Zero-copy field access
 
 Beyond the standard protobuf accessors, Phaser adds helpers that hand you the final storage
@@ -411,6 +443,35 @@ protoc --plugin=protoc-gen-phaser=DIR/bin/phaser/compiler/phaser \
 Output is written to `OUTPUT_DIR/PACKAGE/TARGET`. See the user guide for the full argument
 reference. Use `frontend=protobuf` for the default accessor API and optionally
 add `active_message=true`.
+
+### CMake
+
+[`CMakeLists.txt`](CMakeLists.txt) builds the `phaser_runtime` library and the
+`protoc-gen-phaser` plugin, and defines `phaser_add_library()`, which generates and
+builds a library the way `phaser_library` does in Bazel. A parent project's Abseil,
+cpp_toolbelt and protobuf targets are used when they exist; anything missing is fetched
+with `FetchContent`.
+
+```cmake
+FetchContent_Declare(phaser GIT_REPOSITORY https://github.com/dallison/phaser.git GIT_TAG ...)
+FetchContent_MakeAvailable(phaser)
+
+phaser_add_library(foo_phaser
+    PROTOS foo/foo.proto
+    IMPORTS google/protobuf/any.proto
+    IMPORT_DIRS ${CMAKE_SOURCE_DIR} ${protobuf_SOURCE_DIR}/src
+    ADD_NAMESPACE phaser)
+```
+
+`PROTOS` and `IMPORTS` are named by import path. `IMPORTS` lists the imported files that
+need phaser code too. The library's short header is included as `"foo/foo.phaser.h"`.
+The plugin runs on the build host, so a cross-compile does not build it; build it for the
+host and pass its path in `PHASER_PLUGIN_EXECUTABLE`.
+
+### Accessor names
+
+A field named `has_<name>` next to a field `<name>` would collide with `<name>`'s presence
+accessor, so that presence accessor is named `_phaser_has_<name>()` instead.
 
 ## Project layout
 

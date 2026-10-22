@@ -6,11 +6,59 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <unordered_set>
+#include <vector>
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 
 namespace phaser {
+
+// Generated messages hold the messages they use by value, so each top-level
+// message must be defined after the ones its fields (and its nested messages'
+// fields) use.  Otherwise the file order is kept.  Messages that use each other
+// cannot both be held by value; in such a cycle the message reached first is
+// defined last.
+static std::vector<const google::protobuf::Descriptor*>
+MessagesInDependencyOrder(const google::protobuf::FileDescriptor* file) {
+  std::unordered_set<const google::protobuf::Descriptor*> visited;
+  std::vector<const google::protobuf::Descriptor*> order;
+
+  std::function<void(const google::protobuf::Descriptor*)> visit =
+      [&](const google::protobuf::Descriptor* message) {
+        if (!visited.insert(message).second) {
+          return;
+        }
+        std::vector<const google::protobuf::Descriptor*> pending = {message};
+        while (!pending.empty()) {
+          const google::protobuf::Descriptor* d = pending.back();
+          pending.pop_back();
+          for (int i = 0; i < d->field_count(); i++) {
+            const google::protobuf::Descriptor* used =
+                d->field(i)->message_type();
+            if (used == nullptr || used->file() != file) {
+              continue;
+            }
+            while (used->containing_type() != nullptr) {
+              used = used->containing_type();
+            }
+            if (used != message) {
+              visit(used);
+            }
+          }
+          for (int i = 0; i < d->nested_type_count(); i++) {
+            pending.push_back(d->nested_type(i));
+          }
+        }
+        order.push_back(message);
+      };
+
+  for (int i = 0; i < file->message_type_count(); i++) {
+    visit(file->message_type(i));
+  }
+  return order;
+}
 
 static FrontendStyle EffectiveFrontendStyle(
     const google::protobuf::FileDescriptor* file, FrontendStyle requested) {
@@ -263,9 +311,10 @@ Generator::Generator(const google::protobuf::FileDescriptor* file,
       generate_active_message_(generate_active_message),
       generate_ros_metadata_(generate_ros_metadata),
       frontend_style_(frontend_style) {
-  for (int i = 0; i < file->message_type_count(); i++) {
+  for (const google::protobuf::Descriptor* message :
+       MessagesInDependencyOrder(file)) {
     message_gens_.push_back(std::make_unique<MessageGenerator>(
-        file->message_type(i), added_namespace_, std::string(file->package()),
+        message, added_namespace_, std::string(file->package()),
         generate_active_message_, frontend_style_, generate_ros_metadata_));
   }
   // Enums

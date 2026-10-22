@@ -502,19 +502,33 @@ TEST(BufferTest, NewStringsOfEveryShortLength) {
   }
 }
 
-TEST(BufferTest, StringThatDoesNotFitThrows) {
+TEST(BufferTest, StringThatDoesNotFitLeavesTheOldValue) {
   char *buffer = (char *)calloc(1, 4096);
   PayloadBuffer *pb = new (buffer) PayloadBuffer(4096);
   PayloadBuffer::AllocateMainMessage(&pb, 32);
   const BufferOffset offset = pb->message;
   const std::string big(8192, 'x');
 
-  EXPECT_THROW(PayloadBuffer::SetString(&pb, big, offset), std::bad_alloc);
+  EXPECT_EQ(PayloadBuffer::SetString(&pb, big, offset), nullptr);
+  EXPECT_TRUE(pb->AllocationFailed());
   EXPECT_EQ(pb->GetString(offset), "");
 
-  PayloadBuffer::SetString(&pb, std::string("small"), offset);
-  EXPECT_THROW(PayloadBuffer::SetString(&pb, big, offset), std::bad_alloc);
-  EXPECT_EQ(pb->GetString(offset), "small");
+  // The failure sticks: a later string that would fit is not stored.
+  EXPECT_EQ(PayloadBuffer::SetString(&pb, std::string("small"), offset),
+            nullptr);
+  EXPECT_EQ(pb->GetString(offset), "");
+  EXPECT_TRUE(pb->AllocationFailed());
+  free(buffer);
+
+  buffer = (char *)calloc(1, 4096);
+  pb = new (buffer) PayloadBuffer(4096);
+  PayloadBuffer::AllocateMainMessage(&pb, 32);
+  const BufferOffset kept = pb->message;
+  EXPECT_NE(PayloadBuffer::SetString(&pb, std::string("small"), kept),
+            nullptr);
+  EXPECT_EQ(PayloadBuffer::SetString(&pb, big, kept), nullptr);
+  EXPECT_TRUE(pb->AllocationFailed());
+  EXPECT_EQ(pb->GetString(kept), "small");
   free(buffer);
 }
 

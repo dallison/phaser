@@ -159,13 +159,13 @@ class PrimitiveVectorField : public FieldBase<Loc> {
 
   T& at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("PrimitiveVectorField::at");
+      PHASER_THROW(std::out_of_range("PrimitiveVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   T at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("PrimitiveVectorField::at");
+      PHASER_THROW(std::out_of_range("PrimitiveVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -654,13 +654,13 @@ class EnumVectorField : public FieldBase<Loc> {
 
   Enum& at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("EnumVectorField::at");
+      PHASER_THROW(std::out_of_range("EnumVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   Enum at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("EnumVectorField::at");
+      PHASER_THROW(std::out_of_range("EnumVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -1114,11 +1114,12 @@ class MessageVectorOps {
   }
 
   // reserve() for the vector at 'header'.
-  static void ReserveAt(const RuntimeHandle& runtime,
+  static bool ReserveAt(const RuntimeHandle& runtime,
                         ::phaser::BufferOffset header, size_t n) {
-    if (n != 0) {
-      Grow(runtime, header, n, n);
+    if (n == 0) {
+      return true;
     }
+    return Grow(runtime, header, n, n);
   }
 
   template <bool kInPlace, typename F>
@@ -1135,9 +1136,12 @@ class MessageVectorOps {
             ->num_elements;
     const uint64_t end = uint64_t(old_size) + n;
     if (end > UINT32_MAX) {
-      throw std::bad_alloc();
+      runtime->pb->MarkAllocationFailed();
+      return internal::AllocationFailedError();
     }
-    ReserveAt(runtime, header, end);
+    if (!ReserveAt(runtime, header, static_cast<size_t>(end))) {
+      return internal::AllocationFailedError();
+    }
     // Only an allocation by 'f' can move the buffer.
     ::phaser::PayloadBuffer* pb = *buffer;
     const ::phaser::BufferOffset block_offset =
@@ -1340,11 +1344,17 @@ class MessageVectorOps {
     } else {
       const ::phaser::BufferOffset header = (*buffer)->UncheckedOffset(hdr);
       element = GrowForAdd(runtime, header, index);
+      if (element == 0) {
+        return 0;
+      }
       hdr =
           (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header);
       block =
           (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
               hdr->data);
+    }
+    if (element == 0 || block == nullptr) {
+      return 0;
     }
     // This process wrote the block, so its stride is T's.
     StartElement((*buffer)->template UncheckedAddress<char>(element),
@@ -1365,10 +1375,15 @@ class MessageVectorOps {
   ABSL_ATTRIBUTE_NOINLINE static ::phaser::BufferOffset GrowForAdd(
       const RuntimeHandle& runtime, ::phaser::BufferOffset header,
       uint32_t index) {
-    Grow(runtime, header, size_t(index) + 1, DefaultFirstCapacity());
+    if (!Grow(runtime, header, size_t(index) + 1, DefaultFirstCapacity())) {
+      return 0;
+    }
     const ::phaser::BufferOffset block =
         runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header)
             ->data;
+    if (block == 0) {
+      return 0;
+    }
     return internal::MessageVectorElement(
         *runtime, internal::LoadMessageVectorLayout(*runtime, block), index);
   }
@@ -1376,7 +1391,8 @@ class MessageVectorOps {
   // Grows the storage of the vector whose VectorHeader is at 'header' to
   // hold at least 'n' elements.  If there is no storage yet, its first chunk
   // holds 'first_capacity' elements.
-  static void Grow(const RuntimeHandle& runtime, ::phaser::BufferOffset header,
+  // False, leaving the vector unchanged, if the buffer has no space.
+  static bool Grow(const RuntimeHandle& runtime, ::phaser::BufferOffset header,
                    size_t n, size_t first_capacity) {
     ::phaser::PayloadBuffer** buffer = &runtime->pb;
     if ((*buffer)
@@ -1389,7 +1405,7 @@ class MessageVectorOps {
                                         : ::phaser::PayloadBuffer::Allocate(
                                               buffer, uint32_t(bytes), false);
       if (memory == nullptr) {
-        throw std::bad_alloc();
+        return false;
       }
       *static_cast<::phaser::MessageVectorBlock*>(memory) = {
           Stride(), static_cast<uint32_t>(first_capacity), metadata, 0};
@@ -1397,7 +1413,7 @@ class MessageVectorOps {
           ->template UncheckedAddress<::phaser::VectorHeader>(header)
           ->data = (*buffer)->UncheckedOffset(memory);
       if (first_capacity >= n) {
-        return;
+        return true;
       }
     }
     const ::phaser::BufferOffset block_offset =
@@ -1416,7 +1432,7 @@ class MessageVectorOps {
       // The next chunk doubles the capacity.
       const uint64_t capacity = uint64_t(block->first_capacity) << num_chunks;
       if (capacity >= n) {
-        return;
+        return true;
       }
       const uint64_t bytes = capacity * block->stride;
       void* chunk =
@@ -1425,7 +1441,7 @@ class MessageVectorOps {
               : ::phaser::PayloadBuffer::Allocate(buffer, uint32_t(bytes),
                                                   false);
       if (chunk == nullptr) {
-        throw std::bad_alloc();
+        return false;
       }
       const ::phaser::BufferOffset chunk_offset =
           (*buffer)->UncheckedOffset(chunk);
@@ -1440,7 +1456,7 @@ class MessageVectorOps {
               (num_chunks + 2) * sizeof(::phaser::BufferOffset), false));
       if (directory == nullptr) {
         (*buffer)->FreeAt(chunk_offset);
-        throw std::bad_alloc();
+        return false;
       }
       directory[0] = num_chunks + 1;
       directory[num_chunks + 1] = chunk_offset;
@@ -1485,13 +1501,13 @@ class MessageVectorField : public FieldBase<Loc> {
 
   T at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("MessageVectorField::at");
+      PHASER_THROW(std::out_of_range("MessageVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   T at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("MessageVectorField::at");
+      PHASER_THROW(std::out_of_range("MessageVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -1586,11 +1602,23 @@ class MessageVectorField : public FieldBase<Loc> {
       // could change this handle.
       const RuntimeHandle runtime = BorrowedRuntime(GetRuntime());
       const ::phaser::BufferOffset element = AddElement();
+      if (element == 0) {
+        return DetachedMessage();
+      }
       return T(MutablePart{}, runtime, element);
     } else {
       const ::phaser::BufferOffset element = AddElement();
+      if (element == 0) {
+        return DetachedMessage();
+      }
       return T(BorrowedRuntime(GetRuntime()), element);
     }
+  }
+
+  static T DetachedMessage() {
+    T msg(InternalDefault{});
+    internal::BindToAllocationFailureSink(msg);
+    return msg;
   }
 
   // Appends 'n' elements, calling 'f(writer, i)' to set the fields of the
@@ -1609,7 +1637,8 @@ class MessageVectorField : public FieldBase<Loc> {
       Field::ThrowReadonlyMessage();
     }
     if (n > UINT32_MAX) {
-      throw std::bad_alloc();
+      message->runtime->pb->MarkAllocationFailed();
+      return;
     }
     // A mutable message has its compiled layout.
     Ops::AddElementsInPlaceAt(
@@ -1661,7 +1690,7 @@ class MessageVectorField : public FieldBase<Loc> {
     }
     const ::phaser::BufferOffset element = ElementOffset(index);
     if (element == 0) {
-      return T(InternalDefault{});
+      return DetachedMessage();
     }
     return T(BorrowedRuntime(GetRuntime()), element);
   }
@@ -1716,7 +1745,11 @@ class MessageVectorField : public FieldBase<Loc> {
     }
     reserve(n);
     while (size() < n) {
+      const size_t before = size();
       (void)Add();
+      if (size() == before) {
+        break;
+      }
     }
   }
   void resize(size_t n, const T& value) {
@@ -2144,13 +2177,13 @@ class BasicStringVectorField : public FieldBase<Loc> {
 
   NonEmbeddedStringField at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("StringVectorField::at");
+      PHASER_THROW(std::out_of_range("StringVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   std::string_view at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("StringVectorField::at");
+      PHASER_THROW(std::out_of_range("StringVectorField::at"));
     }
     return Get(index);
   }
@@ -2261,13 +2294,22 @@ class BasicStringVectorField : public FieldBase<Loc> {
     // Allocate string header in buffer.
     void* str_hdr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(), sizeof(::phaser::StringHeader));
+    if (str_hdr == nullptr) {
+      return;
+    }
     ::phaser::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
-    ::phaser::PayloadBuffer::SetString(GetBufferAddr(),
-                                       source.In(*GetBufferAddr()), hdr_offset);
+    if (::phaser::PayloadBuffer::SetString(
+            GetBufferAddr(), source.In(*GetBufferAddr()), hdr_offset) ==
+        nullptr) {
+      GetBuffer()->FreeAt(hdr_offset);
+      return;
+    }
 
     // Add an offset for the new string to the binary.
-    ::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), hdr_offset);
+    if (!::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(
+            GetBufferAddr(), ResolvedVectorHeader(), hdr_offset)) {
+      GetBuffer()->FreeAt(hdr_offset);
+    }
   }
 
   template <typename Str>
@@ -2294,22 +2336,39 @@ class BasicStringVectorField : public FieldBase<Loc> {
   void Set(size_t index, Str s) {
     const ::phaser::StringSource source(*GetBufferAddr(), std::string_view(s));
     if (index >= size()) {
-      ::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), index + 1);
+      if (!::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
+              GetBufferAddr(), ResolvedVectorHeader(), index + 1)) {
+        return;
+      }
     }
 
     auto hdr = ResolvedVectorHeader();
+    if (hdr == nullptr) {
+      return;
+    }
     ::phaser::BufferOffset* data =
         GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return;
+    }
     if (data[index] == 0) {
       // Allocate string header in buffer.
       void* str_hdr = ::phaser::PayloadBuffer::Allocate(
           GetBufferAddr(), sizeof(::phaser::StringHeader));
+      if (str_hdr == nullptr) {
+        return;
+      }
       ::phaser::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
 
       hdr = ResolvedVectorHeader();
+      if (hdr == nullptr) {
+        return;
+      }
       data =
           GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+      if (data == nullptr) {
+        return;
+      }
       data[index] = hdr_offset;
     }
     NonEmbeddedStringField(Parent(), data[index])

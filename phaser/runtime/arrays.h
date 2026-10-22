@@ -152,9 +152,17 @@ class PrimitiveArrayField : public FieldBase<Loc> {
   PrimitiveArrayField(const PrimitiveArrayField&) = default;
   PrimitiveArrayField(PrimitiveArrayField&&) = default;
 
+  // A detached value when the buffer has no space for the array, so a write
+  // through the reference cannot touch the caller's storage.
   T& operator[](size_t index) {
     EnsureExtent();
-    return data()[index];
+    T* base = data();
+    if (base == nullptr) {
+      static thread_local T detached;
+      detached = T{};
+      return detached;
+    }
+    return base[index];
   }
 
   T operator[](size_t index) const { return GetAt(index); }
@@ -211,8 +219,13 @@ class PrimitiveArrayField : public FieldBase<Loc> {
 
   void Clear() {
     ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
-    EnsureStorage(N);
+    if (!EnsureStorage(N)) {
+      return;
+    }
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return;
+    }
     for (size_t i = 0; i < N; i++) {
       base[i] = T{};
     }
@@ -371,8 +384,13 @@ class PrimitiveArrayField : public FieldBase<Loc> {
         return absl::InvalidArgumentError("array_size overflow");
       }
       if constexpr (FixedSize) {
-        EnsureStorage(N);
+        if (!EnsureStorage(N)) {
+          return internal::AllocationFailedError();
+        }
         T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+        if (base == nullptr) {
+          return internal::AllocationFailedError();
+        }
         memcpy(base + parsed, payload->data(), payload->size());
         parsed += count;
         SetActiveCount(parsed);
@@ -386,8 +404,14 @@ class PrimitiveArrayField : public FieldBase<Loc> {
           if (!v.ok()) {
             return v.status();
           }
-          EnsureStorage(parsed + 1);
-          GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+          if (!EnsureStorage(parsed + 1)) {
+            return internal::AllocationFailedError();
+          }
+          T* slot = GetRuntime()->template ToAddress<T>(BaseOffset());
+          if (slot == nullptr) {
+            return internal::AllocationFailedError();
+          }
+          slot[parsed] = *v;
           parsed++;
           SetActiveCount(parsed);
         }
@@ -401,8 +425,14 @@ class PrimitiveArrayField : public FieldBase<Loc> {
         if (!v.ok()) {
           return v.status();
         }
-        EnsureStorage(parsed + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+        if (!EnsureStorage(parsed + 1)) {
+          return internal::AllocationFailedError();
+        }
+        T* slot = GetRuntime()->template ToAddress<T>(BaseOffset());
+        if (slot == nullptr) {
+          return internal::AllocationFailedError();
+        }
+        slot[parsed] = *v;
         parsed++;
         SetActiveCount(parsed);
       } else {
@@ -413,8 +443,14 @@ class PrimitiveArrayField : public FieldBase<Loc> {
         if (!v.ok()) {
           return v.status();
         }
-        EnsureStorage(parsed + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+        if (!EnsureStorage(parsed + 1)) {
+          return internal::AllocationFailedError();
+        }
+        T* slot = GetRuntime()->template ToAddress<T>(BaseOffset());
+        if (slot == nullptr) {
+          return internal::AllocationFailedError();
+        }
+        slot[parsed] = *v;
         parsed++;
         SetActiveCount(parsed);
       }
@@ -460,11 +496,21 @@ class PrimitiveArrayField : public FieldBase<Loc> {
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
-  void EnsureStorage(size_t count) {
-    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), Header(Offset()),
-                                              count);
-    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(Offset()),
-                                             count);
+  // False, leaving the array unchanged, if the buffer has no space.
+  bool EnsureStorage(size_t count) {
+    ::phaser::VectorHeader* hdr = Header(Offset());
+    if (hdr == nullptr ||
+        !::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), hdr,
+                                                   count)) {
+      return false;
+    }
+    hdr = Header(Offset());
+    if (hdr == nullptr ||
+        !::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), hdr,
+                                                  count)) {
+      return false;
+    }
+    return GetRuntime()->template ToAddress<T>(BaseOffset()) != nullptr;
   }
 
   void EnsureExtent() {
@@ -475,7 +521,9 @@ class PrimitiveArrayField : public FieldBase<Loc> {
     if (current >= N) {
       return;
     }
-    EnsureStorage(N);
+    if (!EnsureStorage(N)) {
+      return;
+    }
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
     if (base == nullptr) {
       return;
@@ -533,9 +581,17 @@ class EnumArrayField : public FieldBase<Loc> {
 
   using T = typename std::underlying_type<Enum>::type;
 
+  // A detached value when the buffer has no space for the array, so a write
+  // through the reference cannot touch the caller's storage.
   Enum& operator[](size_t index) {
     EnsureExtent();
-    return *reinterpret_cast<Enum*>(&data()[index]);
+    Enum* base = data();
+    if (base == nullptr) {
+      static thread_local Enum detached;
+      detached = static_cast<Enum>(T{});
+      return detached;
+    }
+    return base[index];
   }
 
   const Enum operator[](size_t index) const { return GetAt(index); }
@@ -595,8 +651,13 @@ class EnumArrayField : public FieldBase<Loc> {
 
   void Clear() {
     ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
-    EnsureStorage(N);
+    if (!EnsureStorage(N)) {
+      return;
+    }
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
+    if (base == nullptr) {
+      return;
+    }
     for (size_t i = 0; i < N; i++) {
       base[i] = T{};
     }
@@ -730,8 +791,14 @@ class EnumArrayField : public FieldBase<Loc> {
         if (!v.ok()) {
           return v.status();
         }
-        EnsureStorage(parsed + 1);
-        GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+        if (!EnsureStorage(parsed + 1)) {
+          return internal::AllocationFailedError();
+        }
+        T* slot = GetRuntime()->template ToAddress<T>(BaseOffset());
+        if (slot == nullptr) {
+          return internal::AllocationFailedError();
+        }
+        slot[parsed] = *v;
         parsed++;
         SetActiveCount(parsed);
       }
@@ -743,8 +810,14 @@ class EnumArrayField : public FieldBase<Loc> {
       if (!v.ok()) {
         return v.status();
       }
-      EnsureStorage(parsed + 1);
-      GetRuntime()->template ToAddress<T>(BaseOffset())[parsed] = *v;
+      if (!EnsureStorage(parsed + 1)) {
+        return internal::AllocationFailedError();
+      }
+      T* slot = GetRuntime()->template ToAddress<T>(BaseOffset());
+      if (slot == nullptr) {
+        return internal::AllocationFailedError();
+      }
+      slot[parsed] = *v;
       parsed++;
       SetActiveCount(parsed);
     }
@@ -791,11 +864,21 @@ class EnumArrayField : public FieldBase<Loc> {
     hdr->num_elements = static_cast<uint32_t>(count);
   }
 
-  void EnsureStorage(size_t count) {
-    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), Header(Offset()),
-                                              count);
-    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(Offset()),
-                                             count);
+  // False, leaving the array unchanged, if the buffer has no space.
+  bool EnsureStorage(size_t count) {
+    ::phaser::VectorHeader* hdr = Header(Offset());
+    if (hdr == nullptr ||
+        !::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), hdr,
+                                                   count)) {
+      return false;
+    }
+    hdr = Header(Offset());
+    if (hdr == nullptr ||
+        !::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), hdr,
+                                                  count)) {
+      return false;
+    }
+    return GetRuntime()->template ToAddress<T>(BaseOffset()) != nullptr;
   }
 
   void EnsureExtent() {
@@ -806,7 +889,9 @@ class EnumArrayField : public FieldBase<Loc> {
     if (current >= N) {
       return;
     }
-    EnsureStorage(N);
+    if (!EnsureStorage(N)) {
+      return;
+    }
     T* base = GetRuntime()->template ToAddress<T>(BaseOffset());
     if (base == nullptr) {
       return;
@@ -1020,11 +1105,9 @@ class MessageArrayField : public MessageVectorField<T, Loc> {
     if (!HasMutablePayload(Vector::GetRuntime())) {
       return Vector::operator[](static_cast<int>(index));
     }
-    while (Vector::size() <= index) {
-      Vector::Add();
-    }
-    while (Vector::size() < N) {
-      Vector::Add();
+    EnsureExtent();
+    if (index >= Vector::size()) {
+      return Vector::Mutable(index);
     }
     return Vector::Mutable(index);
   }
@@ -1034,7 +1117,11 @@ class MessageArrayField : public MessageVectorField<T, Loc> {
       return;
     }
     while (Vector::size() < N) {
+      const size_t before = Vector::size();
       Vector::Add();
+      if (Vector::size() == before) {
+        return;
+      }
     }
   }
 
@@ -1274,18 +1361,32 @@ class StringArrayField : public FieldBase<StoredFieldLoc> {
     if (parsed_count_ >= N) {
       return absl::InvalidArgumentError("array_size overflow");
     }
-    EnsureStorage(parsed_count_ + 1);
+    if (!EnsureStorage(parsed_count_ + 1)) {
+      return internal::AllocationFailedError();
+    }
     absl::StatusOr<std::string_view> v = buffer.DeserializeString();
     if (!v.ok()) {
       return v.status();
     }
     void* str_hdr = ::phaser::PayloadBuffer::Allocate(
         GetBufferAddr(), sizeof(::phaser::StringHeader));
+    if (str_hdr == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ::phaser::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
-    ::phaser::PayloadBuffer::SetString(GetBufferAddr(), *v, hdr_offset);
+    if (::phaser::PayloadBuffer::SetString(GetBufferAddr(), *v, hdr_offset) ==
+        nullptr) {
+      return internal::AllocationFailedError();
+    }
     ::phaser::VectorHeader* hdr = Header();
+    if (hdr == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ::phaser::BufferOffset* data =
         GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return internal::AllocationFailedError();
+    }
     data[parsed_count_] = hdr_offset;
     hdr = Header();
     data = GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
@@ -1315,19 +1416,34 @@ class StringArrayField : public FieldBase<StoredFieldLoc> {
     Header()->num_elements = static_cast<uint32_t>(count);
   }
 
-  // The slots it adds hold no string.
-  void EnsureStorage(size_t count) {
+  // The slots it adds hold no string.  False if the buffer has no space.
+  bool EnsureStorage(size_t count) {
     const size_t current = NumElements();
-    ::phaser::PayloadBuffer::VectorReserve<::phaser::BufferOffset>(
-        GetBufferAddr(), Header(), count);
-    ::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
-        GetBufferAddr(), Header(), count);
+    ::phaser::VectorHeader* hdr = Header();
+    if (hdr == nullptr ||
+        !::phaser::PayloadBuffer::VectorReserve<::phaser::BufferOffset>(
+            GetBufferAddr(), hdr, count)) {
+      return false;
+    }
+    hdr = Header();
+    if (hdr == nullptr ||
+        !::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
+            GetBufferAddr(), hdr, count)) {
+      return false;
+    }
     if (count > current) {
+      hdr = Header();
+      if (hdr == nullptr) {
+        return false;
+      }
       ::phaser::BufferOffset* data =
-          GetRuntime()->template ToAddress<::phaser::BufferOffset>(
-              Header()->data);
+          GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+      if (data == nullptr) {
+        return false;
+      }
       memset(data + current, 0, (count - current) * sizeof(*data));
     }
+    return true;
   }
 
   size_t parsed_count_for_serialize() const {
@@ -1364,7 +1480,9 @@ class StringArrayField : public FieldBase<StoredFieldLoc> {
     }
     const size_t current = NumElements();
     if (current < N) {
-      EnsureStorage(N);
+      if (!EnsureStorage(N)) {
+        return;
+      }
       for (size_t i = current; i < N; i++) {
         AllocateStringSlot(i);
       }
@@ -1404,14 +1522,29 @@ class StringArrayField : public FieldBase<StoredFieldLoc> {
 
   void AllocateStringSlot(size_t index) {
     ::phaser::VectorHeader* hdr = Header();
+    if (hdr == nullptr) {
+      return;
+    }
     ::phaser::BufferOffset* data =
         GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return;
+    }
     if (data[index] == 0) {
       void* str_hdr = ::phaser::PayloadBuffer::Allocate(
           GetBufferAddr(), sizeof(::phaser::StringHeader));
+      if (str_hdr == nullptr) {
+        return;
+      }
       hdr = Header();
+      if (hdr == nullptr) {
+        return;
+      }
       data = GetRuntime()->template ToAddress<::phaser::BufferOffset>(
           hdr->data);
+      if (data == nullptr) {
+        return;
+      }
       data[index] = GetRuntime()->ToOffset(str_hdr);
     }
     strings_[index] = NonEmbeddedStringField(Parent(), data[index]);

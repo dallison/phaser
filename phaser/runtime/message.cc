@@ -22,10 +22,8 @@ NewBufferImage::NewBufferImage(Maker make) {
        scratch_size *= 2) {
     // Zeroed, so that the unused ends of small blocks are defined.
     auto scratch = std::make_unique<char[]>(scratch_size);
-    ::phaser::PayloadBuffer* pb;
-    try {
-      pb = make(scratch.get(), scratch_size, true);
-    } catch (const std::bad_alloc&) {
+    ::phaser::PayloadBuffer* pb = make(scratch.get(), scratch_size, true);
+    if (pb == nullptr) {
       continue;
     }
     MessageRuntime runtime(pb, true);

@@ -559,6 +559,15 @@ std::string MessageGenerator::FieldAccessorName(
   return name;
 }
 
+std::string MessageGenerator::PresenceAccessorName(
+    const std::string& proto_name) const {
+  // A field named has_<proto_name> already has an accessor with that name.
+  if (message_->FindFieldByName("has_" + proto_name) != nullptr) {
+    return "_phaser_has_" + proto_name;
+  }
+  return "has_" + proto_name;
+}
+
 std::string MessageGenerator::MemberVariableName(
     const std::string& proto_name) const {
   // The ROS frontend exposes the member itself, so there is no accessor for it
@@ -2059,6 +2068,9 @@ void MessageGenerator::GenerateFieldInitializers(std::ostream& os,
 
 void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
   if (decl) {
+    os << "  static absl::StatusOr<" << MessageName(message_)
+       << "> TryCreateMutable(void *addr, size_t size, ::phaser::Tuning "
+          "tuning = ::phaser::Tuning::kPerformance);\n";
     os << "  static " << MessageName(message_)
        << " CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning = "
           "::phaser::Tuning::kPerformance);\n";
@@ -2085,17 +2097,40 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
           "::phaser::Tuning::kPerformance);\n";
     return;
   }
-  os << "// Create a mutable message in the given memory.\n";
-  os << MessageName(message_) << " " << MessageName(message_)
-     << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
+  os << "// Create a mutable message in the given memory.  Fails if the memory "
+        "is too\n// small for the message's fixed parts.\n";
+  os << "absl::StatusOr<" << MessageName(message_) << "> "
+     << MessageName(message_)
+     << "::TryCreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) "
+        "{\n"
+        "  if (addr == nullptr || size < sizeof(::phaser::PayloadBuffer) + "
+        "sizeof(::phaser::FreeBlockHeader) || size > UINT32_MAX) {\n"
+        "    return absl::InvalidArgumentError(\"phaser: buffer is too "
+        "small\");\n"
+        "  }\n"
         "  ::phaser::PayloadBuffer *pb = ::phaser::NewFixedBuffer<"
      << MetadataTypeList()
      << ">(addr, size, tuning);\n"
+        "  if (pb == nullptr || pb->AllocationFailed() || pb->message == 0) {\n"
+        "    return ::phaser::internal::AllocationFailedError();\n"
+        "  }\n"
         "  "
      << MessageName(message_)
      << " msg{::phaser::InternalDefault{}};\n"
         "  msg.BindNewFixed(pb);\n"
         "  return msg;\n"
+        "}\n"
+        "\n";
+  os << "// Create a mutable message in the given memory.  Aborts if the "
+        "memory is too\n// small for the message's fixed parts.\n";
+  os << MessageName(message_) << " " << MessageName(message_)
+     << "::CreateMutable(void *addr, size_t size, ::phaser::Tuning tuning) {\n"
+        "  auto message = TryCreateMutable(addr, size, tuning);\n"
+        "  if (!message.ok()) {\n"
+        "    ::phaser::internal::Fatal(\"buffer is too small for "
+        "CreateMutable\");\n"
+        "  }\n"
+        "  return std::move(*message);\n"
         "}\n"
         "\n";
 
@@ -2148,8 +2183,12 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  _phaser_message.BindNewMutable(new "
         "::phaser::DynamicMutableMessageRuntime(pb, std::move(free)), "
         "pb->message);\n"
-     << InitializeMetadataCall("&_phaser_message.runtime->pb")
-     << "  _phaser_message.runtime->MarkNewBuffer();\n"
+        "  if (!::phaser::InitializeMetadata<"
+     << MetadataTypeList()
+     << ">(&_phaser_message.runtime->pb)) {\n"
+        "    return ::phaser::internal::AllocationFailedError();\n"
+        "  }\n"
+        "  _phaser_message.runtime->MarkNewBuffer();\n"
         "  return _phaser_message;\n"
         "}\n\n";
 
@@ -2246,8 +2285,11 @@ std::string MessageGenerator::MetadataTypeList() {
 }
 
 std::string MessageGenerator::InitializeMetadataCall(const std::string& pb) {
-  return "  ::phaser::InitializeMetadata<" + MetadataTypeList() + ">(" + pb +
-         ");\n";
+  return "  if (!::phaser::InitializeMetadata<" + MetadataTypeList() + ">(" +
+         pb +
+         ")) {\n"
+         "    ::phaser::internal::Fatal(\"phaser: payload buffer is full\");\n"
+         "  }\n";
 }
 
 void MessageGenerator::GenerateFieldMetadata(std::ostream& os) {
@@ -2682,11 +2724,11 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
         }
         os << "  }\n";
         if (union_index == -1) {
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".IsPresent();\n";
           os << "  }\n";
         } else {
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".template IsPresent<"
              << std::to_string(union_index) << ">();\n";
           os << "  }\n";
@@ -2745,7 +2787,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
              << "() const {\n";
           os << "    return " << member_name << ".Get();\n";
           os << "  }\n";
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".IsPresent();\n";
           os << "  }\n";
           os << "  " << field->c_type << "* mutable_" << field_name << "() {\n";
@@ -2771,7 +2813,7 @@ void MessageGenerator::GenerateFieldProtobufAccessors(
              << MessageName(field->field->message_type()) << ">();\n";
           os << "  }\n";
 
-          os << "  bool has_" << field_name << "() const {\n";
+          os << "  bool " << PresenceAccessorName(field_name) << "() const {\n";
           os << "    return " << member_name << ".template IsPresent<"
              << std::to_string(union_index) << ">();\n";
           os << "  }\n";
@@ -4734,7 +4776,8 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
           os << "    void* _phaser_address = "
                 "::phaser::PayloadBuffer::Allocate(_phaser_pb, "
              << value.storage_type << "::BinarySize());\n";
-          os << "    if (_phaser_address == nullptr) throw std::bad_alloc();\n";
+          os << "    if (_phaser_address == nullptr) return "
+                "::phaser::internal::AllocationFailedError();\n";
           os << "    const ::phaser::BufferOffset _phaser_message = "
                 "(*_phaser_pb)->UncheckedOffset(_phaser_address);\n";
           os << "    (*_phaser_pb)->Set<::phaser::BufferOffset>(" << location
@@ -4776,6 +4819,9 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
            << "* _phaser_data = ::phaser::internal::ResizeVectorAt<"
            << value.storage_type << ">(_phaser_runtime, " << location
            << ", _phaser_count);\n";
+        os << "    if (_phaser_count != 0 && _phaser_data == nullptr) {\n";
+        os << "      return ::phaser::internal::AllocationFailedError();\n";
+        os << "    }\n";
         if (value.ros_type == value.storage_type) {
           os << "    if (absl::Status _phaser_status = "
                 "_phaser_buffer.ReadArray<"
@@ -5329,6 +5375,8 @@ void MessageGenerator::GenerateSerializer(std::ostream& os, bool decl) {
   }
   os << "absl::Status " << MessageName(message_)
      << "::Serialize(::phaser::ProtoBuffer &_phaser_buffer) const {\n";
+  os << "  if (AllocationFailed()) return "
+        "::phaser::internal::AllocationFailedError();\n";
   for (auto& field : fields_) {
     if (field->field->is_repeated()) {
       os << "  if (absl::Status _phaser_status = " << field->member_name
@@ -5431,6 +5479,8 @@ void MessageGenerator::GenerateDeserializer(std::ostream& os, bool decl) {
       }
     }
   }
+  os << "  if (AllocationFailed()) return "
+        "::phaser::internal::AllocationFailedError();\n";
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
 }
@@ -5819,7 +5869,8 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
         "::phaser::RuntimeHandle runtime, "
         "::phaser::BufferOffset offset, ::phaser::ProtoBuffer& buffer) {\n";
   os << "  " << MessageName(message_) << " message(runtime, offset);\n";
-  os << "  message.InstallMetadata<" << MessageName(message_) << ">();\n";
+  os << "  if (!message.InstallMetadata<" << MessageName(message_)
+     << ">()) return ::phaser::internal::AllocationFailedError();\n";
   os << "  return message.Deserialize(buffer);\n";
   os << "}\n\n";
 
@@ -5844,9 +5895,14 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
      << "Allocate(::phaser::RuntimeHandle runtime) {\n";
   os << "  void *addr = ::phaser::PayloadBuffer::Allocate(&runtime->pb, "
      << MessageName(message_) << "::BinarySize());\n";
+  os << "  if (addr == nullptr) return {nullptr, 0};\n";
   os << "  ::phaser::BufferOffset offset = runtime->pb->ToOffset(addr);\n";
   os << "  auto msg = new " << MessageName(message_) << "(runtime, offset);\n";
-  os << "  msg->InstallMetadata<" << MessageName(message_) << ">();\n";
+  os << "  if (!msg->InstallMetadata<" << MessageName(message_) << ">()) {\n";
+  os << "    delete msg;\n";
+  os << "    runtime->pb->FreeAt(offset);\n";
+  os << "    return {nullptr, 0};\n";
+  os << "  }\n";
   os << "  return std::make_pair(msg, offset);\n";
   os << "}\n\n";
 
@@ -5892,7 +5948,9 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
     } else if (field->field->is_repeated()) {
       os << "    return m->" << field->field->name() << "_size() > 0;\n";
     } else {
-      os << "    return m->has_" << field->field->name() << "();\n";
+      os << "    return m->"
+         << PresenceAccessorName(std::string(field->field->name()))
+         << "();\n";
     }
   }
   for (auto& [oneof, u] : unions_) {

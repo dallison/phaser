@@ -195,6 +195,34 @@ cc_test(
 )
 
 cc_test(
+    name = "generator_edge_cases_test",
+    srcs = ["generator_edge_cases_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:generator_edge_cases_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "fixed_buffer_test",
+    srcs = ["fixed_buffer_test.cc"],
+    copts = PHASER_COPTS + [
+        "-fno-exceptions",
+        "-fno-rtti",
+    ],
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:fixed_buffer_phaser",
+        "//phaser/testdata:fixed_buffer_ros_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "ros_wire_conversion_test",
     srcs = ["ros_wire_conversion_test.cc"],
     copts = PHASER_COPTS + PHASER_PROTOBUF_GENERATED_COPTS,

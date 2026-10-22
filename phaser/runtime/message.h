@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -29,6 +31,27 @@
 #include "absl/status/statusor.h"
 #include "phaser/runtime/payload_buffer.h"
 #include "toolbelt/hexdump.h"
+
+namespace phaser {
+namespace internal {
+[[noreturn]] inline void Fatal(const char* what) {
+  (void)std::fprintf(stderr, "phaser: %s\n", what);
+  std::abort();
+}
+
+inline absl::Status AllocationFailedError() {
+  return absl::ResourceExhaustedError("phaser: payload buffer is full");
+}
+}  // namespace internal
+}  // namespace phaser
+
+// Reports a programming error such as an out-of-range index or a write to a
+// readonly message.  Builds without exceptions print the error and abort.
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+#define PHASER_THROW(exception) throw exception
+#else
+#define PHASER_THROW(exception) ::phaser::internal::Fatal(#exception)
+#endif
 
 namespace phaser {
 
@@ -395,7 +418,7 @@ inline RuntimeControlBlock* InitializeRuntimeControl(
   void* memory = ::phaser::PayloadBuffer::Allocate(
       pb, static_cast<uint32_t>(RuntimeControlSize(capacity)), true);
   if (memory == nullptr) {
-    throw std::bad_alloc();
+    return nullptr;
   }
   auto* control = new (memory) RuntimeControlBlock;
   control->capacity = static_cast<uint32_t>(capacity);
@@ -443,7 +466,7 @@ inline constexpr size_t kMaxEagerMetadataSize = 512;
 // they are small enough, so that making a message of a reachable type needs
 // no allocation; otherwise each is copied in when first needed.
 template <typename Root, typename... Reachable>
-void InitializeMetadata(::phaser::PayloadBuffer** pb) {
+bool InitializeMetadata(::phaser::PayloadBuffer** pb) {
   constexpr size_t kTypeCount = 1 + sizeof...(Reachable);
   constexpr bool kEager =
       sizeof(internal::MetadataTables<Root, Reachable...>) <=
@@ -453,26 +476,40 @@ void InitializeMetadata(::phaser::PayloadBuffer** pb) {
                          internal::MetadataTables<Root>>;
   static constexpr Tables kTables{};
 
-  if ((*pb)->message == 0) {
-    throw std::bad_alloc();
+  if (pb == nullptr || *pb == nullptr || (*pb)->message == 0) {
+    return false;
   }
-  InitializeRuntimeControl(pb, kTypeCount);
+  // A message that reaches no other type has no control block, so a null
+  // control block is failure only when one was required.
+  if constexpr (kTypeCount > 1) {
+    if (InitializeRuntimeControl(pb, kTypeCount) == nullptr) {
+      return false;
+    }
+  }
   void* block = ::phaser::PayloadBuffer::Allocate(
       pb, static_cast<uint32_t>(sizeof(kTables)), false);
   if (block == nullptr) {
-    throw std::bad_alloc();
+    return false;
   }
   memcpy(block, &kTables, sizeof(kTables));
   const ::phaser::BufferOffset offset = (*pb)->ToOffset(block);
-  // A message that reaches no other type has no control block.
   if constexpr (kTypeCount > 1) {
     // Allocating the tables may have moved the buffer.
     auto* control = (*pb)->AddressOf<RuntimeControlBlock>((*pb)->metadata);
+    if (control == nullptr) {
+      return false;
+    }
     Tables::Record(control->entries, offset);
     control->count = kEager ? static_cast<uint32_t>(kTypeCount) : 1;
   }
   // The first word of a message is the offset of its metadata.
-  *(*pb)->AddressOf<::phaser::BufferOffset>((*pb)->message) = offset;
+  auto* header =
+      (*pb)->template AddressOf<::phaser::BufferOffset>((*pb)->message);
+  if (header == nullptr) {
+    return false;
+  }
+  *header = offset;
+  return true;
 }
 
 // A dynamic message's handles share its runtime.  Other handles copy this small
@@ -636,6 +673,9 @@ struct MessageRuntime {
       void* memory = ::phaser::PayloadBuffer::Realloc(
           &pb, pb->ToAddress(old_offset),
           static_cast<uint32_t>(RuntimeControlSize(new_capacity)), true);
+      if (memory == nullptr) {
+        return;
+      }
       control = static_cast<RuntimeControlBlock*>(memory);
       control->capacity = new_capacity;
       pb->metadata = pb->ToOffset(control);
@@ -1390,7 +1430,7 @@ struct Message {
     const Message* msg = reinterpret_cast<const Message*>(
         reinterpret_cast<const char*>(field) - offset);
     if (!msg->IsMutable()) {
-      throw std::logic_error("cannot mutate a readonly Phaser message");
+      PHASER_THROW(std::logic_error("cannot mutate a readonly Phaser message"));
     }
     return &msg->runtime->pb;
   }
@@ -1474,6 +1514,7 @@ struct Message {
 
   // Returns the offset of the metadata of MessageType in the runtime's
   // buffer, copying it in if it is not there yet.  This can move the buffer.
+  // Returns 0 if the buffer has no space for the metadata.
   template <typename MessageType>
   static ::phaser::BufferOffset MetadataFor(const RuntimeHandle& runtime) {
     if (const RuntimeControlBlock* control = runtime->GetRuntimeControl();
@@ -1505,7 +1546,7 @@ struct Message {
     void* fields = ::phaser::PayloadBuffer::Allocate(
         &runtime->pb, sizeof(MessageType::field_data), false);
     if (fields == nullptr) {
-      throw std::bad_alloc();
+      return 0;
     }
     memcpy(fields, &MessageType::field_data, sizeof(MessageType::field_data));
     metadata = runtime->pb->ToOffset(fields);
@@ -1513,11 +1554,48 @@ struct Message {
     return metadata;
   }
 
+  // Returns false, leaving the message without field metadata, if the buffer
+  // has no space for it.
   template <typename MessageType>
-  void InstallMetadata() {
+  bool InstallMetadata() {
     const ::phaser::BufferOffset metadata = MetadataFor<MessageType>(runtime);
-    *runtime->pb->ToAddress<::phaser::BufferOffset>(absolute_binary_offset) =
-        metadata;
+    if (metadata == 0) {
+      return false;
+    }
+    auto* header = runtime->pb->template ToAddress<::phaser::BufferOffset>(
+        absolute_binary_offset);
+    if (header == nullptr) {
+      return false;
+    }
+    *header = metadata;
+    return true;
+  }
+
+  // True if an allocation in this message's buffer failed because a fixed
+  // size buffer was full.  The message is then incomplete: setters that
+  // needed space did nothing, and serializing the message fails.  A readonly
+  // buffer shorter than the magic word has no flag to read.
+  bool AllocationFailed() const {
+    if (runtime == nullptr || runtime->pb == nullptr) {
+      return false;
+    }
+    if (!runtime->IsMutable() &&
+        runtime->BufferSize() < sizeof(uint32_t)) {
+      return false;
+    }
+    return runtime->pb->AllocationFailed();
+  }
+
+  // Binds this handle to its own copy of 'rt'.  Used when an allocation
+  // failed and the handle must not write into the caller's buffer.
+  void BindDetached(MessageRuntime& rt, ::phaser::BufferOffset offset) {
+    ReleaseRuntime();
+    readonly_runtime_ = rt;
+    runtime = &readonly_runtime_;
+    owns_runtime_ = false;
+    absolute_binary_offset = offset;
+    field_locations_known_ = true;
+    mutable_ = true;
   }
 
   // Looks for the field number in the field data. Returns the offset of the
@@ -1709,8 +1787,7 @@ struct Message {
 class NewBufferImage {
  public:
   // 'make' makes a new buffer, with the small block allocator if 'bitmaps',
-  // in the 'size' bytes at 'addr', throwing std::bad_alloc if it does not
-  // fit.
+  // in the 'size' bytes at 'addr', or returns null if it does not fit.
   using Maker = ::phaser::PayloadBuffer* (*)(void* addr, size_t size,
                                              bool bitmaps);
   explicit NewBufferImage(Maker make);
@@ -1727,10 +1804,18 @@ class NewBufferImage {
 template <typename Root, typename... Reachable>
 ::phaser::PayloadBuffer* MakeFixedBuffer(void* addr, size_t size,
                                          bool bitmaps) {
+  if (addr == nullptr ||
+      size < sizeof(::phaser::PayloadBuffer) + sizeof(::phaser::FreeBlockHeader) ||
+      size > UINT32_MAX) {
+    return nullptr;
+  }
   auto* pb = new (addr)
       ::phaser::PayloadBuffer(static_cast<uint32_t>(size), bitmaps);
-  ::phaser::PayloadBuffer::AllocateMainMessage(&pb, Root::BinarySize());
-  InitializeMetadata<Root, Reachable...>(&pb);
+  if (::phaser::PayloadBuffer::AllocateMainMessage(&pb, Root::BinarySize()) ==
+          nullptr ||
+      !InitializeMetadata<Root, Reachable...>(&pb)) {
+    return nullptr;
+  }
   return pb;
 }
 
@@ -1750,6 +1835,38 @@ template <typename Root, typename... Reachable>
   return MakeFixedBuffer<Root, Reachable...>(addr, size,
                                              tuning == Tuning::kPerformance);
 }
+
+namespace internal {
+
+// Binds 'msg' to detached per-thread storage after the allocation for it
+// failed.  Callers that must hand back a writable message use this so writes
+// through the handle stay in bounds.  The owning buffer has already recorded
+// the failure, and nothing reads the storage back.  Allocations made through
+// the detached handle always fail because its buffer has no free space.
+template <typename MessageType>
+void BindToAllocationFailureSink(MessageType& msg) {
+  constexpr size_t kSize =
+      (sizeof(::phaser::PayloadBuffer) + MessageType::BinarySize() + 64 + 7) &
+      ~size_t{7};
+  alignas(8) static thread_local char storage[kSize];
+  auto* pb = new (storage)
+      ::phaser::PayloadBuffer(static_cast<uint32_t>(kSize), false);
+  if (::phaser::PayloadBuffer::AllocateMainMessage(
+          &pb, MessageType::BinarySize()) == nullptr) {
+    Fatal("allocation failure sink is too small");
+  }
+  pb->free_list = 0;
+  for (auto& head : pb->bitmaps) {
+    head = 0;
+  }
+  // The sink is full: further allocations must fail rather than reuse the
+  // space just taken by the empty message.
+  pb->MarkAllocationFailed();
+  MessageRuntime runtime(pb, true);
+  msg.BindDetached(runtime, pb->message);
+}
+
+}  // namespace internal
 
 ::phaser::PayloadBuffer* NewDynamicBuffer(
     size_t initial_size, Tuning tuning = Tuning::kPerformance);
