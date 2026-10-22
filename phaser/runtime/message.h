@@ -1608,6 +1608,21 @@ struct Message {
     mutable_ = true;
   }
 
+  // Points this handle, made without a runtime, at the new main message of
+  // the new fixed buffer 'pb', in a runtime built in place.  A runtime built
+  // elsewhere and copied in would be read straight after the narrower stores
+  // that built it, and one wide load of them waits for them to reach the
+  // cache.
+  void BindNewFixed(::phaser::PayloadBuffer* pb) {
+    ReleaseRuntime();
+    readonly_runtime_ = MessageRuntime(pb, true);
+    readonly_runtime_.MarkNewFixedBuffer();
+    runtime = &readonly_runtime_;
+    absolute_binary_offset = pb->message;
+    field_locations_known_ = true;
+    mutable_ = true;
+  }
+
   // A runtime that may live in another handle is copied, since that handle
   // may move or be destroyed first.  A dynamic runtime is used in place
   // because its buffer can move; the message that owns it keeps it alive.

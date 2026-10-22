@@ -2091,11 +2091,11 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::PayloadBuffer *pb = ::phaser::NewFixedBuffer<"
      << MetadataTypeList()
      << ">(addr, size, tuning);\n"
-        "  ::phaser::MessageRuntime runtime(pb, true);\n"
-        "  runtime.MarkNewFixedBuffer();\n"
-        "  return "
+        "  "
      << MessageName(message_)
-     << "(BorrowRuntime(runtime), pb->message);\n"
+     << " msg{::phaser::InternalDefault{}};\n"
+        "  msg.BindNewFixed(pb);\n"
+        "  return msg;\n"
         "}\n"
         "\n";
 
