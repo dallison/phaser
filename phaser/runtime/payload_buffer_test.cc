@@ -465,6 +465,59 @@ TEST(BufferTest, String) {
   free(buffer);
 }
 
+TEST(BufferTest, CopyStringCopiesExactlyTheBytes) {
+  for (size_t n = 0; n <= 70; ++n) {
+    std::string source;
+    for (size_t i = 0; i < n; ++i) {
+      source.push_back(static_cast<char>('!' + i));
+    }
+    std::string destination(n + 32, '#');
+    phaser::internal::CopyString(destination.data() + 16, source.data(), n);
+    EXPECT_EQ(destination, std::string(16, '#') + source + std::string(16, '#'))
+        << n;
+  }
+}
+
+TEST(BufferTest, NewStringsOfEveryShortLength) {
+  constexpr size_t kMaxLength = 70;
+  for (bool bitmaps : {true, false}) {
+    char *buffer = (char *)calloc(1, 8192);
+    PayloadBuffer *pb = new (buffer) PayloadBuffer(8192, bitmaps);
+    PayloadBuffer::AllocateMainMessage(&pb,
+                                       (kMaxLength + 1) * sizeof(BufferOffset));
+    std::string all;
+    for (size_t i = 0; i < kMaxLength; ++i) {
+      all.push_back(static_cast<char>('a' + i % 26));
+    }
+    for (size_t n = 0; n <= kMaxLength; ++n) {
+      PayloadBuffer::SetString(&pb, all.data(), n,
+                               pb->message + n * sizeof(BufferOffset));
+    }
+    for (size_t n = 0; n <= kMaxLength; ++n) {
+      EXPECT_EQ(pb->GetString(pb->message + n * sizeof(BufferOffset)),
+                all.substr(0, n))
+          << n << " " << bitmaps;
+    }
+    free(buffer);
+  }
+}
+
+TEST(BufferTest, StringThatDoesNotFitThrows) {
+  char *buffer = (char *)calloc(1, 4096);
+  PayloadBuffer *pb = new (buffer) PayloadBuffer(4096);
+  PayloadBuffer::AllocateMainMessage(&pb, 32);
+  const BufferOffset offset = pb->message;
+  const std::string big(8192, 'x');
+
+  EXPECT_THROW(PayloadBuffer::SetString(&pb, big, offset), std::bad_alloc);
+  EXPECT_EQ(pb->GetString(offset), "");
+
+  PayloadBuffer::SetString(&pb, std::string("small"), offset);
+  EXPECT_THROW(PayloadBuffer::SetString(&pb, big, offset), std::bad_alloc);
+  EXPECT_EQ(pb->GetString(offset), "small");
+  free(buffer);
+}
+
 TEST(BufferTest, HostileStringLengthIsClamped) {
   char *buffer = (char *)calloc(1, 4096);
   PayloadBuffer *pb = new (buffer) PayloadBuffer(4096);

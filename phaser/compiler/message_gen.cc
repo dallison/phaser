@@ -4662,12 +4662,11 @@ void MessageGenerator::GenerateROSDirectDeserialization(std::ostream& os,
         break;
       }
       case Kind::kString:
-        os << "    absl::StatusOr<std::string_view> _phaser_value = "
-              "_phaser_buffer.ReadString();\n";
-        os << "    if (!_phaser_value.ok()) return _phaser_value.status();\n";
-        os << "    ::phaser::PayloadBuffer::SetNewString(_phaser_pb, "
-              "*_phaser_value, "
-           << location << ");\n";
+        os << "    if (absl::Status _phaser_status = "
+              "::phaser::internal::ReadNewString(_phaser_pb, "
+           << location
+           << ", _phaser_buffer); !_phaser_status.ok()) return "
+              "_phaser_status;\n";
         break;
       case Kind::kMessage:
         if (value.field->inline_message) {

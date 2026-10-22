@@ -183,7 +183,8 @@ class ROSReader {
         length, Remaining()));
   }
 
- private:
+  // The error for a string of 'length' bytes, whose length has been read,
+  // that runs past the end of the input.
   ABSL_ATTRIBUTE_NOINLINE absl::Status TruncatedStringError(
       uint32_t length) const {
     return absl::InvalidArgumentError(absl::StrFormat(
@@ -191,6 +192,7 @@ class ROSReader {
         position_, length, Remaining()));
   }
 
+ private:
   absl::Span<const char> data_;
   size_t position_ = 0;
 };

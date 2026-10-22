@@ -12,7 +12,10 @@ cc_library(
     srcs = ["payload_buffer.cc"],
     hdrs = ["payload_buffer.h"],
     copts = PHASER_COPTS,
-    deps = ["@com_google_absl//absl/types:span"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/types:span",
+    ],
 )
 
 cc_test(

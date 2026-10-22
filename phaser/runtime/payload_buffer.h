@@ -4,6 +4,7 @@
 // allocator and layout can change without affecting other toolbelt users.
 // Phaser buffers are not readable through toolbelt::PayloadBuffer.
 
+#include "absl/base/attributes.h"
 #include "absl/types/span.h"
 #include <functional>
 #include <iostream>
@@ -269,7 +270,8 @@ struct PayloadBuffer {
 
   // Allocate space for the string.
   // 'header_offset' is the offset into the buffer of the StringHeader.
-  // The string is copied in.
+  // The string is copied in.  Throws std::bad_alloc, leaving any old string,
+  // if the string does not fit.
 
   // C-string style (allows for no allocation of std::string).
   static char *SetString(PayloadBuffer **self, const char *s, size_t len,
@@ -281,22 +283,12 @@ struct PayloadBuffer {
     return SetString(self, s.data(), s.size(), header_offset);
   }
 
-  // SetString() for a StringHeader that holds no string yet.
-  static void SetNewString(PayloadBuffer **self, std::string_view s,
-                           BufferOffset header_offset) {
-    if (s.size() > UINT32_MAX - sizeof(uint32_t)) {
-      throw std::bad_alloc();
-    }
-    const uint32_t length = uint32_t(s.size());
-    char *block = static_cast<char *>(
-        Allocate(self, length + uint32_t(sizeof(uint32_t)), false));
-    if (block == nullptr) {
-      throw std::bad_alloc();
-    }
-    memcpy(block, &length, sizeof(length));
-    memcpy(block + sizeof(length), s.data(), length);
-    (*self)->Set<BufferOffset>(header_offset, (*self)->UncheckedOffset(block));
-  }
+  // SetString() for a StringHeader that holds no string yet.  Throws
+  // std::bad_alloc if the string does not fit.  Always inlined, so only for
+  // the few callers that are worth the code.
+  ABSL_ATTRIBUTE_ALWAYS_INLINE static char *
+  NewString(PayloadBuffer **self, const char *s, size_t len,
+            BufferOffset header_offset);
 
   static void ClearString(PayloadBuffer **self, BufferOffset header_offset) {
     PayloadBuffer *pb = *self;
@@ -395,6 +387,10 @@ struct PayloadBuffer {
   // free block) are handled inline; everything else goes to AllocateSlow.
   static void *Allocate(PayloadBuffer **buffer, uint32_t n, bool clear = true,
                         bool enable_small_block = true);
+  // Allocate(), always inlined, for the few callers that are worth the code.
+  ABSL_ATTRIBUTE_ALWAYS_INLINE static void *
+  AllocateInline(PayloadBuffer **buffer, uint32_t n, bool clear,
+                 bool enable_small_block = true);
   static void *AllocateSlow(PayloadBuffer **buffer, uint32_t n, bool clear,
                             bool enable_small_block);
   void Free(void *p);
@@ -590,6 +586,61 @@ class StringSource {
   BufferOffset offset_;
 };
 
+namespace internal {
+// memcpy without a call for the short strings most messages hold.  'dst' and
+// 'src' must not overlap.
+inline void CopyString(char *dst, const char *src, size_t n) {
+  if (n <= 16) {
+    if (n >= 8) {
+      uint64_t first, last;
+      memcpy(&first, src, sizeof(first));
+      memcpy(&last, src + n - sizeof(last), sizeof(last));
+      memcpy(dst, &first, sizeof(first));
+      memcpy(dst + n - sizeof(last), &last, sizeof(last));
+    } else if (n >= 4) {
+      uint32_t first, last;
+      memcpy(&first, src, sizeof(first));
+      memcpy(&last, src + n - sizeof(last), sizeof(last));
+      memcpy(dst, &first, sizeof(first));
+      memcpy(dst + n - sizeof(last), &last, sizeof(last));
+    } else if (n > 0) {
+      dst[0] = src[0];
+      dst[n / 2] = src[n / 2];
+      dst[n - 1] = src[n - 1];
+    }
+    return;
+  }
+  if (n <= 32) {
+    char first[16], last[16];
+    memcpy(first, src, sizeof(first));
+    memcpy(last, src + n - sizeof(last), sizeof(last));
+    memcpy(dst, first, sizeof(first));
+    memcpy(dst + n - sizeof(last), last, sizeof(last));
+    return;
+  }
+  memcpy(dst, src, n);
+}
+} // namespace internal
+
+inline char *PayloadBuffer::NewString(PayloadBuffer **self, const char *s,
+                                      size_t len, BufferOffset header_offset) {
+  if (len > UINT32_MAX - sizeof(uint32_t)) {
+    throw std::bad_alloc();
+  }
+  const StringSource source(*self, std::string_view(s, len));
+  const uint32_t length = uint32_t(len);
+  char *block = static_cast<char *>(
+      AllocateInline(self, length + uint32_t(sizeof(uint32_t)), false));
+  if (block == nullptr) {
+    throw std::bad_alloc();
+  }
+  memcpy(block, &length, sizeof(length));
+  internal::CopyString(block + sizeof(length), source.In(*self).data(),
+                       length);
+  (*self)->Set<BufferOffset>(header_offset, (*self)->UncheckedOffset(block));
+  return block;
+}
+
 template <>
 inline char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s,
                                       BufferOffset header_offset) {
@@ -598,6 +649,12 @@ inline char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s,
 
 inline void *PayloadBuffer::Allocate(PayloadBuffer **buffer, uint32_t n,
                                      bool clear, bool enable_small_block) {
+  return AllocateInline(buffer, n, clear, enable_small_block);
+}
+
+inline void *PayloadBuffer::AllocateInline(PayloadBuffer **buffer, uint32_t n,
+                                           bool clear,
+                                           bool enable_small_block) {
   PayloadBuffer *pb = *buffer;
   if (n == 0 || n > pb->full_size) {
     return AllocateSlow(buffer, n, clear, enable_small_block);

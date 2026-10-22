@@ -265,6 +265,12 @@ constexpr size_t ROSParseMinSize() {
   }
 }
 
+// Reads a string from 'reader' into the StringHeader at 'header' in the
+// mutable buffer '*pb', which holds no string yet.
+absl::Status ReadNewString(::phaser::PayloadBuffer** pb,
+                           ::phaser::BufferOffset header,
+                           ::phaser::ROSReader& reader);
+
 // Reads a T from 'reader' into the empty message at 'offset' in the mutable
 // buffer of 'runtime'.
 template <typename T>

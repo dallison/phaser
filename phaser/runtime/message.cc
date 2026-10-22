@@ -7,6 +7,7 @@
 #include <cstring>
 #include <limits>
 
+#include "phaser/runtime/runtime.h"
 #include "toolbelt/hexdump.h"
 
 namespace phaser {
@@ -101,4 +102,23 @@ absl::StatusOr<::phaser::PayloadBuffer*> NewDynamicBuffer(
       tuning == Tuning::kPerformance);
   return pb;
 }
+
+namespace internal {
+
+absl::Status ReadNewString(::phaser::PayloadBuffer** pb,
+                           ::phaser::BufferOffset header,
+                           ::phaser::ROSReader& reader) {
+  if (ABSL_PREDICT_FALSE(reader.Remaining() < sizeof(uint32_t))) {
+    return reader.TruncatedError(sizeof(uint32_t));
+  }
+  const uint32_t length = reader.ReadUnchecked<uint32_t>();
+  if (ABSL_PREDICT_FALSE(length > reader.Remaining())) {
+    return reader.TruncatedStringError(length);
+  }
+  ::phaser::PayloadBuffer::NewString(pb, reader.ReadRawUnchecked(length),
+                                     length, header);
+  return absl::OkStatus();
+}
+
+}  // namespace internal
 }  // namespace phaser

@@ -39,6 +39,12 @@ void PayloadBuffer::AllocateMetadata(PayloadBuffer **self, void *md,
 
 char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
                                BufferOffset header_offset) {
+  if (*(*self)->AddressOf<BufferOffset>(header_offset) == 0) {
+    return NewString(self, s, len, header_offset);
+  }
+  if (len > UINT32_MAX - sizeof(uint32_t)) {
+    throw std::bad_alloc();
+  }
   // Get address of the string header
   BufferOffset *hdr = (*self)->ToAddress<BufferOffset>(header_offset);
   void *str = nullptr;
@@ -66,6 +72,9 @@ char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
     str = Realloc(self, old_str, len + 4, false);
   } else {
     str = Allocate(self, len + 4, false);
+  }
+  if (str == nullptr) {
+    throw std::bad_alloc();
   }
   uint32_t *p = reinterpret_cast<uint32_t *>(str);
   p[0] = uint32_t(len);
