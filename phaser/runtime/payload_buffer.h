@@ -289,6 +289,9 @@ struct PayloadBuffer {
   ABSL_ATTRIBUTE_ALWAYS_INLINE static char *
   NewString(PayloadBuffer **self, const char *s, size_t len,
             BufferOffset header_offset);
+  // NewString() where the string may not fit without moving the buffer.
+  static char *NewStringSlow(PayloadBuffer **self, const char *s, size_t len,
+                             BufferOffset header_offset);
 
   static void ClearString(PayloadBuffer **self, BufferOffset header_offset) {
     PayloadBuffer *pb = *self;
@@ -385,12 +388,18 @@ struct PayloadBuffer {
   // Allocate some memory in the buffer.  The buffer might move.  The common
   // cases (reusing a free small block, or carving from the start of the first
   // free block) are handled inline; everything else goes to AllocateSlow.
-  static void *Allocate(PayloadBuffer **buffer, uint32_t n, bool clear = true,
-                        bool enable_small_block = true);
+  // Not inlined into its callers, which would grow them all for little.
+  ABSL_ATTRIBUTE_NOINLINE static void *Allocate(PayloadBuffer **buffer,
+                                                uint32_t n, bool clear = true,
+                                                bool enable_small_block = true);
   // Allocate(), always inlined, for the few callers that are worth the code.
   ABSL_ATTRIBUTE_ALWAYS_INLINE static void *
   AllocateInline(PayloadBuffer **buffer, uint32_t n, bool clear,
                  bool enable_small_block = true);
+  // The inline cases of Allocate(), which never move the buffer, or nullptr
+  // where it would need AllocateSlow().
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void *
+  TryAllocateInPlace(uint32_t n, bool clear, bool enable_small_block = true);
   static void *AllocateSlow(PayloadBuffer **buffer, uint32_t n, bool clear,
                             bool enable_small_block);
   void Free(void *p);
@@ -624,21 +633,20 @@ inline void CopyString(char *dst, const char *src, size_t n) {
 
 inline char *PayloadBuffer::NewString(PayloadBuffer **self, const char *s,
                                       size_t len, BufferOffset header_offset) {
-  if (len > UINT32_MAX - sizeof(uint32_t)) {
-    throw std::bad_alloc();
+  PayloadBuffer *pb = *self;
+  if (ABSL_PREDICT_TRUE(len <= UINT32_MAX - sizeof(uint32_t))) {
+    const uint32_t length = uint32_t(len);
+    // The buffer does not move, so 's' stays valid even if it is in it.
+    char *block = static_cast<char *>(
+        pb->TryAllocateInPlace(length + uint32_t(sizeof(uint32_t)), false));
+    if (ABSL_PREDICT_TRUE(block != nullptr)) {
+      memcpy(block, &length, sizeof(length));
+      internal::CopyString(block + sizeof(length), s, length);
+      pb->Set<BufferOffset>(header_offset, pb->UncheckedOffset(block));
+      return block;
+    }
   }
-  const StringSource source(*self, std::string_view(s, len));
-  const uint32_t length = uint32_t(len);
-  char *block = static_cast<char *>(
-      AllocateInline(self, length + uint32_t(sizeof(uint32_t)), false));
-  if (block == nullptr) {
-    throw std::bad_alloc();
-  }
-  memcpy(block, &length, sizeof(length));
-  internal::CopyString(block + sizeof(length), source.In(*self).data(),
-                       length);
-  (*self)->Set<BufferOffset>(header_offset, (*self)->UncheckedOffset(block));
-  return block;
+  return NewStringSlow(self, s, len, header_offset);
 }
 
 template <>
@@ -655,9 +663,18 @@ inline void *PayloadBuffer::Allocate(PayloadBuffer **buffer, uint32_t n,
 inline void *PayloadBuffer::AllocateInline(PayloadBuffer **buffer, uint32_t n,
                                            bool clear,
                                            bool enable_small_block) {
-  PayloadBuffer *pb = *buffer;
+  void *addr = (*buffer)->TryAllocateInPlace(n, clear, enable_small_block);
+  if (ABSL_PREDICT_TRUE(addr != nullptr)) {
+    return addr;
+  }
+  return AllocateSlow(buffer, n, clear, enable_small_block);
+}
+
+inline void *PayloadBuffer::TryAllocateInPlace(uint32_t n, bool clear,
+                                               bool enable_small_block) {
+  PayloadBuffer *pb = this;
   if (n == 0 || n > pb->full_size) {
-    return AllocateSlow(buffer, n, clear, enable_small_block);
+    return nullptr;
   }
   char *base = reinterpret_cast<char *>(pb);
   uint64_t size_word;
@@ -670,7 +687,7 @@ inline void *PayloadBuffer::AllocateInline(PayloadBuffer **buffer, uint32_t n,
     const BufferOffset head = pb->bitmaps[index];
     if (head != 0) {
       if (head > pb->full_size - block_size) {
-        return AllocateSlow(buffer, n, clear, enable_small_block);
+        return nullptr;
       }
       char *addr = base + head;
       pb->bitmaps[index] = *reinterpret_cast<BufferOffset *>(addr);
@@ -690,13 +707,13 @@ inline void *PayloadBuffer::AllocateInline(PayloadBuffer **buffer, uint32_t n,
   const uint32_t full_length = block_size + uint32_t(sizeof(uint64_t));
   if (first == 0 ||
       first > pb->full_size - uint32_t(sizeof(FreeBlockHeader))) {
-    return AllocateSlow(buffer, n, clear, enable_small_block);
+    return nullptr;
   }
   FreeBlockHeader *free_block = reinterpret_cast<FreeBlockHeader *>(base + first);
   const uint32_t length = free_block->length;
   if (length < full_length + uint32_t(sizeof(FreeBlockHeader)) ||
       length > pb->full_size - first) {
-    return AllocateSlow(buffer, n, clear, enable_small_block);
+    return nullptr;
   }
   const BufferOffset rest_offset = first + full_length;
   FreeBlockHeader *rest = reinterpret_cast<FreeBlockHeader *>(base + rest_offset);

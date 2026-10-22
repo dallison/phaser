@@ -37,11 +37,31 @@ void PayloadBuffer::AllocateMetadata(PayloadBuffer **self, void *md,
   (*self)->metadata = (*self)->ToOffset(m);
 }
 
-char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
-                               BufferOffset header_offset) {
-  if (*(*self)->AddressOf<BufferOffset>(header_offset) == 0) {
-    return NewString(self, s, len, header_offset);
+char *PayloadBuffer::NewStringSlow(PayloadBuffer **self, const char *s,
+                                   size_t len, BufferOffset header_offset) {
+  if (len > UINT32_MAX - sizeof(uint32_t)) {
+    throw std::bad_alloc();
   }
+  const StringSource source(*self, std::string_view(s, len));
+  const uint32_t length = uint32_t(len);
+  char *block = static_cast<char *>(
+      AllocateSlow(self, length + uint32_t(sizeof(uint32_t)), false, true));
+  if (block == nullptr) {
+    throw std::bad_alloc();
+  }
+  memcpy(block, &length, sizeof(length));
+  internal::CopyString(block + sizeof(length), source.In(*self).data(),
+                       length);
+  (*self)->Set<BufferOffset>(header_offset, (*self)->UncheckedOffset(block));
+  return block;
+}
+
+namespace {
+// SetString() where the header holds a string.  Not inlined, so SetString()
+// for a new string saves no registers.
+ABSL_ATTRIBUTE_NOINLINE char *ReplaceString(PayloadBuffer **self,
+                                            const char *s, size_t len,
+                                            BufferOffset header_offset) {
   if (len > UINT32_MAX - sizeof(uint32_t)) {
     throw std::bad_alloc();
   }
@@ -62,16 +82,16 @@ char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
         std::less<const char *>()(s, old_end)) {
       // Resizing the old string can overwrite 's', which is in it.
       const std::string copy(s, len);
-      return SetString(self, copy.data(), len, header_offset);
+      return PayloadBuffer::SetString(self, copy.data(), len, header_offset);
     }
   }
 
   // If this contains a valid (non-zero) offset, reallocate the
   // data it points to, otherwise allocate new data.
   if (old_str != nullptr) {
-    str = Realloc(self, old_str, len + 4, false);
+    str = PayloadBuffer::Realloc(self, old_str, len + 4, false);
   } else {
-    str = Allocate(self, len + 4, false);
+    str = PayloadBuffer::Allocate(self, len + 4, false);
   }
   if (str == nullptr) {
     throw std::bad_alloc();
@@ -85,6 +105,15 @@ char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
   BufferOffset *oldp = (*self)->ToAddress<BufferOffset>(header_offset);
   *oldp = (*self)->ToOffset(str);
   return reinterpret_cast<char *>(str);
+}
+}  // namespace
+
+char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
+                               BufferOffset header_offset) {
+  if (*(*self)->AddressOf<BufferOffset>(header_offset) == 0) {
+    return NewString(self, s, len, header_offset);
+  }
+  return ReplaceString(self, s, len, header_offset);
 }
 
 // 'addr' is the address of the pointer to the string data.
