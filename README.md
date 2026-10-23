@@ -291,7 +291,8 @@ needs more space than is left does nothing and marks the buffer:
 - Repeated fields keep their previous elements.
 - `mutable_` accessors, `add_` accessors and array elements return a detached
   handle whose writes go to per-thread scratch storage.
-- `msg.AllocationFailed()` is true from then on.
+- `msg.AllocationFailed()` is true from then on, until `msg.Clear()` empties
+  the buffer for a new message.
 - `Serialize` and `SerializeToArray` fail, and `Deserialize` returns
   `ResourceExhausted`.
 - `CreateReadonly` treats the marked buffer as empty, so a receiver never sees a

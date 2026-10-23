@@ -247,6 +247,64 @@ TEST(FixedBufferTest, SubMessageWritesAfterFailureStayInBounds) {
   }
 }
 
+void AddFiller(Message& msg) { msg.add_names("filler string"); }
+void AddFiller(RosMessage& msg) { msg.names.push_back("filler string"); }
+
+template <typename T>
+void ExpectClearUndoesAFailure() {
+  const std::string wire = ReferenceWire<T>();
+  ASSERT_NE(wire, "<serialize failed>");
+  constexpr size_t kSize = 4096;
+  for (phaser::Tuning tuning : kTunings) {
+    std::vector<std::byte> storage(kSize + kCanarySize);
+    SetCanary(storage, kSize);
+    T msg = T::CreateMutable(storage.data(), kSize, tuning);
+    Populate(msg);
+    ASSERT_FALSE(msg.AllocationFailed());
+    for (int i = 0; i < 1000 && !msg.AllocationFailed(); i++) {
+      AddFiller(msg);
+    }
+    ASSERT_TRUE(msg.AllocationFailed());
+
+    msg.Clear();
+    EXPECT_FALSE(msg.AllocationFailed());
+    Populate(msg);
+    EXPECT_FALSE(msg.AllocationFailed());
+    EXPECT_EQ(Serialized(msg), wire);
+    EXPECT_TRUE(CanaryIntact(storage, kSize));
+  }
+}
+
+TEST(FixedBufferTest, ClearAfterFailureLetsTheMessageBeFilledAgain) {
+  ExpectClearUndoesAFailure<Message>();
+  ExpectClearUndoesAFailure<RosMessage>();
+}
+
+TEST(FixedBufferTest, ClearAfterFailureOfAMessageOwningOneBlock) {
+  using Inner = foo::bar::phaser::FixedBufferInner;
+  for (phaser::Tuning tuning : kTunings) {
+    alignas(8) std::array<std::byte, 1024> fresh_storage{};
+    Inner fresh = Inner::CreateMutable(fresh_storage.data(),
+                                       fresh_storage.size(), tuning);
+    fresh.set_id(3);
+    fresh.set_label("label");
+    const std::string wire = Serialized(fresh);
+    ASSERT_NE(wire, "<serialize failed>");
+
+    alignas(8) std::array<std::byte, 1024> storage{};
+    Inner msg = Inner::CreateMutable(storage.data(), storage.size(), tuning);
+    msg.set_label(std::string(4096, 'x'));
+    ASSERT_TRUE(msg.AllocationFailed());
+
+    msg.Clear();
+    EXPECT_FALSE(msg.AllocationFailed());
+    msg.set_id(3);
+    msg.set_label("label");
+    EXPECT_FALSE(msg.AllocationFailed());
+    EXPECT_EQ(Serialized(msg), wire);
+  }
+}
+
 TEST(FixedBufferTest, ParseIntoEveryBufferSizeSucceedsOrReportsExhaustion) {
   const std::string wire = ReferenceWire<Message>();
   ASSERT_NE(wire, "<serialize failed>");

@@ -532,6 +532,32 @@ TEST(BufferTest, StringThatDoesNotFitLeavesTheOldValue) {
   free(buffer);
 }
 
+TEST(BufferTest, NothingIsStoredAfterAFailureEvenWhenSpaceIsFreed) {
+  for (bool bitmaps : {false, true}) {
+    char *buffer = (char *)calloc(1, 4096);
+    PayloadBuffer *pb = new (buffer) PayloadBuffer(4096, bitmaps);
+    PayloadBuffer::AllocateMainMessage(&pb, 32);
+    const BufferOffset offset = pb->message;
+    void *block = PayloadBuffer::Allocate(&pb, 64);
+    ASSERT_NE(block, nullptr);
+    ASSERT_NE(PayloadBuffer::SetString(&pb, std::string("small"), offset),
+              nullptr);
+    EXPECT_EQ(PayloadBuffer::Allocate(&pb, 8192), nullptr);
+    EXPECT_TRUE(pb->AllocationFailed());
+
+    pb->Free(block);
+    EXPECT_EQ(PayloadBuffer::Allocate(&pb, 16), nullptr) << bitmaps;
+    // The string is just below the free space, where it could grow in place.
+    EXPECT_EQ(
+        PayloadBuffer::SetString(&pb, std::string("a longer string"), offset),
+        nullptr)
+        << bitmaps;
+    EXPECT_EQ(pb->GetString(offset), "small") << bitmaps;
+    EXPECT_TRUE(pb->AllocationFailed());
+    free(buffer);
+  }
+}
+
 TEST(BufferTest, HostileStringLengthIsClamped) {
   char *buffer = (char *)calloc(1, 4096);
   PayloadBuffer *pb = new (buffer) PayloadBuffer(4096);

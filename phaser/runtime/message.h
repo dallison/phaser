@@ -607,8 +607,9 @@ struct MessageRuntime {
 
   // Frees everything allocated since the buffer was new and empties the
   // main message, of 'binary_size' bytes at 'message', but for its
-  // metadata.  Not if the metadata or anything it refers to has reached
-  // past the mark, or after Finalize().  Returns whether it did.
+  // metadata, and undoes a failed allocation.  Not if the metadata or
+  // anything it refers to has reached past the mark, or after Finalize() of
+  // a buffer with no failed allocation.  Returns whether it did.
   bool ResetFor(::phaser::BufferOffset message, size_t binary_size) {
     if (!MayResetFor(message)) {
       return false;
@@ -630,7 +631,9 @@ struct MessageRuntime {
   // reached past it.  Returns whether it did.
   ABSL_ATTRIBUTE_NOINLINE bool FreeSinceMark() {
     const ::phaser::BufferOffset mark = ResetMark();
-    if (pb->free_list == 0 || pb->metadata >= mark ||
+    // Finalize() empties the free list, and so does a failed allocation.
+    if ((pb->free_list == 0 && !pb->AllocationFailed()) ||
+        pb->metadata >= mark ||
         pb->full_size - sizeof(::phaser::FreeBlockHeader) < mark) {
       return false;
     }
@@ -659,6 +662,7 @@ struct MessageRuntime {
     for (::phaser::BufferOffset& head : pb->bitmaps) {
       head = 0;
     }
+    pb->ClearAllocationFailed();
     return true;
   }
 
@@ -1826,7 +1830,7 @@ template <typename Root, typename... Reachable>
 }
 
 // A new fixed-size buffer in the 'size' bytes at 'addr', holding a new Root,
-// which reaches the message types 'Reachable'.
+// which reaches the message types 'Reachable', or null if they do not fit.
 template <typename Root, typename... Reachable>
 ::phaser::PayloadBuffer* NewFixedBuffer(void* addr, size_t size,
                                         Tuning tuning) {
@@ -1842,26 +1846,10 @@ template <typename Root, typename... Reachable>
                                              tuning == Tuning::kPerformance);
 }
 
-// NewFixedBuffer() for a mutable message, or null if the memory is too small
-// for the message's fixed parts.
-template <typename Root, typename... Reachable>
-::phaser::PayloadBuffer* NewMutableFixedBuffer(void* addr, size_t size,
-                                               Tuning tuning) {
-  if (!CanHoldFixedBuffer(addr, size)) {
-    return nullptr;
-  }
-  ::phaser::PayloadBuffer* pb =
-      NewFixedBuffer<Root, Reachable...>(addr, size, tuning);
-  if (pb == nullptr || pb->AllocationFailed() || pb->message == 0) {
-    return nullptr;
-  }
-  return pb;
-}
-
-// Why NewMutableFixedBuffer() returned null: InvalidArgument if the memory
-// cannot hold a buffer, ResourceExhausted if the buffer has no room for the
+// Why NewFixedBuffer() returned null: InvalidArgument if the memory cannot
+// hold a buffer, ResourceExhausted if the buffer has no room for the
 // message's fixed parts.
-inline absl::Status NewMutableFixedBufferError(const void* addr, size_t size) {
+inline absl::Status NewFixedBufferError(const void* addr, size_t size) {
   if (!CanHoldFixedBuffer(addr, size)) {
     return absl::InvalidArgumentError("phaser: buffer is too small");
   }
@@ -1893,10 +1881,6 @@ ABSL_ATTRIBUTE_NOINLINE AllocationFailureSink AllocationFailureSinkFor() {
   if (::phaser::PayloadBuffer::AllocateMainMessage(
           &pb, MessageType::BinarySize()) == nullptr) {
     Fatal("allocation failure sink is too small");
-  }
-  pb->free_list = 0;
-  for (auto& head : pb->bitmaps) {
-    head = 0;
   }
   // The sink is full: further allocations must fail rather than reuse the
   // space just taken by the empty message.

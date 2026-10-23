@@ -448,7 +448,17 @@ struct PayloadBuffer {
   bool AllocationFailed() const {
     return (magic & kAllocationFailedFlag) != 0;
   }
-  void MarkAllocationFailed() { magic |= kAllocationFailedFlag; }
+  // Also empties the free lists, so that later allocations fail without
+  // testing the flag.  Free() keeps them empty.
+  void MarkAllocationFailed() {
+    magic |= kAllocationFailedFlag;
+    free_list = 0;
+    for (BufferOffset &head : bitmaps) {
+      head = 0;
+    }
+  }
+  // For a buffer whose free lists have been remade.
+  void ClearAllocationFailed() { magic &= ~kAllocationFailedFlag; }
 
   // Returns true if [addr, addr + nbytes) lies entirely within the first
   // 'size' bytes of this buffer (or full_size when size == 0).
@@ -689,9 +699,9 @@ inline void *PayloadBuffer::TryAllocateInPlace(uint32_t n, bool clear,
   PayloadBuffer *pb = this;
   // Once a fixed buffer has failed an allocation it is incomplete.  Later
   // allocations, even ones that would fit in the leftover space, must fail so
-  // a caller cannot publish a field after the failure.  NewString checks this
-  // path directly, so the check has to live here and not only in Allocate().
-  if (pb->AllocationFailed() || n == 0 || n > pb->full_size) {
+  // a caller cannot publish a field after the failure.  They do here because
+  // the failure emptied the free lists.
+  if (n == 0 || n > pb->full_size) {
     return nullptr;
   }
   char *base = reinterpret_cast<char *>(pb);
@@ -749,7 +759,8 @@ inline void *PayloadBuffer::TryAllocateInPlace(uint32_t n, bool clear,
 }
 
 inline void PayloadBuffer::Free(void *p) {
-  if (p == nullptr) {
+  // A failed buffer's free lists stay empty, so its blocks are dropped.
+  if (p == nullptr || AllocationFailed()) {
     return;
   }
   const uint64_t size_word = *(reinterpret_cast<uint64_t *>(p) - 1);

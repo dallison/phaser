@@ -40,7 +40,7 @@ NewBufferImage::NewBufferImage(Maker make) {
 
 ::phaser::PayloadBuffer* NewBufferImage::CopyTo(void* addr,
                                                 size_t size) const {
-  if (size_ == 0 || size < size_ ||
+  if (addr == nullptr || size_ == 0 || size < size_ ||
       size > std::numeric_limits<uint32_t>::max()) {
     return nullptr;
   }
