@@ -311,6 +311,10 @@ struct PayloadBuffer {
       *hdr = 0;
     }
   }
+  // ClearString() in a buffer this process built, whose offsets need no
+  // checking.
+  static void ClearBuiltString(PayloadBuffer **self,
+                               BufferOffset header_offset);
 
   // Frees the block this buffer allocated at 'offset'.  An offset outside
   // the buffer is ignored.

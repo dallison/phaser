@@ -856,7 +856,8 @@ class BasicStringField : public FieldBase<Loc>,
   }
 
   void Clear() {
-    ::phaser::PayloadBuffer::ClearString(GetBufferAddr(), StringHeaderOffset());
+    ::phaser::PayloadBuffer::ClearBuiltString(GetBufferAddr(),
+                                              StringHeaderOffset());
   }
 
   // Allocate space for the given size for the string and return the
@@ -1024,8 +1025,8 @@ class NonEmbeddedStringField
     if (IsPlaceholder()) {
       return;
     }
-    ::phaser::PayloadBuffer::ClearString(GetBufferAddr(),
-                                           absolute_binary_offset_);
+    ::phaser::PayloadBuffer::ClearBuiltString(GetBufferAddr(),
+                                              absolute_binary_offset_);
   }
 
   size_t size() const {

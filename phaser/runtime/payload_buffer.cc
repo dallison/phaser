@@ -136,6 +136,16 @@ char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s, size_t len,
   return ReplaceString(self, s, len, header_offset);
 }
 
+void PayloadBuffer::ClearBuiltString(PayloadBuffer **self,
+                                     BufferOffset header_offset) {
+  PayloadBuffer *pb = *self;
+  BufferOffset *hdr = pb->AddressOf<BufferOffset>(header_offset);
+  if (*hdr != 0) {
+    pb->Free(pb->AddressOf<char>(*hdr));
+    *hdr = 0;
+  }
+}
+
 // 'addr' is the address of the pointer to the string data.
 std::string PayloadBuffer::GetString(const StringHeader *addr) const {
   const uint32_t *p = reinterpret_cast<const uint32_t *>(ToAddress(*addr));
