@@ -16,6 +16,8 @@
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "phaser/runtime/phaser_bank.h"
+#include "phaser/runtime/phaser_bank_protobuf.h"
 #include "phaser/runtime/ros_wireformat.h"
 #include "phaser/testdata/RosCompile.pb.h"
 #include "phaser/testdata/RosCompile.phaser.h"
@@ -189,8 +191,8 @@ std::string ExpectedIntrinsicBytes() {
   AppendString(bytes, "");                          // fixed_names[0]
   AppendString(bytes, "");                          // fixed_names[1]
   for (int i = 0; i < 2; ++i) {
-    AppendIntegral(bytes, int32_t{0});               // child id
-    AppendString(bytes, "");                         // child label
+    AppendIntegral(bytes, int32_t{0});  // child id
+    AppendString(bytes, "");            // child label
   }
   AppendIntegral(bytes, static_cast<uint32_t>(0));  // choice unset
 
@@ -269,6 +271,28 @@ TEST(ROSWireConversionTest, LiveProtobufAndNativePathsMatchKnownBytes) {
       RosCompileMessage::ConvertToROS(native_bytes, inferred_native_output)
           .ok());
   EXPECT_EQ(inferred_native_output.AsString(), expected);
+
+  ::phaser::ROSBuffer bank_protobuf_output;
+  ASSERT_TRUE(::phaser::PhaserBankProtobufToROS(RosCompileMessage::FullName(),
+                                                protobuf_wire,
+                                                bank_protobuf_output)
+                  .ok());
+  EXPECT_EQ(bank_protobuf_output.AsString(), expected);
+
+  ::phaser::ROSBuffer bank_native_output;
+  ASSERT_TRUE(::phaser::PhaserBankPhaserToROS(RosCompileMessage::FullName(),
+                                              native_bytes, bank_native_output)
+                  .ok());
+  EXPECT_EQ(bank_native_output.AsString(), expected);
+
+  EXPECT_FALSE(
+      ::phaser::PhaserBankRosDataType(RosCompileMessage::FullName()).ok());
+  EXPECT_FALSE(::phaser::PhaserBankRosMd5(RosCompileMessage::FullName()).ok());
+  EXPECT_FALSE(
+      ::phaser::PhaserBankRosDefinition(RosCompileMessage::FullName()).ok());
+  EXPECT_FALSE(::phaser::PhaserBankProtobufToROS(
+                   "missing.Message", protobuf_wire, bank_protobuf_output)
+                   .ok());
 }
 
 TEST(ROSWireConversionTest, DirectPackedFixedFieldsUseCompatibleRawLayout) {
@@ -323,7 +347,7 @@ TEST(ROSWireConversionTest, DirectPackedFixedFieldsUseCompatibleRawLayout) {
                   .ok());
   ::foo::bar::RosPackedFixedMessage reparsed;
   ASSERT_TRUE(reparsed.ParseFromArray(protobuf_storage.data(),
-                                     int(protobuf_output.Size())));
+                                      int(protobuf_output.Size())));
   EXPECT_EQ(reparsed.SerializeAsString(), protobuf.SerializeAsString());
 }
 
@@ -514,7 +538,7 @@ TEST(ROSWireConversionTest, ParsesKnownROSBytesIntoNativePayload) {
           .ok());
   ::foo::bar::RosCompileMessage direct_protobuf;
   ASSERT_TRUE(direct_protobuf.ParseFromArray(direct_wire.data(),
-                                            int(direct_output.Size())));
+                                             int(direct_output.Size())));
   EXPECT_EQ(direct_protobuf.SerializeAsString(), protobuf.SerializeAsString());
 }
 
@@ -1684,6 +1708,60 @@ TEST(ROSWireConversionTest, ClearingAMainMessageDropsMetadataInstalledLater) {
     EXPECT_EQ(message.runtime->GetRuntimeControl()->count, made_count);
     EXPECT_EQ(message.Size(), made_size);
   }
+}
+
+TEST(ROSWireConversionTest, PhaserBankProtobufConversionAndMetadata) {
+  RosCompileMessage phaser_message;
+  PopulatePhaserMessage(phaser_message);
+  ::foo::bar::RosCompileMessage protobuf_message;
+  PopulateProtobufMessage(protobuf_message);
+  const std::string protobuf_wire = protobuf_message.SerializeAsString();
+  const std::string ros_bytes = ExpectedRosCompileBytes();
+  const auto* native_data =
+      reinterpret_cast<const char*>(phaser_message.Data());
+  const absl::Span<const char> native_bytes(native_data, phaser_message.Size());
+
+  std::vector<char> native_storage(4096);
+  ::phaser::ProtoBuffer from_native(native_storage.data(),
+                                    native_storage.size());
+  ASSERT_TRUE(::phaser::PhaserBankPhaserToProtobuf(
+                  RosCompileMessage::FullName(), native_bytes, from_native)
+                  .ok());
+  ::foo::bar::RosCompileMessage parsed_native;
+  ASSERT_TRUE(parsed_native.ParseFromArray(native_storage.data(),
+                                           int(from_native.Size())));
+  EXPECT_EQ(parsed_native.SerializeAsString(), protobuf_wire);
+
+  std::vector<char> ros_storage(4096);
+  ::phaser::ProtoBuffer from_ros(ros_storage.data(), ros_storage.size());
+  ASSERT_TRUE(::phaser::PhaserBankRosToProtobuf(
+                  RosCompileMessage::FullName(),
+                  absl::Span<const char>(ros_bytes.data(), ros_bytes.size()),
+                  from_ros)
+                  .ok());
+  ::foo::bar::RosCompileMessage parsed_ros;
+  ASSERT_TRUE(
+      parsed_ros.ParseFromArray(ros_storage.data(), int(from_ros.Size())));
+  EXPECT_EQ(parsed_ros.SerializeAsString(), protobuf_wire);
+
+  absl::StatusOr<std::string_view> full_name =
+      ::phaser::PhaserBankProtobufFullName(RosCompileMessage::FullName());
+  ASSERT_TRUE(full_name.ok());
+  EXPECT_EQ(*full_name, "foo.bar.RosCompileMessage");
+  absl::StatusOr<std::string_view> name =
+      ::phaser::PhaserBankProtobufName(RosCompileMessage::FullName());
+  ASSERT_TRUE(name.ok());
+  EXPECT_EQ(*name, "RosCompileMessage");
+
+  absl::StatusOr<const google::protobuf::Descriptor*> descriptor =
+      ::phaser::PhaserBankProtobufDescriptor(RosCompileMessage::FullName());
+  ASSERT_TRUE(descriptor.ok());
+  EXPECT_EQ((*descriptor)->full_name(), *full_name);
+  EXPECT_EQ((*descriptor)->name(), *name);
+  EXPECT_EQ(*descriptor, ::foo::bar::RosCompileMessage::descriptor());
+
+  EXPECT_FALSE(::phaser::PhaserBankProtobufFullName("missing.Message").ok());
+  EXPECT_FALSE(::phaser::PhaserBankProtobufDescriptor("missing.Message").ok());
 }
 
 }  // namespace

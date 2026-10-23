@@ -334,10 +334,17 @@ def phaser_library(
 
     if runtime != "":
         libdeps = libdeps + [runtime]
+    # Generated sources register embedded FileDescriptorProtos with this
+    # library. The descriptor is then available without linking the .pb.cc.
+    libdeps.append(Label("//phaser/runtime:phaser_bank_protobuf"))
     libdeps = libdeps + cc_deps
 
+    # PhaserBank entries are registered by static initializers in the generated
+    # sources. alwayslink keeps those objects when a binary depends on the
+    # library but only calls the bank by message name.
     cc_library(
         name = name,
+        alwayslink = True,
         copts = copts,
         srcs = [srcs],
         hdrs = [hdrs],

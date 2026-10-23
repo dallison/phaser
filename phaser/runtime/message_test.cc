@@ -2138,11 +2138,36 @@ TEST(MessageTest, PhaserBank) {
   free(buffer);
 }
 
+TEST(MessageTest, PhaserBankRosRequiresGeneratedSupport) {
+  ::phaser::ROSBuffer output;
+  EXPECT_FALSE(
+      ::phaser::PhaserBankProtobufToROS("foo.bar.TestMessage", "", output)
+          .ok());
+  EXPECT_FALSE(
+      ::phaser::PhaserBankPhaserToROS("foo.bar.TestMessage", {}, output).ok());
+  EXPECT_FALSE(::phaser::PhaserBankRosDataType("foo.bar.TestMessage").ok());
+  EXPECT_FALSE(::phaser::PhaserBankRosMd5("foo.bar.TestMessage").ok());
+  EXPECT_FALSE(::phaser::PhaserBankRosDefinition("foo.bar.TestMessage").ok());
+  EXPECT_FALSE(
+      ::phaser::PhaserBankProtobufFullName("foo.bar.TestMessage").ok());
+  EXPECT_FALSE(::phaser::PhaserBankProtobufName("foo.bar.TestMessage").ok());
+  ::phaser::ProtoBuffer protobuf_output;
+  EXPECT_FALSE(::phaser::PhaserBankRosToProtobuf("foo.bar.TestMessage", {},
+                                                 protobuf_output)
+                   .ok());
+  EXPECT_FALSE(::phaser::PhaserBankPhaserToProtobuf("foo.bar.TestMessage", {},
+                                                    protobuf_output)
+                   .ok());
+  EXPECT_FALSE(
+      ::phaser::PhaserBankProtobufToROS("missing.Message", "", output).ok());
+  EXPECT_FALSE(::phaser::PhaserBankRosDataType("missing.Message").ok());
+}
+
 // Regression for pooled-output reuse: repeated nested messages with per-element
 // strings in an 8 KiB dynamic buffer without vector reserve. Tick 1 string
 // corruption and tick 2 Clear() spinning in PayloadBuffer::Free occurred when
-// vector/string mutation used static layout offsets instead of resolved metadata
-// offsets (StringHeaderOffset / ResolvedVectorHeader).
+// vector/string mutation used static layout offsets instead of resolved
+// metadata offsets (StringHeaderOffset / ResolvedVectorHeader).
 TEST(MessageTest, RepeatedNestedMessagesNoReserveSurvivesPoolClear) {
   constexpr size_t kBufSize = 8192;
   TestMessage msg = TestMessage::CreateDynamicMutable(kBufSize);

@@ -2147,7 +2147,8 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::MessageRuntime runtime(pb, size);\n"
         "  // Reject payloads whose header is not structurally valid before "
         "any\n"
-        "  // field offset is dereferenced.  An invalid buffer yields a message "
+        "  // field offset is dereferenced.  An invalid buffer yields a "
+        "message "
         "bound\n"
         "  // to offset 0 so every accessor safely returns a default value.\n"
         "  if (addr == nullptr ||\n"
@@ -3764,8 +3765,7 @@ void MessageGenerator::GenerateDirectProtobufField(
          << " _phaser_ignored{};\n";
       os << indent << "        {\n";
       GenerateDirectProtobufReadValue(os, field, "ros_count_scan",
-                                      "_phaser_ignored",
-                                      indent + "          ");
+                                      "_phaser_ignored", indent + "          ");
       os << indent << "        }\n";
       os << indent << "        ++ros_count;\n";
       os << indent << "      }\n";
@@ -3774,8 +3774,7 @@ void MessageGenerator::GenerateDirectProtobufField(
          << " _phaser_ignored{};\n";
       os << indent << "      {\n";
       GenerateDirectProtobufReadValue(os, field, "ros_count_scan",
-                                      "_phaser_ignored",
-                                      indent + "        ");
+                                      "_phaser_ignored", indent + "        ");
       os << indent << "      }\n";
       os << indent << "      ++ros_count;\n";
     }
@@ -4962,7 +4961,9 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   }
 )XXX";
     os << "  static absl::Status PhaserToROS("
-          "absl::Span<const char> phaser, ::phaser::ROSBuffer& output);\n\n";
+          "absl::Span<const char> phaser, ::phaser::ROSBuffer& output);\n";
+    os << "  static absl::Status PhaserToProtobuf("
+          "absl::Span<const char> phaser, ::phaser::ProtoBuffer& output);\n\n";
     os << "  static absl::Status ConvertToROS("
           "absl::Span<const char> input, ::phaser::ROSBuffer& output);\n\n";
     return;
@@ -5349,6 +5350,18 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   os << "  " << name
      << " message = CreateReadonly(phaser.data(), phaser.size());\n";
   os << "  return message.SerializeToROS(output);\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::PhaserToProtobuf(absl::Span<const char> phaser, "
+        "::phaser::ProtoBuffer& output) {\n";
+  os << "  if (phaser.empty()) {\n";
+  os << "    return absl::InvalidArgumentError("
+        "\"Native Phaser payload is empty\");\n";
+  os << "  }\n";
+  os << "  " << name
+     << " message = CreateReadonly(phaser.data(), phaser.size());\n";
+  os << "  return message.Serialize(output);\n";
   os << "}\n\n";
 
   os << "absl::Status " << name
@@ -6089,10 +6102,33 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
      << "GetFieldByName,\n";
   os << "  .get_field_by_number = " << MessageName(message_)
      << "GetFieldByNumber,\n";
+  os << "  .protobuf_to_ros = " << MessageName(message_)
+     << "::ProtobufToROS,\n";
+  os << "  .phaser_to_ros = " << MessageName(message_) << "::PhaserToROS,\n";
+  const bool has_ros_metadata =
+      generate_ros_metadata_ ||
+      message_->options().HasExtension(phaser::ros_message);
+  if (has_ros_metadata) {
+    os << "  .ros_data_type = " << MessageName(message_) << "::RosDataType,\n";
+    os << "  .ros_md5 = " << MessageName(message_) << "::RosMd5,\n";
+    os << "  .ros_definition = " << MessageName(message_)
+       << "::RosDefinition,\n";
+  } else {
+    os << "  .ros_data_type = nullptr,\n";
+    os << "  .ros_md5 = nullptr,\n";
+    os << "  .ros_definition = nullptr,\n";
+  }
+  os << "  .ros_to_protobuf = " << MessageName(message_)
+     << "::ROSToProtobuf,\n";
+  os << "  .phaser_to_protobuf = " << MessageName(message_)
+     << "::PhaserToProtobuf,\n";
+  os << "  .protobuf_full_name = " << MessageName(message_) << "::FullName,\n";
+  os << "  .protobuf_name = " << MessageName(message_) << "::Name,\n";
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";
   os << "  " << MessageName(message_) << "BankInitializer() {\n";
+  os << "    RegisterEmbeddedProtobufDescriptors();\n";
   os << "    ::phaser::PhaserBankRegisterMessage(" << MessageName(message_)
      << "::FullName(), " << MessageName(message_) << "BankInfo);\n";
   os << "  }\n";

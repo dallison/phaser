@@ -10,6 +10,7 @@
 
 #include "absl/types/span.h"
 #include "gtest/gtest.h"
+#include "phaser/runtime/phaser_bank.h"
 #include "phaser/testdata/RosCompile.pb.h"
 #include "phaser/testdata/RosCompile.phaser.h"
 
@@ -19,6 +20,24 @@ namespace {
 TEST(RosCompileTest, PreservesExplicitRosSourceDefinition) {
   EXPECT_EQ(RosDefinitionMetadata::RosDefinition(),
             "# Original comment\n\nint32 value\n");
+}
+
+TEST(RosCompileTest, PhaserBankExposesRosMetadata) {
+  const std::string_view full_name = RosDefinitionMetadata::FullName();
+  absl::StatusOr<std::string_view> data_type =
+      ::phaser::PhaserBankRosDataType(full_name);
+  ASSERT_TRUE(data_type.ok());
+  EXPECT_EQ(*data_type, RosDefinitionMetadata::RosDataType());
+  EXPECT_EQ(*data_type, "example_msgs/RosDefinitionMetadata");
+
+  absl::StatusOr<std::string> md5 = ::phaser::PhaserBankRosMd5(full_name);
+  ASSERT_TRUE(md5.ok());
+  EXPECT_EQ(*md5, RosDefinitionMetadata::RosMd5());
+
+  absl::StatusOr<std::string_view> definition =
+      ::phaser::PhaserBankRosDefinition(full_name);
+  ASSERT_TRUE(definition.ok());
+  EXPECT_EQ(*definition, RosDefinitionMetadata::RosDefinition());
 }
 
 TEST(RosCompileTest, ConstantOnlyRosMessageFieldHasNoWirePayload) {
