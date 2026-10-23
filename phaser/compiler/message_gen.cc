@@ -1612,6 +1612,7 @@ absl::Status MessageGenerator::GenerateHeader(std::ostream& os) {
   GenerateSerializer(os, true);
   // Generate deserializer.
   GenerateDeserializer(os, true);
+  GenerateArrow(os, true);
 
   if (!IsRosFrontend()) {
     os << " private:\n";
@@ -1870,6 +1871,7 @@ void MessageGenerator::GenerateSource(std::ostream& os) {
   GenerateROSSerialization(os, false);
   GenerateROSDirectSerialization(os, false);
   GenerateROSDirectDeserialization(os, false);
+  GenerateArrow(os, false);
 
   // Phaser bank
   GeneratePhaserBank(os);
@@ -6124,6 +6126,14 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
      << "::PhaserToProtobuf,\n";
   os << "  .protobuf_full_name = " << MessageName(message_) << "::FullName,\n";
   os << "  .protobuf_name = " << MessageName(message_) << "::Name,\n";
+  os << "  .append_arrow_schema = " << MessageName(message_)
+     << "AppendArrowSchema,\n";
+  os << "  .collect_arrow_types_at_offset = " << MessageName(message_)
+     << "CollectArrowTypesAtOffset,\n";
+  os << "  .write_arrow_at_offset = " << MessageName(message_)
+     << "WriteArrowAtOffset,\n";
+  os << "  .read_arrow_at_offset = " << MessageName(message_)
+     << "ReadArrowAtOffset,\n";
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";

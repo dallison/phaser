@@ -9,6 +9,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "phaser/runtime/arrow.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/wireformat.h"
@@ -54,6 +55,20 @@ struct BankInfo {
   // Protobuf full name (package.Outer.Inner) and unqualified message name.
   std::string_view (*protobuf_full_name)();
   std::string_view (*protobuf_name)();
+  // Arrow conversion. Null when the message was registered without it.
+  absl::Status (*append_arrow_schema)(::phaser::arrow::SchemaBuilder* builder,
+                                      std::string_view name, bool nullable,
+                                      const ::phaser::arrow::TypeSet* types);
+  absl::Status (*collect_arrow_types_at_offset)(::phaser::RuntimeHandle runtime,
+                                                ::phaser::BufferOffset offset,
+                                                ::phaser::arrow::TypeSet* types);
+  absl::Status (*write_arrow_at_offset)(::phaser::RuntimeHandle runtime,
+                                        ::phaser::BufferOffset offset,
+                                        ::phaser::arrow::FieldWriter* writer,
+                                        const ::phaser::arrow::TypeSet* types);
+  absl::Status (*read_arrow_at_offset)(::phaser::RuntimeHandle runtime,
+                                       ::phaser::BufferOffset offset,
+                                       const ::phaser::arrow::FieldReader* reader);
 };
 
 extern std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>>
@@ -174,6 +189,24 @@ absl::StatusOr<std::string_view> PhaserBankProtobufFullName(
 // Unqualified protobuf message name, such as "Inner".
 absl::StatusOr<std::string_view> PhaserBankProtobufName(
     std::string_view full_name);
+
+// Arrow schema and row conversion for a message looked up by protobuf full
+// name. Used for Any payloads, whose concrete type is not known to the
+// message that contains them.
+absl::Status PhaserBankAppendArrowSchema(std::string_view full_name,
+                                         ::phaser::arrow::SchemaBuilder* builder,
+                                         std::string_view name, bool nullable,
+                                         const ::phaser::arrow::TypeSet* types);
+absl::Status PhaserBankCollectArrowTypesAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, ::phaser::arrow::TypeSet* types);
+absl::Status PhaserBankWriteArrowAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, ::phaser::arrow::FieldWriter* writer,
+    const ::phaser::arrow::TypeSet* types);
+absl::Status PhaserBankReadArrowAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader* reader);
 
 template <typename Field>
 absl::StatusOr<Field*> inline PhaserBankGetFieldByName(

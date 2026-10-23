@@ -299,4 +299,57 @@ absl::StatusOr<std::string_view> PhaserBankProtobufName(
   }
   return (*bank_info)->protobuf_name();
 }
+
+absl::Status PhaserBankAppendArrowSchema(
+    std::string_view full_name, ::phaser::arrow::SchemaBuilder* builder,
+    std::string_view name, bool nullable, const ::phaser::arrow::TypeSet* types) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->append_arrow_schema == nullptr) {
+    return MissingBankFunction(full_name, "Arrow schema");
+  }
+  return (*bank_info)->append_arrow_schema(builder, name, nullable, types);
+}
+
+absl::Status PhaserBankCollectArrowTypesAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, ::phaser::arrow::TypeSet* types) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->collect_arrow_types_at_offset == nullptr) {
+    return MissingBankFunction(full_name, "Arrow type collection");
+  }
+  return (*bank_info)->collect_arrow_types_at_offset(runtime, offset, types);
+}
+
+absl::Status PhaserBankWriteArrowAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, ::phaser::arrow::FieldWriter* writer,
+    const ::phaser::arrow::TypeSet* types) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->write_arrow_at_offset == nullptr) {
+    return MissingBankFunction(full_name, "Arrow writing");
+  }
+  return (*bank_info)->write_arrow_at_offset(runtime, offset, writer, types);
+}
+
+absl::Status PhaserBankReadArrowAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader* reader) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->read_arrow_at_offset == nullptr) {
+    return MissingBankFunction(full_name, "Arrow reading");
+  }
+  return (*bank_info)->read_arrow_at_offset(runtime, offset, reader);
+}
 }  // namespace phaser
