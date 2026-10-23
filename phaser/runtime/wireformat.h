@@ -516,6 +516,9 @@ class ProtoBuffer {
       if (owned_) {
         // Expand the buffer.
         size_t new_size = size_ * 2;
+        while (new_size < static_cast<size_t>(next - start_)) {
+          new_size *= 2;
+        }
 
         char* new_start = reinterpret_cast<char*>(realloc(start_, new_size));
         if (new_start == nullptr) {

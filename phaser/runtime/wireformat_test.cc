@@ -165,6 +165,13 @@ TEST(Wireformat, SintVarintRoundTrip) {
   }
 }
 
+TEST(Wireformat, OwnedBufferGrowsToFitAWrite) {
+  ProtoBuffer out;
+  const std::string data(100, 'x');
+  ASSERT_TRUE(out.SerializeLengthDelimited(1, data.data(), data.size()).ok());
+  EXPECT_EQ(out.AsString(), std::string("\x0a\x64", 2) + data);
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
 
