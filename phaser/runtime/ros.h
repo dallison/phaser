@@ -257,27 +257,11 @@ class RosMessageField : public IndirectMessageField<Backend, kInline, Loc> {
   }
 
   void SyncToPayload() const {
-    if (!dirty_) {
-      Base::SyncToPayload();
+    if (dirty_) {
+      StoreCache();
       return;
     }
-    auto* self = const_cast<RosMessageField*>(this);
-    if constexpr (kInline && internal::HasROSEncoding<Traits>::value &&
-                  internal::HasROSUncheckedParseAt<Backend>::value) {
-      static_assert(Backend::PhaserROSMinSize() == Traits::kROSSize);
-      if (self->InMutableMessage()) {
-        char encoded[Traits::kROSSize];
-        Traits::EncodeROS(cache_, encoded);
-        self->StoreFromROSUnchecked(encoded);
-        dirty_ = false;
-        cache_loaded_ = true;
-        return;
-      }
-    }
-    Backend* backend = self->Base::Mutable();
-    Traits::Store(cache_, *backend);
-    dirty_ = false;
-    cache_loaded_ = true;
+    Base::SyncToPayload();
   }
 
   bool SyncPending() const { return dirty_ || Base::SyncPending(); }
@@ -308,6 +292,28 @@ class RosMessageField : public IndirectMessageField<Backend, kInline, Loc> {
   }
 
  private:
+  // Writes the cached value, which has changed, to the payload.  Not inlined,
+  // so that syncing an unchanged field is only a test.
+  ABSL_ATTRIBUTE_NOINLINE void StoreCache() const {
+    auto* self = const_cast<RosMessageField*>(this);
+    if constexpr (kInline && internal::HasROSEncoding<Traits>::value &&
+                  internal::HasROSUncheckedParseAt<Backend>::value) {
+      static_assert(Backend::PhaserROSMinSize() == Traits::kROSSize);
+      if (self->InMutableMessage()) {
+        char encoded[Traits::kROSSize];
+        Traits::EncodeROS(cache_, encoded);
+        self->StoreFromROSUnchecked(encoded);
+        dirty_ = false;
+        cache_loaded_ = true;
+        return;
+      }
+    }
+    Backend* backend = self->Base::Mutable();
+    Traits::Store(cache_, *backend);
+    dirty_ = false;
+    cache_loaded_ = true;
+  }
+
   void LoadCache() const {
     if (cache_loaded_ || dirty_) {
       return;
