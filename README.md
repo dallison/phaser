@@ -67,7 +67,8 @@ costs nothing until you actually touch a field.
 9. ROS1 `Time`, `Duration`, and `Header` intrinsic mappings
 10. Hybrid dense/sparse field metadata and protobuf version compatibility
 11. Reflection, enum conversion, field presence, and user metadata
-12. Bazel integration and modern C++17 with [Abseil](https://abseil.io)
+12. Generated conversion to and from the Arrow C Data Interface
+13. Bazel integration and modern C++17 with [Abseil](https://abseil.io)
 
 ## How it works
 
@@ -265,6 +266,8 @@ constructing an intermediate protobuf or Phaser message.
 `ProtoWriter`; nested and packed protobuf lengths are computed with allocation-
 free counting passes. ROS Header decoding writes `frame_id` directly from its
 wire view into payload storage without an owning `std::string` intermediate.
+The same conversions are available from the Phaser bank when the caller has
+only the message's protobuf full name.
 Dynamic messages, reflection/debug output, unknown `Any` error handling, and
 explicit owning conversions such as `RosHeaderView::ToOwned()` are outside this
 guarantee.
@@ -402,6 +405,30 @@ wire-compatible packed fixed-width arrays. With fixed `ROSBuffer` and
 `ProtoBuffer` instances, successful conversion performs no system-heap
 allocation. `ParseFromROS` is the corresponding ROS1-to-native operation.
 
+## Arrow
+
+Generated messages copy to and from an
+[Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html)
+batch. Phaser does not link libarrow. An unset proto3 field becomes an Arrow
+null, and an explicit zero stays present. `google.protobuf.Any` is a struct of
+`type_url` and a dense union of the concrete types present in that batch.
+
+```c++
+ArrowSchema schema{};
+ArrowArray array{};
+absl::Status status =
+    foo::bar::phaser::TestMessage::ToArrow(batch, &schema, &array);
+std::vector<foo::bar::phaser::TestMessage> out;
+status = foo::bar::phaser::TestMessage::FromArrow(&schema, &array, &out);
+if (schema.release != nullptr) schema.release(&schema);
+if (array.release != nullptr) array.release(&array);
+```
+
+`AppendArrowSchema` is the generated function that adds one message's struct to
+an Arrow schema. `ToArrow` calls it. See the user guide's
+[Arrow](phaser/docs/phaser_user_guide.md#arrow) section for the column layout,
+`Any`, and ownership of the schema and array.
+
 ## The Phaser Bank (type-erased operations & reflection)
 
 The **Phaser Bank** lets you operate on messages given only their type *name* — stream,
@@ -418,8 +445,29 @@ auto field = ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
 int value = (*field)->Get();
 ```
 
-See the user guide's *Phaser Bank* and *Message information* sections for the full surface
-(reflection, `MessageInfo`/`FieldInfo`, protobuf transcoding helpers, etc.).
+The same lookup converts wire formats when the caller has the protobuf full
+name and not the C++ type:
+
+```c++
+absl::Status status = ::phaser::PhaserBankProtobufToROS(
+    "foo.bar.TestMessage", protobuf_bytes, ros_output);
+status = ::phaser::PhaserBankRosToProtobuf(
+    "foo.bar.TestMessage", ros_bytes, protobuf_output);
+status = ::phaser::PhaserBankPhaserToROS(
+    "foo.bar.TestMessage", phaser_bytes, ros_output);
+status = ::phaser::PhaserBankPhaserToProtobuf(
+    "foo.bar.TestMessage", phaser_bytes, protobuf_output);
+```
+
+`PhaserBankRosDataType`, `PhaserBankRosMd5`, and `PhaserBankRosDefinition`
+return the ROS datatype, MD5, and definition when the message was compiled with
+ROS metadata. `PhaserBankProtobufFullName` and `PhaserBankProtobufName` return
+the protobuf names. The bank also dispatches the generated Arrow functions for
+an `Any` payload. The user guide's
+[Phaser Bank](phaser/docs/phaser_user_guide.md#the-phaser-bank) and
+[Message information](phaser/docs/phaser_user_guide.md#message-information)
+sections cover reflection, `MessageInfo`/`FieldInfo`, and the rest of the
+bank.
 
 ## Building from source
 
@@ -499,7 +547,10 @@ accessor, so that presence accessor is named `_phaser_has_<name>()` instead.
 ## Documentation
 
 The complete reference — message layout, buffer internals, the allocator, reflection, the
-Phaser Bank, and more — is in the **[Phaser User Guide](phaser/docs/phaser_user_guide.md)**.
+Phaser Bank, Arrow conversion, and more — is in the **[Phaser User Guide](phaser/docs/phaser_user_guide.md)**.
+Arrow usage is in the guide's [Arrow](phaser/docs/phaser_user_guide.md#arrow) section.
+Protobuf and ROS conversion through the bank is in
+[Protobuf and ROS conversion](phaser/docs/phaser_user_guide.md#protobuf-and-ros-conversion).
 
 ## License
 
