@@ -752,8 +752,7 @@ inline void *PayloadBuffer::TryAllocateInPlace(uint32_t n, bool clear,
   }
   FreeBlockHeader *free_block = reinterpret_cast<FreeBlockHeader *>(base + first);
   const uint32_t length = free_block->length;
-  if (length < full_length + uint32_t(sizeof(FreeBlockHeader)) ||
-      length > pb->full_size - first) {
+  if (length < full_length + uint32_t(sizeof(FreeBlockHeader))) {
     return nullptr;
   }
   const BufferOffset rest_offset = first + full_length;
