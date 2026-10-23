@@ -18,7 +18,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "phaser/runtime/message.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
@@ -30,22 +30,22 @@ struct FieldIterator {
   using pointer = T*;
   using reference = T&;
 
-  FieldIterator(const Field* f, ::toolbelt::BufferOffset o, bool r = false)
+  FieldIterator(const Field* f, ::phaser::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
   FieldIterator& operator++() {
     if (reverse) {
-      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset -= static_cast<::phaser::BufferOffset>(sizeof(T));
     } else {
-      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset += static_cast<::phaser::BufferOffset>(sizeof(T));
     }
     return *this;
   }
   FieldIterator& operator--() {
     if (reverse) {
-      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset += static_cast<::phaser::BufferOffset>(sizeof(T));
     } else {
-      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset -= static_cast<::phaser::BufferOffset>(sizeof(T));
     }
     return *this;
   }
@@ -61,7 +61,7 @@ struct FieldIterator {
   }
   FieldIterator operator+(size_t i) const {
     const auto byte_offset =
-        static_cast<::toolbelt::BufferOffset>(i * sizeof(T));
+        static_cast<::phaser::BufferOffset>(i * sizeof(T));
     if (reverse) {
       return FieldIterator(field, offset - byte_offset, true);
     }
@@ -69,7 +69,7 @@ struct FieldIterator {
   }
   FieldIterator operator-(size_t i) const {
     const auto byte_offset =
-        static_cast<::toolbelt::BufferOffset>(i * sizeof(T));
+        static_cast<::phaser::BufferOffset>(i * sizeof(T));
     if (reverse) {
       return FieldIterator(field, offset + byte_offset, true);
     }
@@ -93,7 +93,7 @@ struct FieldIterator {
   bool operator!=(const FieldIterator& it) const { return !operator==(it); }
 
   const Field* field;
-  ::toolbelt::BufferOffset offset;
+  ::phaser::BufferOffset offset;
   bool reverse;
 };
 
@@ -105,23 +105,23 @@ struct StringFieldIterator {
   using pointer = void;
   using reference = std::string_view;
 
-  StringFieldIterator(const Field* f, ::toolbelt::BufferOffset o,
+  StringFieldIterator(const Field* f, ::phaser::BufferOffset o,
                       bool r = false)
       : field(f), offset(o), reverse(r) {}
 
   StringFieldIterator& operator++() {
     if (reverse) {
-      offset -= sizeof(::toolbelt::BufferOffset);
+      offset -= sizeof(::phaser::BufferOffset);
     } else {
-      offset += sizeof(::toolbelt::BufferOffset);
+      offset += sizeof(::phaser::BufferOffset);
     }
     return *this;
   }
   StringFieldIterator& operator--() {
     if (reverse) {
-      offset += sizeof(::toolbelt::BufferOffset);
+      offset += sizeof(::phaser::BufferOffset);
     } else {
-      offset -= sizeof(::toolbelt::BufferOffset);
+      offset -= sizeof(::phaser::BufferOffset);
     }
     return *this;
   }
@@ -138,18 +138,18 @@ struct StringFieldIterator {
   StringFieldIterator operator+(size_t i) const {
     if (reverse) {
       return StringFieldIterator(
-          field, offset - i * sizeof(::toolbelt::BufferOffset), true);
+          field, offset - i * sizeof(::phaser::BufferOffset), true);
     }
     return StringFieldIterator(field,
-                               offset + i * sizeof(::toolbelt::BufferOffset));
+                               offset + i * sizeof(::phaser::BufferOffset));
   }
   StringFieldIterator operator-(size_t i) const {
     if (reverse) {
       return StringFieldIterator(
-          field, offset + i * sizeof(::toolbelt::BufferOffset), true);
+          field, offset + i * sizeof(::phaser::BufferOffset), true);
     }
     return StringFieldIterator(field,
-                               offset - i * sizeof(::toolbelt::BufferOffset));
+                               offset - i * sizeof(::phaser::BufferOffset));
   }
   std::string_view operator*() const {
     return field->GetRuntime()->GetStringView(field->BaseOffset() + offset);
@@ -163,7 +163,7 @@ struct StringFieldIterator {
   }
 
   const Field* field;
-  ::toolbelt::BufferOffset offset;
+  ::phaser::BufferOffset offset;
   bool reverse;
 };
 
@@ -175,22 +175,22 @@ struct EnumFieldIterator {
   using pointer = T*;
   using reference = T&;
 
-  EnumFieldIterator(const Field* f, ::toolbelt::BufferOffset o, bool r = false)
+  EnumFieldIterator(const Field* f, ::phaser::BufferOffset o, bool r = false)
       : field(f), offset(o), reverse(r) {}
 
   EnumFieldIterator& operator++() {
     if (reverse) {
-      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset -= static_cast<::phaser::BufferOffset>(sizeof(T));
     } else {
-      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset += static_cast<::phaser::BufferOffset>(sizeof(T));
     }
     return *this;
   }
   EnumFieldIterator& operator--() {
     if (reverse) {
-      offset += static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset += static_cast<::phaser::BufferOffset>(sizeof(T));
     } else {
-      offset -= static_cast<::toolbelt::BufferOffset>(sizeof(T));
+      offset -= static_cast<::phaser::BufferOffset>(sizeof(T));
     }
     return *this;
   }
@@ -206,7 +206,7 @@ struct EnumFieldIterator {
   }
   EnumFieldIterator operator+(size_t i) const {
     using Value = std::remove_const_t<T>;
-    const auto byte_offset = static_cast<::toolbelt::BufferOffset>(
+    const auto byte_offset = static_cast<::phaser::BufferOffset>(
         i * sizeof(typename std::underlying_type<Value>::type));
     if (reverse) {
       return EnumFieldIterator(field, offset - byte_offset, true);
@@ -215,7 +215,7 @@ struct EnumFieldIterator {
   }
   EnumFieldIterator operator-(size_t i) const {
     using Value = std::remove_const_t<T>;
-    const auto byte_offset = static_cast<::toolbelt::BufferOffset>(
+    const auto byte_offset = static_cast<::phaser::BufferOffset>(
         i * sizeof(typename std::underlying_type<Value>::type));
     if (reverse) {
       return EnumFieldIterator(field, offset + byte_offset, true);
@@ -246,7 +246,7 @@ struct EnumFieldIterator {
   bool operator!=(const EnumFieldIterator& it) const { return !operator==(it); }
 
   const Field* field;
-  ::toolbelt::BufferOffset offset;
+  ::phaser::BufferOffset offset;
   bool reverse;
 };
 

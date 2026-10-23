@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "phaser/testdata/TestMessage.phaser.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace {
 
@@ -56,8 +56,8 @@ int main(int argc, char** argv) {
   const char tiny[] = {'\0'};
   WriteFile(dir + "/tiny", tiny, 1);
   {
-    std::vector<char> buf(sizeof(toolbelt::PayloadBuffer), '\0');
-    uint32_t magic = toolbelt::kFixedBufferMagic;
+    std::vector<char> buf(sizeof(::phaser::PayloadBuffer), '\0');
+    uint32_t magic = ::phaser::kFixedBufferMagic;
     std::memcpy(buf.data(), &magic, sizeof(magic));
     // Mode byte 0 = raw.
     std::vector<char> input;

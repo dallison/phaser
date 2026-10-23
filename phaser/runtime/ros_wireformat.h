@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <limits>
 #include <string>
@@ -16,10 +17,13 @@
 #include <type_traits>
 #include <utility>
 
+#include "absl/base/attributes.h"
+#include "absl/base/optimization.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "phaser/runtime/wireformat.h"
 
 namespace phaser {
 
@@ -41,34 +45,44 @@ class ROSReader {
   absl::StatusOr<T> Read() {
     static_assert(std::is_arithmetic_v<T>,
                   "ROSReader::Read only supports arithmetic types");
-    if (Remaining() < sizeof(T)) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
-          sizeof(T), Remaining()));
+    if (ABSL_PREDICT_FALSE(Remaining() < sizeof(T))) {
+      return TruncatedError(sizeof(T));
     }
+    return ReadUnchecked<T>();
+  }
 
+  // Read() for a value the caller knows is not past the end of the input.
+  template <typename T>
+  T ReadUnchecked() {
+    const T value = Decode<T>(data_.data() + position_);
+    position_ += sizeof(T);
+    return value;
+  }
+
+  // Skips 'length' bytes the caller knows are in the input, returning them.
+  const char* ReadRawUnchecked(size_t length) {
+    const char* in = data_.data() + position_;
+    position_ += length;
+    return in;
+  }
+
+  // The ROS encoding of a T at 'in'.
+  template <typename T>
+  static T Decode(const char* in) {
+    static_assert(std::is_arithmetic_v<T>,
+                  "ROSReader::Decode only supports arithmetic types");
     if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
-      return data_[position_++] != 0;
-    } else if constexpr (std::is_integral_v<T>) {
-      using U = std::make_unsigned_t<T>;
-      U value = 0;
-      for (size_t i = 0; i < sizeof(U); ++i) {
-        const U byte = static_cast<U>(
-            static_cast<unsigned char>(data_[position_++]));
-        value |= static_cast<U>(static_cast<uint64_t>(byte)
-                                << static_cast<unsigned>(i * 8));
-      }
-      T result = 0;
-      memcpy(&result, &value, sizeof(result));
-      return result;
+      return *in != 0;
     } else {
-      using U = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t,
-                                   uint64_t>;
+      using U = std::conditional_t<
+          sizeof(T) == 1, uint8_t,
+          std::conditional_t<
+              sizeof(T) == 2, uint16_t,
+              std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>>>;
       static_assert(sizeof(U) == sizeof(T));
       U bits = 0;
       for (size_t i = 0; i < sizeof(U); ++i) {
-        const U byte = static_cast<U>(
-            static_cast<unsigned char>(data_[position_++]));
+        const U byte = static_cast<U>(static_cast<unsigned char>(in[i]));
         bits |= static_cast<U>(static_cast<uint64_t>(byte)
                                << static_cast<unsigned>(i * 8));
       }
@@ -139,17 +153,15 @@ class ROSReader {
   }
 
   absl::StatusOr<std::string_view> ReadString() {
-    absl::StatusOr<uint32_t> length = Read<uint32_t>();
-    if (!length.ok()) {
-      return length.status();
+    if (ABSL_PREDICT_FALSE(Remaining() < sizeof(uint32_t))) {
+      return TruncatedError(sizeof(uint32_t));
     }
-    if (*length > Remaining()) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Truncated ROS string at byte %d: length %d exceeds remaining %d",
-          position_, *length, Remaining()));
+    const uint32_t length = ReadUnchecked<uint32_t>();
+    if (ABSL_PREDICT_FALSE(length > Remaining())) {
+      return TruncatedStringError(length);
     }
-    const std::string_view value(data_.data() + position_, *length);
-    position_ += *length;
+    const std::string_view value(data_.data() + position_, length);
+    position_ += length;
     return value;
   }
 
@@ -159,13 +171,27 @@ class ROSReader {
 
   absl::StatusOr<absl::Span<const char>> ReadRaw(size_t length) {
     if (length > Remaining()) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
-          length, Remaining()));
+      return TruncatedError(length);
     }
     absl::Span<const char> value(data_.data() + position_, length);
     position_ += length;
     return value;
+  }
+
+  // The error for input with fewer than 'length' bytes left.
+  ABSL_ATTRIBUTE_NOINLINE absl::Status TruncatedError(size_t length) const {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Truncated ROS input at byte %d: need %d bytes, have %d", position_,
+        length, Remaining()));
+  }
+
+  // The error for a string of 'length' bytes, whose length has been read,
+  // that runs past the end of the input.
+  ABSL_ATTRIBUTE_NOINLINE absl::Status TruncatedStringError(
+      uint32_t length) const {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Truncated ROS string at byte %d: length %d exceeds remaining %d",
+        position_, length, Remaining()));
   }
 
  private:
@@ -222,6 +248,63 @@ class ROSBuffer {
 
   void Clear() { size_ = 0; }
 
+  // Makes room for 'length' more bytes, growing the buffer if it owns it.
+  absl::Status EnsureSpace(size_t length) {
+    // size_ never exceeds capacity_, so the subtraction cannot wrap.
+    if (ABSL_PREDICT_TRUE(data_ != nullptr && !allocation_failed_ &&
+                          length <= capacity_ - size_)) {
+      return absl::OkStatus();
+    }
+    return EnsureSpaceSlow(length);
+  }
+
+  // Calls 'write' with the start and end of the free space.  It returns the
+  // end of what it wrote there, which is appended, or null if that did not
+  // fit, and then nothing is.
+  template <typename Write>
+  bool TryWrite(Write&& write) {
+    if (ABSL_PREDICT_FALSE(data_ == nullptr || allocation_failed_)) {
+      return false;
+    }
+    char* const end = write(data_ + size_, data_ + capacity_);
+    if (end == nullptr) {
+      return false;
+    }
+    size_ = static_cast<size_t>(end - data_);
+    return true;
+  }
+
+  // Appends 'length' bytes for the caller to write and returns where they
+  // start.  They must all be written before the buffer is used again.
+  absl::StatusOr<char*> Extend(size_t length) {
+    if (absl::Status status = EnsureSpace(length); !status.ok()) {
+      return status;
+    }
+    char* out = data_ + size_;
+    size_ += length;
+    return out;
+  }
+
+  // Writes the ROS encoding of 'value' at 'out'.
+  template <typename T>
+  static void Encode(char* out, T value) {
+    static_assert(std::is_arithmetic_v<T>,
+                  "ROSBuffer::Encode only supports arithmetic types");
+    if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
+      *out = value ? 1 : 0;
+    } else {
+      using U = std::conditional_t<
+          sizeof(T) == 1, uint8_t,
+          std::conditional_t<
+              sizeof(T) == 2, uint16_t,
+              std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>>>;
+      static_assert(sizeof(U) == sizeof(T));
+      U bits;
+      memcpy(&bits, &value, sizeof(bits));
+      StoreLittleEndian(out, bits);
+    }
+  }
+
   absl::Status WriteRaw(const void* source, size_t length) {
     if (length == 0) {
       return absl::OkStatus();
@@ -238,8 +321,10 @@ class ROSBuffer {
     return absl::OkStatus();
   }
 
+  // The writes taking 'kCheckSpace' false assume the caller made room.
+  template <bool kCheckSpace = true>
   absl::Status WriteZeros(size_t length) {
-    if (absl::Status status = EnsureSpace(length); !status.ok()) {
+    if (absl::Status status = Reserve<kCheckSpace>(length); !status.ok()) {
       return status;
     }
     if (length != 0) {
@@ -249,7 +334,7 @@ class ROSBuffer {
     return absl::OkStatus();
   }
 
-  template <typename T>
+  template <typename T, bool kCheckSpace = true>
   absl::Status WriteArray(absl::Span<const T> values) {
     static_assert(std::is_arithmetic_v<T> || std::is_enum_v<T>,
                   "ROSBuffer::WriteArray only supports primitive types");
@@ -264,7 +349,7 @@ class ROSBuffer {
       return absl::ResourceExhaustedError("ROS array byte size overflow");
     }
     const size_t byte_size = values.size() * kWireElementSize;
-    if (absl::Status status = EnsureSpace(byte_size); !status.ok()) {
+    if (absl::Status status = Reserve<kCheckSpace>(byte_size); !status.ok()) {
       return status;
     }
     if (values.empty()) {
@@ -290,9 +375,9 @@ class ROSBuffer {
     for (const T& value : values) {
       absl::Status status;
       if constexpr (std::is_enum_v<T>) {
-        status = Write(static_cast<int32_t>(value));
+        status = Write<kCheckSpace>(static_cast<int32_t>(value));
       } else {
-        status = Write(value);
+        status = Write<kCheckSpace>(value);
       }
       if (!status.ok()) {
         return status;
@@ -301,12 +386,13 @@ class ROSBuffer {
     return absl::OkStatus();
   }
 
+  template <bool kCheckSpace = true>
   absl::Status WriteString(std::string_view value) {
     if (value.size() > std::numeric_limits<uint32_t>::max()) {
       return absl::InvalidArgumentError("ROS1 string exceeds uint32 length");
     }
     const size_t total = sizeof(uint32_t) + value.size();
-    if (absl::Status status = EnsureSpace(total); !status.ok()) {
+    if (absl::Status status = Reserve<kCheckSpace>(total); !status.ok()) {
       return status;
     }
     WriteLittleEndianUnchecked(static_cast<uint32_t>(value.size()));
@@ -317,47 +403,60 @@ class ROSBuffer {
     return absl::OkStatus();
   }
 
+  template <bool kCheckSpace = true>
   absl::Status WriteSequenceLength(size_t length) {
     if (length > std::numeric_limits<uint32_t>::max()) {
       return absl::InvalidArgumentError(
           "ROS1 sequence exceeds uint32 length");
     }
-    return Write(static_cast<uint32_t>(length));
+    return Write<kCheckSpace>(static_cast<uint32_t>(length));
   }
 
+  template <bool kCheckSpace = true>
   absl::Status Write(bool value) {
-    return Write(static_cast<uint8_t>(value ? 1 : 0));
+    return Write<kCheckSpace>(static_cast<uint8_t>(value ? 1 : 0));
   }
 
-  template <typename T,
+  template <bool kCheckSpace = true, typename T,
             std::enable_if_t<std::is_integral_v<T> &&
                                  !std::is_same_v<std::remove_cv_t<T>, bool>,
                              int> = 0>
   absl::Status Write(T value) {
     using U = std::make_unsigned_t<T>;
-    if (absl::Status status = EnsureSpace(sizeof(T)); !status.ok()) {
+    if (absl::Status status = Reserve<kCheckSpace>(sizeof(T)); !status.ok()) {
       return status;
     }
     WriteLittleEndianUnchecked(static_cast<U>(value));
     return absl::OkStatus();
   }
 
+  template <bool kCheckSpace = true>
   absl::Status Write(float value) {
     uint32_t bits = 0;
     static_assert(sizeof(bits) == sizeof(value));
     memcpy(&bits, &value, sizeof(bits));
-    return Write(bits);
+    return Write<kCheckSpace>(bits);
   }
 
+  template <bool kCheckSpace = true>
   absl::Status Write(double value) {
     uint64_t bits = 0;
     static_assert(sizeof(bits) == sizeof(value));
     memcpy(&bits, &value, sizeof(bits));
-    return Write(bits);
+    return Write<kCheckSpace>(bits);
   }
 
  private:
-  absl::Status EnsureSpace(size_t length) {
+  template <bool kCheckSpace>
+  absl::Status Reserve(size_t length) {
+    if constexpr (kCheckSpace) {
+      return EnsureSpace(length);
+    } else {
+      return absl::OkStatus();
+    }
+  }
+
+  ABSL_ATTRIBUTE_NOINLINE absl::Status EnsureSpaceSlow(size_t length) {
     if (allocation_failed_) {
       return absl::ResourceExhaustedError(
           "Unable to allocate ROS serialization buffer");
@@ -399,9 +498,23 @@ class ROSBuffer {
 
   template <typename U>
   void WriteLittleEndianUnchecked(U value) {
+    // Write through a local pointer: stores through data_ could alias size_.
+    StoreLittleEndian(data_ + size_, value);
+    size_ += sizeof(U);
+  }
+
+  // Compilers do not always merge the byte stores, so a little-endian host
+  // copies the value whole.
+  template <typename U>
+  static void StoreLittleEndian(char* out, U value) {
     static_assert(std::is_unsigned_v<U>);
+    const uint16_t endian_marker = 1;
+    if (*reinterpret_cast<const uint8_t*>(&endian_marker) == 1) {
+      memcpy(out, &value, sizeof(value));
+      return;
+    }
     for (size_t i = 0; i < sizeof(U); ++i) {
-      data_[size_++] = static_cast<char>(value & static_cast<U>(0xff));
+      out[i] = static_cast<char>(value & static_cast<U>(0xff));
       if constexpr (sizeof(U) > 1) {
         value >>= 8;
       }
@@ -433,6 +546,45 @@ class ROSBuffer {
   char* data_ = nullptr;
   size_t capacity_ = 0;
   size_t size_ = 0;
+};
+
+// The ROSBuffer a message serializes into, checking for room as it writes
+// unless kTrustSerializedSize.  Its writes are inlined so that, checking, they
+// are the buffer's own.
+class ROSMessageWriter {
+ public:
+  explicit ROSMessageWriter(ROSBuffer& buffer) : buffer_(&buffer) {}
+
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status Write(T value) {
+    return buffer_->Write<kCheckSpace>(value);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status WriteString(
+      std::string_view value) {
+    return buffer_->WriteString<kCheckSpace>(value);
+  }
+
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status WriteArray(
+      absl::Span<const T> values) {
+    return buffer_->WriteArray<T, kCheckSpace>(values);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status WriteZeros(size_t length) {
+    return buffer_->WriteZeros<kCheckSpace>(length);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status WriteSequenceLength(size_t length) {
+    return buffer_->WriteSequenceLength<kCheckSpace>(length);
+  }
+
+  ROSBuffer& buffer() const { return *buffer_; }
+
+ private:
+  static constexpr bool kCheckSpace = !kTrustSerializedSize;
+
+  ROSBuffer* buffer_;
 };
 
 }  // namespace phaser

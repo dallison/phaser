@@ -277,7 +277,8 @@ def phaser_library(
         runtime: label for phaser runtime.
         add_namespace: add given namespace to the message output
         enable_active_message: if True, generated message types get a public
-            `std::any active_message` field (also enableable via the
+            `phaser::ActiveMessage active_message` field, which holds a
+            `std::any` (also enableable via the
             `active_message=true` plugin command-line option).
         frontend: generated C++ API style, either "protobuf" (default) or "ros".
         cc_deps: additional C++ dependencies required by generated headers,

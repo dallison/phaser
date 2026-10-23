@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+// Messages that the generator must handle specially.
+package foo.bar;
+
+// The presence accessor for limit would be has_limit(), which is the accessor
+// for the has_limit field.
+message Limits {
+  bool has_limit = 1;
+  int32 limit = 2;
+  Later has_later = 3;
+  Later later = 4;
+}
+
+// Holder uses messages defined after it.
+message Holder {
+  message Nested {
+    Later later = 1;
+  }
+  Later later = 1;
+  repeated Later laters = 2;
+  oneof choice {
+    Later choice_later = 3;
+    int32 count = 4;
+  }
+  Nested nested = 5;
+  Other.Inner other_inner = 6;
+}
+
+message Later {
+  int32 value = 1;
+  string name = 2;
+}
+
+message Other {
+  message Inner {
+    Later later = 1;
+  }
+  Inner inner = 1;
+}

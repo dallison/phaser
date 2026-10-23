@@ -11,19 +11,30 @@
 #include <string_view>
 #include <type_traits>
 
+#include "absl/base/attributes.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
+
+// Whether serializing a message writes without checking for room, as a build
+// defining PHASER_TRUST_SERIALIZED_SIZE does.  Serializing into a buffer still
+// makes room for the message first, but a caller serializing into an array
+// must pass at least the message's serialized size.  Converting between wire
+// formats checks for room regardless.
+#ifdef PHASER_TRUST_SERIALIZED_SIZE
+inline constexpr bool kTrustSerializedSize = true;
+#else
+inline constexpr bool kTrustSerializedSize = false;
+#endif
 
 enum class MessageWireFormat {
   kProtobuf,
   kPhaser,
   kUnknown,
-  kAmbiguous,
 };
 
 namespace internal {
@@ -38,123 +49,34 @@ inline uint32_t LoadWireUint32(absl::Span<const char> data, size_t offset) {
   return value;
 }
 
-inline bool ConsumeWireVarint(absl::Span<const char> data, size_t* offset,
-                              size_t max_bytes, uint8_t max_last_byte,
-                              uint64_t* value) {
-  uint64_t result = 0;
-  for (size_t i = 0; i < max_bytes; ++i) {
-    if (*offset >= data.size()) {
-      return false;
-    }
-    const uint8_t byte =
-        static_cast<unsigned char>(data[(*offset)++]);
-    if (i + 1 == max_bytes &&
-        ((byte & 0x80U) != 0 || (byte & 0x7fU) > max_last_byte)) {
-      return false;
-    }
-    result |= static_cast<uint64_t>(byte & 0x7fU)
-              << static_cast<unsigned>(i * 7);
-    if ((byte & 0x80U) == 0) {
-      *value = result;
-      return true;
-    }
-  }
-  return false;
-}
-
-inline bool ConsumeProtobufFields(absl::Span<const char> data, size_t* offset,
-                                  uint32_t expected_end_group = 0,
-                                  size_t depth = 0) {
-  constexpr uint32_t kMaxFieldNumber = (uint32_t{1} << 29) - 1;
-  constexpr size_t kMaxGroupDepth = 100;
-  if (depth > kMaxGroupDepth) {
-    return false;
-  }
-  while (*offset < data.size()) {
-    uint64_t tag = 0;
-    if (!ConsumeWireVarint(data, offset, 5, 0x0f, &tag)) {
-      return false;
-    }
-    const uint32_t field_number = static_cast<uint32_t>(tag >> 3);
-    const uint32_t wire_type = static_cast<uint32_t>(tag & 7);
-    if (field_number == 0 || field_number > kMaxFieldNumber) {
-      return false;
-    }
-    if (wire_type == 4) {
-      return expected_end_group != 0 && field_number == expected_end_group;
-    }
-
-    uint64_t value = 0;
-    switch (wire_type) {
-      case 0:
-        if (!ConsumeWireVarint(data, offset, 10, 1, &value)) {
-          return false;
-        }
-        break;
-      case 1:
-        if (data.size() - *offset < sizeof(uint64_t)) {
-          return false;
-        }
-        *offset += sizeof(uint64_t);
-        break;
-      case 2:
-        if (!ConsumeWireVarint(data, offset, 10, 1, &value) ||
-            value > data.size() - *offset) {
-          return false;
-        }
-        *offset += value;
-        break;
-      case 3:
-        if (!ConsumeProtobufFields(data, offset, field_number, depth + 1)) {
-          return false;
-        }
-        break;
-      case 5:
-        if (data.size() - *offset < sizeof(uint32_t)) {
-          return false;
-        }
-        *offset += sizeof(uint32_t);
-        break;
-      default:
-        return false;
-    }
-  }
-  return expected_end_group == 0;
-}
-
-inline bool IsStructurallyValidProtobuf(absl::Span<const char> data) {
-  size_t offset = 0;
-  return ConsumeProtobufFields(data, &offset) && offset == data.size();
-}
-
 inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
   constexpr size_t kMagicOffset =
-      offsetof(::toolbelt::PayloadBuffer, magic);
+      offsetof(::phaser::PayloadBuffer, magic);
   constexpr size_t kMessageOffset =
-      offsetof(::toolbelt::PayloadBuffer, message);
-  constexpr size_t kHwmOffset = offsetof(::toolbelt::PayloadBuffer, hwm);
+      offsetof(::phaser::PayloadBuffer, message);
+  constexpr size_t kHwmOffset = offsetof(::phaser::PayloadBuffer, hwm);
   constexpr size_t kFullSizeOffset =
-      offsetof(::toolbelt::PayloadBuffer, full_size);
+      offsetof(::phaser::PayloadBuffer, full_size);
   constexpr size_t kFreeListOffset =
-      offsetof(::toolbelt::PayloadBuffer, free_list);
+      offsetof(::phaser::PayloadBuffer, free_list);
   constexpr size_t kMetadataOffset =
-      offsetof(::toolbelt::PayloadBuffer, metadata);
+      offsetof(::phaser::PayloadBuffer, metadata);
   constexpr size_t kBitmapsOffset =
-      offsetof(::toolbelt::PayloadBuffer, bitmaps);
+      offsetof(::phaser::PayloadBuffer, bitmaps);
 
-  if (data.size() < sizeof(::toolbelt::PayloadBuffer)) {
+  if (data.size() < sizeof(::phaser::PayloadBuffer)) {
     return false;
   }
   const uint32_t magic = LoadWireUint32(data, kMagicOffset);
-  const uint32_t base_magic = magic & ::toolbelt::kBitMapMask;
-  const bool movable = base_magic == ::toolbelt::kMovableBufferMagic;
-  if (!movable && base_magic != ::toolbelt::kFixedBufferMagic) {
+  const uint32_t base_magic = magic & ::phaser::kBitMapMask;
+  const bool movable = base_magic == ::phaser::kMovableBufferMagic;
+  if (!movable && base_magic != ::phaser::kFixedBufferMagic) {
     return false;
   }
 
   const size_t minimum_header =
-      sizeof(::toolbelt::PayloadBuffer) +
-      (movable ? sizeof(::toolbelt::Resizer*) : 0);
+      sizeof(::phaser::PayloadBuffer) +
+      (movable ? sizeof(::phaser::Resizer*) : 0);
   const uint32_t message = LoadWireUint32(data, kMessageOffset);
   const uint32_t hwm = LoadWireUint32(data, kHwmOffset);
   const uint32_t full_size = LoadWireUint32(data, kFullSizeOffset);
@@ -168,15 +90,15 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
   }
   if (free_list != 0 &&
       (free_list < minimum_header ||
-       free_list > data.size() - sizeof(::toolbelt::FreeBlockHeader) ||
-       free_list > full_size - sizeof(::toolbelt::FreeBlockHeader))) {
+       free_list > data.size() - sizeof(::phaser::FreeBlockHeader) ||
+       free_list > full_size - sizeof(::phaser::FreeBlockHeader))) {
     return false;
   }
   if (metadata != 0 &&
       (metadata < minimum_header || metadata >= hwm)) {
     return false;
   }
-  for (size_t i = 0; i < ::toolbelt::kNumBitmapRuns; ++i) {
+  for (size_t i = 0; i < ::phaser::kNumBitmapRuns; ++i) {
     const uint32_t bitmap =
         LoadWireUint32(data, kBitmapsOffset + i * sizeof(uint32_t));
     if (bitmap != 0 && (bitmap < minimum_header || bitmap >= hwm)) {
@@ -188,23 +110,17 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
 
 }  // namespace internal
 
-// Infers a format from its complete byte representation. Both formats are
-// validated structurally; the magic prefix alone is deliberately insufficient
-// because it can also begin a valid protobuf field tag.
+// Infers a format from the first byte, which is zero in a payload buffer and
+// cannot be in a non-empty protobuf message, and from a payload buffer's
+// header.  Only the header is read: protobuf is validated when it is parsed.
 inline MessageWireFormat InferMessageWireFormat(
     absl::Span<const char> data) {
-  const bool phaser = internal::IsStructurallyValidPhaser(data);
-  const bool protobuf = internal::IsStructurallyValidProtobuf(data);
-  if (phaser && protobuf) {
-    return MessageWireFormat::kAmbiguous;
-  }
-  if (phaser) {
-    return MessageWireFormat::kPhaser;
-  }
-  if (protobuf) {
+  if (data.empty() || data[0] != 0) {
     return MessageWireFormat::kProtobuf;
   }
-  return MessageWireFormat::kUnknown;
+  return internal::IsStructurallyValidPhaser(data)
+             ? MessageWireFormat::kPhaser
+             : MessageWireFormat::kUnknown;
 }
 
 inline MessageWireFormat InferMessageWireFormat(std::string_view data) {
@@ -383,12 +299,16 @@ class ProtoBuffer {
     return LengthDelimitedSize(field_number, str.size());
   }
 
-  // Serialization functions.
+  // Makes room for 'n' more bytes, growing the buffer if it owns it.
+  absl::Status EnsureSpace(size_t n) { return HasSpaceFor(n); }
 
-  template <typename T, bool Signed>
+  // Serialization functions.  Those taking 'kCheckSpace' false assume the
+  // caller made room.
+
+  template <typename T, bool Signed, bool kCheckSpace = true>
   absl::Status SerializeRawVarint(T value) {
     uint64_t uvalue = ToVarintWire<T, Signed>(value);
-    if (auto status = HasSpaceFor(VarintSize<uint64_t, false>(uvalue));
+    if (auto status = Reserve<kCheckSpace>(VarintSize<uint64_t, false>(uvalue));
         !status.ok()) {
       return status;
     }
@@ -403,28 +323,31 @@ class ProtoBuffer {
     return absl::OkStatus();
   }
 
-  template <typename T, bool Signed>
+  template <typename T, bool Signed, bool kCheckSpace = true>
   absl::Status SerializeVarint(int field_number, T value) {
-    if (auto status = SerializeTag(field_number, WireType::kVarint);
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, WireType::kVarint);
         !status.ok()) {
       return status;
     }
-    return SerializeRawVarint<T, Signed>(value);
+    return SerializeRawVarint<T, Signed, kCheckSpace>(value);
   }
 
+  template <bool kCheckSpace = true>
   absl::Status SerializeTag(int field_number, WireType wire_type) {
-    return SerializeRawVarint<uint32_t, false>(
+    return SerializeRawVarint<uint32_t, false, kCheckSpace>(
         static_cast<uint32_t>(MakeTag(field_number, wire_type)));
   }
 
-  template <typename T>
+  template <typename T, bool kCheckSpace = true>
   absl::Status SerializeFixed(int field_number, T value) {
-    if (auto status = SerializeTag(field_number, FixedWireType<T>());
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, FixedWireType<T>());
         !status.ok()) {
       return status;
     }
 
-    if (auto status = HasSpaceFor(sizeof(T)); !status.ok()) {
+    if (auto status = Reserve<kCheckSpace>(sizeof(T)); !status.ok()) {
       return status;
     }
     memcpy(addr_, &value, sizeof(T));
@@ -432,18 +355,20 @@ class ProtoBuffer {
     return absl::OkStatus();
   }
 
+  template <bool kCheckSpace = true>
   absl::Status SerializeLengthDelimited(int field_number, const void* data,
                                         size_t length) {
-    if (auto status = SerializeTag(field_number, WireType::kLengthDelimited);
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, WireType::kLengthDelimited);
         !status.ok()) {
       return status;
     }
-    if (absl::Status status =
-            SerializeRawVarint<int32_t, false>(static_cast<int32_t>(length));
+    if (absl::Status status = SerializeRawVarint<int32_t, false, kCheckSpace>(
+            static_cast<int32_t>(length));
         !status.ok()) {
       return status;
     }
-    if (auto status = HasSpaceFor(length); !status.ok()) {
+    if (auto status = Reserve<kCheckSpace>(length); !status.ok()) {
       return status;
     }
     memcpy(addr_, data, length);
@@ -451,12 +376,15 @@ class ProtoBuffer {
     return absl::OkStatus();
   }
 
+  template <bool kCheckSpace = true>
   absl::Status SerializeLengthDelimitedHeader(int field_number, size_t length) {
-    if (auto status = SerializeTag(field_number, WireType::kLengthDelimited);
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, WireType::kLengthDelimited);
         !status.ok()) {
       return status;
     }
-    return SerializeRawVarint<int32_t, false>(static_cast<int32_t>(length));
+    return SerializeRawVarint<int32_t, false, kCheckSpace>(
+        static_cast<int32_t>(length));
   }
 
   absl::Status SerializeRaw(const void* data, size_t length) {
@@ -600,6 +528,15 @@ class ProtoBuffer {
   }
 
  private:
+  template <bool kCheckSpace>
+  absl::Status Reserve(size_t n) {
+    if constexpr (kCheckSpace) {
+      return HasSpaceFor(n);
+    } else {
+      return absl::OkStatus();
+    }
+  }
+
   size_t static MakeTag(int field_number, WireType wire_type) {
     return static_cast<size_t>((field_number << kFieldIdShift) |
                                int(wire_type));
@@ -612,6 +549,9 @@ class ProtoBuffer {
       if (owned_) {
         // Expand the buffer.
         size_t new_size = size_ * 2;
+        while (new_size < static_cast<size_t>(next - start_)) {
+          new_size *= 2;
+        }
 
         char* new_start = reinterpret_cast<char*>(realloc(start_, new_size));
         if (new_start == nullptr) {
@@ -650,6 +590,51 @@ class ProtoBuffer {
   size_t size_ = 0;
   char* addr_ = nullptr;
   char* end_ = nullptr;
+};
+
+// The ProtoBuffer a message serializes into, checking for room as it writes
+// unless kTrustSerializedSize.  Its writes are inlined so that, checking, they
+// are the buffer's own.
+class ProtoMessageWriter {
+ public:
+  explicit ProtoMessageWriter(ProtoBuffer& buffer) : buffer_(&buffer) {}
+
+  template <typename T, bool Signed>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeVarint(int field_number,
+                                                            T value) {
+    return buffer_->SerializeVarint<T, Signed, kCheckSpace>(field_number,
+                                                            value);
+  }
+
+  template <typename T, bool Signed>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeRawVarint(T value) {
+    return buffer_->SerializeRawVarint<T, Signed, kCheckSpace>(value);
+  }
+
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeFixed(int field_number,
+                                                           T value) {
+    return buffer_->SerializeFixed<T, kCheckSpace>(field_number, value);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeLengthDelimited(
+      int field_number, const void* data, size_t length) {
+    return buffer_->SerializeLengthDelimited<kCheckSpace>(field_number, data,
+                                                          length);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeLengthDelimitedHeader(
+      int field_number, size_t length) {
+    return buffer_->SerializeLengthDelimitedHeader<kCheckSpace>(field_number,
+                                                                length);
+  }
+
+  ProtoBuffer& buffer() const { return *buffer_; }
+
+ private:
+  static constexpr bool kCheckSpace = !kTrustSerializedSize;
+
+  ProtoBuffer* buffer_;
 };
 
 // A protobuf sink that either writes to a ProtoBuffer or only counts bytes.

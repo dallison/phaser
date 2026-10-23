@@ -7,7 +7,10 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <new>
 #include <sstream>
+#include <string>
+#include <string_view>
 
 #include "absl/strings/str_format.h"
 #include "phaser/runtime/runtime.h"
@@ -34,23 +37,50 @@ TEST(Wireformat, Sizes) {
   ASSERT_EQ(7, ProtoBuffer::StringSize(1, "hello"));
 }
 
-TEST(Wireformat, InfersStructurallyValidProtobuf) {
+TEST(Wireformat, MagicBytes) {
+  auto bytes = [](uint32_t magic) {
+    return std::string(reinterpret_cast<const char*>(&magic), sizeof(magic));
+  };
+  EXPECT_EQ(std::string("\x00PH\x84", 4), bytes(phaser::kFixedBufferMagic));
+  EXPECT_EQ(std::string("\x00PH\x86", 4), bytes(phaser::kMovableBufferMagic));
+  EXPECT_EQ(std::string("\x00PH\x85", 4),
+            bytes(phaser::kFixedBufferMagic | phaser::kBitMapFlag));
+}
+
+TEST(Wireformat, InfersProtobufFromFirstByte) {
   EXPECT_EQ(MessageWireFormat::kProtobuf,
             phaser::InferMessageWireFormat(std::string_view()));
 
   const std::string ordinary = "\x08\x96\x01";
   EXPECT_EQ(MessageWireFormat::kProtobuf,
             phaser::InferMessageWireFormat(ordinary));
+
+  // Only the first byte is read; the protobuf parser rejects the rest.
+  const std::string invalid = "\xff\xff\xff";
+  EXPECT_EQ(MessageWireFormat::kProtobuf,
+            phaser::InferMessageWireFormat(invalid));
 }
 
-TEST(Wireformat, MagicPrefixAloneDoesNotImplyPhaser) {
-  // The first four bytes are kFixedBufferMagic with the bitmap flag. Together
-  // with the fifth byte they form a valid fixed32 protobuf tag, followed by its
-  // four-byte value.
-  const std::string protobuf_with_magic_prefix(
-      "\xc5\xf1\xf6\xe5\x01\x12\x34\x56\x78", 9);
-  EXPECT_EQ(MessageWireFormat::kProtobuf,
-            phaser::InferMessageWireFormat(protobuf_with_magic_prefix));
+TEST(Wireformat, InfersPhaserFromHeader) {
+  for (bool bitmaps : {false, true}) {
+    alignas(8) char buffer[4096] = {};
+    phaser::PayloadBuffer* pb =
+        new (buffer) phaser::PayloadBuffer(sizeof(buffer), bitmaps);
+    phaser::PayloadBuffer::AllocateMainMessage(&pb, 32);
+    const std::string_view payload(buffer, pb->hwm);
+    EXPECT_EQ(MessageWireFormat::kPhaser,
+              phaser::InferMessageWireFormat(payload));
+
+    const uint32_t magic = pb->magic;
+    pb->magic += uint32_t{1} << 26;  // The next format version.
+    EXPECT_EQ(MessageWireFormat::kUnknown,
+              phaser::InferMessageWireFormat(payload));
+    pb->magic = magic;
+
+    pb->hwm = sizeof(buffer) + 8;
+    EXPECT_EQ(MessageWireFormat::kUnknown,
+              phaser::InferMessageWireFormat(payload));
+  }
 }
 
 TEST(Wireformat, RejectsStructurallyInvalidInput) {
@@ -133,6 +163,19 @@ TEST(Wireformat, SintVarintRoundTrip) {
   for (int32_t v : {INT32_MIN, -1, 0, 1, INT32_MAX}) {
     round_trip32(v);
   }
+}
+
+TEST(Wireformat, OwnedBufferGrowsToFitAWrite) {
+  ProtoBuffer out;
+  const std::string data(100, 'x');
+  ASSERT_TRUE(out.SerializeLengthDelimited(1, data.data(), data.size()).ok());
+  EXPECT_EQ(out.AsString(), std::string("\x0a\x64", 2) + data);
+
+  ProtoBuffer reserved;
+  ASSERT_TRUE(reserved.EnsureSpace(1000).ok());
+  const std::string more(1000, 'y');
+  ASSERT_TRUE((reserved.SerializeRaw(more.data(), more.size()).ok()));
+  EXPECT_EQ(reserved.AsString(), more);
 }
 
 int main(int argc, char** argv) {
