@@ -132,8 +132,6 @@ class MessageGenerator {
   void GenerateClear(std::ostream& os, bool decl);
   // The fast path of Clear() for a main message: resetting its buffer.
   void GenerateClearByReset(std::ostream& os);
-  // The slow path of Clear(): clearing the fields one by one.
-  void GenerateClearFields(std::ostream& os);
   void GenerateReleaseAt(std::ostream& os, bool decl);
 
   void GeneratePublicFieldDeclarations(std::ostream& os);

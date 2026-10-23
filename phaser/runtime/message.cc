@@ -101,6 +101,15 @@ absl::StatusOr<::phaser::PayloadBuffer*> NewDynamicBuffer(
   return pb;
 }
 
+void Message::PhaserClearAfterFailure(size_t binary_size) {
+  // Clear() comes back here while the failure is marked.  The blocks it
+  // frees are dropped by marking the failure again.
+  runtime->pb->ClearAllocationFailed();
+  Clear();
+  runtime->pb->MarkAllocationFailed();
+  runtime->ResetFor(absolute_binary_offset, binary_size);
+}
+
 namespace internal {
 
 absl::Status ReadNewString(::phaser::PayloadBuffer** pb,

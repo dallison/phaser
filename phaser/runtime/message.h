@@ -1368,6 +1368,11 @@ struct Message {
   // after any store into the payload.
   bool IsMutable() const { return mutable_; }
 
+  // Clear() of a message owning at most one block, and so with no field that
+  // allocates when cleared, after an allocation in its buffer failed.  Also
+  // resets the buffer, undoing the failure, if this is its main message.
+  ABSL_ATTRIBUTE_NOINLINE void PhaserClearAfterFailure(size_t binary_size);
+
   // For printing.  The fields of the message print at its indent.
   void Indent(int indent) const {
     print_indent_ = static_cast<int8_t>(print_indent_ + indent);

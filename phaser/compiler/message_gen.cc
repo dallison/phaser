@@ -2451,17 +2451,6 @@ void MessageGenerator::GenerateClearByReset(std::ostream& os) {
   os << "  }\n";
 }
 
-void MessageGenerator::GenerateClearFields(std::ostream& os) {
-  for (auto& field : fields_) {
-    os << "  " << field->member_name << ".Clear();\n";
-  }
-  for (auto& [oneof, u] : unions_) {
-    for (size_t i = 0; i < u->members.size(); i++) {
-      os << "  " << u->member_name << ".Clear<" << i << ">();\n";
-    }
-  }
-}
-
 void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
   // Only a message whose fields' handles hold values from outside the
   // payload has anything to clear in them alone.
@@ -2477,10 +2466,6 @@ void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
       !clears_by_reset && !OwnsAtMostBlocks(message_, no_blocks);
   if (decl) {
     os << "  void Clear() override;\n";
-    if (resets_after_failure) {
-      os << "  // Clear() after an allocation in the buffer failed.\n"
-            "  ABSL_ATTRIBUTE_NOINLINE void PhaserClearAfterFailure();\n";
-    }
     if (clears_handles) {
       os << "  // Clears what the fields' handles hold, for when the buffer "
             "holding the\n"
@@ -2514,18 +2499,19 @@ void MessageGenerator::GenerateClear(std::ostream& os, bool decl) {
     // set up a frame.
     os << "  if (IsMutable() && "
           "ABSL_PREDICT_FALSE(runtime->pb->AllocationFailed())) {\n"
-          "    PhaserClearAfterFailure();\n"
+          "    PhaserClearAfterFailure(BinarySize());\n"
           "    return;\n"
           "  }\n";
   }
-  GenerateClearFields(os);
-  os << "}\n\n";
-  if (resets_after_failure) {
-    os << "void " << MessageName(message_) << "::PhaserClearAfterFailure() {\n";
-    GenerateClearByReset(os);
-    GenerateClearFields(os);
-    os << "}\n\n";
+  for (auto& field : fields_) {
+    os << "  " << field->member_name << ".Clear();\n";
   }
+  for (auto& [oneof, u] : unions_) {
+    for (size_t i = 0; i < u->members.size(); i++) {
+      os << "  " << u->member_name << ".Clear<" << i << ">();\n";
+    }
+  }
+  os << "}\n\n";
 }
 
 void MessageGenerator::GenerateReleaseAt(std::ostream& os, bool decl) {

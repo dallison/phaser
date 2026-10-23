@@ -305,6 +305,28 @@ TEST(FixedBufferTest, ClearAfterFailureOfAMessageOwningOneBlock) {
   }
 }
 
+TEST(FixedBufferTest, ClearOfAnInnerMessageAfterFailureKeepsTheFailure) {
+  for (phaser::Tuning tuning : kTunings) {
+    alignas(8) std::array<std::byte, 1024> storage{};
+    Message msg =
+        Message::CreateMutable(storage.data(), storage.size(), tuning);
+    msg.mutable_inner()->set_label("inner label");
+    while (!msg.AllocationFailed()) {
+      AddFiller(msg);
+    }
+    const size_t names = msg.names_size();
+
+    msg.mutable_inner()->Clear();
+    EXPECT_TRUE(msg.AllocationFailed());
+    EXPECT_EQ(msg.inner().label(), "");
+    // Nothing goes in the space the label had.
+    msg.mutable_inner()->set_label("label");
+    EXPECT_EQ(msg.inner().label(), "");
+    AddFiller(msg);
+    EXPECT_EQ(msg.names_size(), names);
+  }
+}
+
 TEST(FixedBufferTest, ParseIntoEveryBufferSizeSucceedsOrReportsExhaustion) {
   const std::string wire = ReferenceWire<Message>();
   ASSERT_NE(wire, "<serialize failed>");
