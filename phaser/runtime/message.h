@@ -737,8 +737,8 @@ struct MessageRuntime {
     if (is_mutable_) {
       // The metadata may be the user's rather than a control block, so it is
       // only known to lie inside the buffer.
-      if (pb->full_size < sizeof(RuntimeControlBlock) ||
-          pb->metadata > pb->full_size - sizeof(RuntimeControlBlock)) {
+      if (uint64_t{pb->metadata} + sizeof(RuntimeControlBlock) >
+          pb->full_size) {
         return nullptr;
       }
       control = pb->UncheckedAddress<RuntimeControlBlock>(pb->metadata);
