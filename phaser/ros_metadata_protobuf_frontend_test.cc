@@ -6,6 +6,7 @@
 
 #include "phaser/runtime/md5.h"
 #include "phaser/runtime/phaser_bank.h"
+#include "phaser/runtime/phaser_bank_protobuf.h"
 #include "phaser/testdata/ros_metadata_protobuf_phaser/phaser/testdata/RosMetadata.phaser.h"
 
 namespace example_msgs::proto::protobuf_api {
@@ -60,6 +61,13 @@ TEST(RosMetadataProtobufFrontendTest, MatchesRosMetadata) {
       ::phaser::PhaserBankRosDefinition(Wrapper::FullName());
   ASSERT_TRUE(definition.ok());
   EXPECT_EQ(*definition, Wrapper::RosDefinition());
+
+  absl::StatusOr<const google::protobuf::Descriptor*> descriptor =
+      ::phaser::PhaserBankProtobufDescriptor(Bool::FullName());
+  ASSERT_TRUE(descriptor.ok()) << descriptor.status();
+  EXPECT_EQ((*descriptor)->full_name(), "example_msgs.proto.Bool");
+  ASSERT_EQ((*descriptor)->field_count(), 1);
+  EXPECT_EQ((*descriptor)->field(0)->name(), "data");
 }
 
 }  // namespace

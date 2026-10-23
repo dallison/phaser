@@ -41,6 +41,20 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "phaser_bank_protobuf",
+    srcs = ["phaser_bank_protobuf.cc"],
+    hdrs = ["phaser_bank_protobuf.h"],
+    copts = PHASER_COPTS,
+    deps = [
+        ":phaser_runtime",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
+
 cc_test(
     name = "md5_test",
     srcs = ["md5_test.cc"],

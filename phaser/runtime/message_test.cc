@@ -2122,6 +2122,16 @@ TEST(MessageTest, PhaserBankRosRequiresGeneratedSupport) {
   EXPECT_FALSE(::phaser::PhaserBankRosMd5("foo.bar.TestMessage").ok());
   EXPECT_FALSE(::phaser::PhaserBankRosDefinition("foo.bar.TestMessage").ok());
   EXPECT_FALSE(
+      ::phaser::PhaserBankProtobufFullName("foo.bar.TestMessage").ok());
+  EXPECT_FALSE(::phaser::PhaserBankProtobufName("foo.bar.TestMessage").ok());
+  ::phaser::ProtoBuffer protobuf_output;
+  EXPECT_FALSE(::phaser::PhaserBankRosToProtobuf("foo.bar.TestMessage", {},
+                                                 protobuf_output)
+                   .ok());
+  EXPECT_FALSE(::phaser::PhaserBankPhaserToProtobuf("foo.bar.TestMessage", {},
+                                                    protobuf_output)
+                   .ok());
+  EXPECT_FALSE(
       ::phaser::PhaserBankProtobufToROS("missing.Message", "", output).ok());
   EXPECT_FALSE(::phaser::PhaserBankRosDataType("missing.Message").ok());
 }

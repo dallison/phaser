@@ -3645,7 +3645,9 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   }
 )XXX";
     os << "  static absl::Status PhaserToROS("
-          "absl::Span<const char> phaser, ::phaser::ROSBuffer& output);\n\n";
+          "absl::Span<const char> phaser, ::phaser::ROSBuffer& output);\n";
+    os << "  static absl::Status PhaserToProtobuf("
+          "absl::Span<const char> phaser, ::phaser::ProtoBuffer& output);\n\n";
     os << "  static absl::Status ConvertToROS("
           "absl::Span<const char> input, ::phaser::ROSBuffer& output);\n\n";
     return;
@@ -3946,6 +3948,18 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   os << "  " << name
      << " message = CreateReadonly(phaser.data(), phaser.size());\n";
   os << "  return message.SerializeToROS(output);\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::PhaserToProtobuf(absl::Span<const char> phaser, "
+        "::phaser::ProtoBuffer& output) {\n";
+  os << "  if (phaser.empty()) {\n";
+  os << "    return absl::InvalidArgumentError("
+        "\"Native Phaser payload is empty\");\n";
+  os << "  }\n";
+  os << "  " << name
+     << " message = CreateReadonly(phaser.data(), phaser.size());\n";
+  os << "  return message.Serialize(output);\n";
   os << "}\n\n";
 
   os << "absl::Status " << name
@@ -4683,10 +4697,17 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
     os << "  .ros_md5 = nullptr,\n";
     os << "  .ros_definition = nullptr,\n";
   }
+  os << "  .ros_to_protobuf = " << MessageName(message_)
+     << "::ROSToProtobuf,\n";
+  os << "  .phaser_to_protobuf = " << MessageName(message_)
+     << "::PhaserToProtobuf,\n";
+  os << "  .protobuf_full_name = " << MessageName(message_) << "::FullName,\n";
+  os << "  .protobuf_name = " << MessageName(message_) << "::Name,\n";
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";
   os << "  " << MessageName(message_) << "BankInitializer() {\n";
+  os << "    RegisterEmbeddedProtobufDescriptors();\n";
   os << "    ::phaser::PhaserBankRegisterMessage(" << MessageName(message_)
      << "::FullName(), " << MessageName(message_) << "BankInfo);\n";
   os << "  }\n";

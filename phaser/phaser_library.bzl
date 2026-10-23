@@ -333,6 +333,9 @@ def phaser_library(
 
     if runtime != "":
         libdeps = libdeps + [runtime]
+    # Generated sources register embedded FileDescriptorProtos with this
+    # library. The descriptor is then available without linking the .pb.cc.
+    libdeps.append(Label("//phaser/runtime:phaser_bank_protobuf"))
     libdeps = libdeps + cc_deps
 
     # PhaserBank entries are registered by static initializers in the generated

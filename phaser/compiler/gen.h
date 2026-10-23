@@ -50,6 +50,7 @@ class Generator {
 
   void GenerateHeaders(std::ostream& os, std::string* error);
   void GenerateSources(std::ostream& os);
+  void GenerateProtobufDescriptorRegistrations(std::ostream& os);
 
  private:
   void OpenNamespace(std::ostream& os);

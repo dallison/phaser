@@ -49,6 +49,13 @@ struct BankInfo {
   std::string_view (*ros_data_type)();
   std::string (*ros_md5)();
   std::string_view (*ros_definition)();
+  absl::Status (*ros_to_protobuf)(absl::Span<const char> bytes,
+                                  ProtoBuffer& output);
+  absl::Status (*phaser_to_protobuf)(absl::Span<const char> bytes,
+                                     ProtoBuffer& output);
+  // Protobuf full name (package.Outer.Inner) and unqualified message name.
+  std::string_view (*protobuf_full_name)();
+  std::string_view (*protobuf_name)();
 };
 
 extern std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>>
@@ -147,6 +154,22 @@ absl::StatusOr<std::string_view> PhaserBankRosDataType(
     std::string_view full_name);
 absl::StatusOr<std::string> PhaserBankRosMd5(std::string_view full_name);
 absl::StatusOr<std::string_view> PhaserBankRosDefinition(
+    std::string_view full_name);
+
+// Convert ROS1 bytes or a native Phaser payload to protobuf wire bytes.
+absl::Status PhaserBankRosToProtobuf(std::string_view full_name,
+                                     absl::Span<const char> bytes,
+                                     ProtoBuffer& output);
+absl::Status PhaserBankPhaserToProtobuf(std::string_view full_name,
+                                        absl::Span<const char> bytes,
+                                        ProtoBuffer& output);
+
+// Protobuf full name, such as "foo.bar.Outer.Inner". This is the same string
+// as Descriptor::full_name() and the bank key.
+absl::StatusOr<std::string_view> PhaserBankProtobufFullName(
+    std::string_view full_name);
+// Unqualified protobuf message name, such as "Inner".
+absl::StatusOr<std::string_view> PhaserBankProtobufName(
     std::string_view full_name);
 
 template <typename Field>

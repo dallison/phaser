@@ -6,9 +6,12 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
+#include <string>
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
+#include "google/protobuf/descriptor.pb.h"
 
 namespace phaser {
 
@@ -130,8 +133,7 @@ bool CodeGenerator::Generate(
                                  option.second == "1";
     } else if (option.first == "ros_metadata") {
       generate_ros_metadata_ = option.second.empty() ||
-                               option.second == "true" ||
-                               option.second == "1";
+                               option.second == "true" || option.second == "1";
     } else if (option.first == "frontend") {
       if (option.second == "protobuf" || option.second.empty()) {
         frontend_style_ = FrontendStyle::kProtobuf;
@@ -158,16 +160,18 @@ bool CodeGenerator::Generate(
   if ((file->message_type_count() == 0 && file->enum_type_count() == 0) ||
       file->name() == std::string("google/protobuf/descriptor.proto") ||
       file->name() == std::string("phaser/options.proto")) {
-    std::string filename = GeneratedFilename(
-        package_name_, target_name_, std::string(file->name()));
+    std::string filename = GeneratedFilename(package_name_, target_name_,
+                                             std::string(file->name()));
     std::filesystem::path hp(filename);
     hp.replace_extension(".phaser.h");
     std::filesystem::path cp(filename);
     cp.replace_extension(".phaser.cc");
-    auto header_output = std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream>(
-        generator_context->Open(hp.string()));
-    auto source_output = std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream>(
-        generator_context->Open(cp.string()));
+    auto header_output =
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream>(
+            generator_context->Open(hp.string()));
+    auto source_output =
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream>(
+            generator_context->Open(cp.string()));
     if (header_output == nullptr || source_output == nullptr) {
       *error = absl::StrFormat("Failed to create empty outputs for %s",
                                file->name());
@@ -254,8 +258,7 @@ void Generator::CloseNamespace(std::ostream& os) {
 Generator::Generator(const google::protobuf::FileDescriptor* file,
                      const std::string& ns, const std::string& pn,
                      const std::string& tn, bool generate_active_message,
-                     FrontendStyle frontend_style,
-                     bool generate_ros_metadata)
+                     FrontendStyle frontend_style, bool generate_ros_metadata)
     : file_(file),
       added_namespace_(ns),
       package_name_(pn),
@@ -323,11 +326,99 @@ void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
   CloseNamespace(os);
 }
 
+namespace {
+
+bool PhaserSkipsDescriptorRegistration(
+    const google::protobuf::FileDescriptor* file) {
+  const std::string name(file->name());
+  // These files have no generated Phaser source. descriptor.proto is already
+  // in libprotobuf. options.proto is embedded by each file that imports it.
+  return name == "google/protobuf/descriptor.proto" ||
+         name == "phaser/options.proto";
+}
+
+void AppendSerializedFileDescriptor(
+    std::ostream& os, const google::protobuf::FileDescriptor* file, int index) {
+  google::protobuf::FileDescriptorProto proto;
+  file->CopyTo(&proto);
+  proto.clear_source_code_info();
+  std::string bytes;
+  proto.SerializeToString(&bytes);
+
+  os << "static constexpr unsigned char kPhaserProtobufFileDescriptor" << index
+     << "[] = {";
+  for (size_t i = 0; i < bytes.size(); ++i) {
+    if (i % 12 == 0) {
+      os << "\n    ";
+    }
+    os << absl::StrFormat("0x%02x", static_cast<unsigned char>(bytes[i]));
+    if (i + 1 != bytes.size()) {
+      os << ",";
+      if (i % 12 != 11) {
+        os << " ";
+      }
+    }
+  }
+  os << "\n};\n\n";
+}
+
+void CollectOptionsDescriptors(
+    const google::protobuf::FileDescriptor* file, std::set<std::string>* seen,
+    std::vector<const google::protobuf::FileDescriptor*>* files) {
+  if (file == nullptr || !seen->insert(std::string(file->name())).second) {
+    return;
+  }
+  if (std::string(file->name()) == "phaser/options.proto") {
+    files->push_back(file);
+  }
+  for (int i = 0; i < file->dependency_count(); ++i) {
+    CollectOptionsDescriptors(file->dependency(i), seen, files);
+  }
+}
+
+}  // namespace
+
+void Generator::GenerateProtobufDescriptorRegistrations(std::ostream& os) {
+  os << "#include \"phaser/runtime/phaser_bank_protobuf.h\"\n\n";
+  std::vector<const google::protobuf::FileDescriptor*> files;
+  if (!PhaserSkipsDescriptorRegistration(file_)) {
+    files.push_back(file_);
+  }
+  std::set<std::string> seen;
+  seen.insert(std::string(file_->name()));
+  std::vector<const google::protobuf::FileDescriptor*> options;
+  for (int i = 0; i < file_->dependency_count(); ++i) {
+    CollectOptionsDescriptors(file_->dependency(i), &seen, &options);
+  }
+  files.insert(files.end(), options.begin(), options.end());
+  int index = 0;
+  for (const auto* file : files) {
+    AppendSerializedFileDescriptor(os, file, index++);
+  }
+  if (index == 0) {
+    return;
+  }
+  os << "static void RegisterEmbeddedProtobufDescriptors() {\n";
+  for (int i = 0; i < index; ++i) {
+    os << "  ::phaser::RegisterProtobufFileDescriptor(std::string_view(\n";
+    os << "      reinterpret_cast<const char*>(kPhaserProtobufFileDescriptor"
+       << i << "),\n";
+    os << "      sizeof(kPhaserProtobufFileDescriptor" << i << ")));\n";
+  }
+  os << "}\n";
+  // Clang drops an unreferenced static object. Messages call this from their
+  // bank initializer; files with no messages use the anchor below.
+  os << "__attribute__((used)) static const int "
+        "kRegisterEmbeddedProtobufDescriptors =\n";
+  os << "    (RegisterEmbeddedProtobufDescriptors(), 0);\n\n";
+}
+
 void Generator::GenerateSources(std::ostream& os) {
   std::filesystem::path p(GeneratedIncludeFilename(package_name_, target_name_,
                                                    std::string(file_->name())));
   p.replace_extension(".phaser.h");
   os << "#include \"" << p.string() << "\"\n";
+  GenerateProtobufDescriptorRegistrations(os);
 
   OpenNamespace(os);
 
