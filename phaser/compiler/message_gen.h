@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -231,6 +232,21 @@ class MessageGenerator {
   void GenerateCopy(std::ostream& os, bool decl);
   void GenerateDebugString(std::ostream& os);
   void GeneratePhaserBank(std::ostream& os);
+  void GenerateArrow(std::ostream& os, bool decl);
+  void GenerateArrowSchemaField(std::ostream& os,
+                                const google::protobuf::FieldDescriptor* field,
+                                const std::string& name, bool nullable);
+  void GenerateArrowWriteField(std::ostream& os, const FieldInfo& field,
+                               int index);
+  void GenerateArrowReadField(std::ostream& os, const FieldInfo& field,
+                              int index);
+  void GenerateArrowCollectField(std::ostream& os, const FieldInfo& field);
+  bool ArrowFieldNullable(const google::protobuf::FieldDescriptor* field) const;
+  const char* ArrowScalarAdd(const google::protobuf::FieldDescriptor* field) const;
+  const char* ArrowScalarWrite(
+      const google::protobuf::FieldDescriptor* field) const;
+  const char* ArrowScalarRead(const google::protobuf::FieldDescriptor* field) const;
+  std::string ArrowQuoted(std::string_view text) const;
   void GenerateMessageInfo(std::ostream& os, bool decl);
   void GenerateFieldInfo(int index, std::shared_ptr<FieldInfo> field,
                          std::shared_ptr<UnionInfo> union_field,

@@ -17,6 +17,7 @@
 #include <stddef.h>
 
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -359,6 +360,35 @@ class AnyMessage : public Message {
     std::string str;
     SerializeToString(&str);
     return str;
+  }
+
+  // Offset of the embedded Phaser message body in value(), in this runtime.
+  absl::StatusOr<::phaser::BufferOffset> EmbeddedValueOffset() const {
+    if (runtime == nullptr || !has_value() || value().data() == nullptr) {
+      return absl::FailedPreconditionError("Any value is absent");
+    }
+    return runtime->ToOffset(const_cast<char*>(value().data()));
+  }
+
+  // Clears value, stores type_url, and allocates a mutable T body for
+  // type_name. The returned offset addresses that body. The temporary
+  // message handle is destroyed here; it does not own the runtime.
+  absl::Status AllocateEmbeddedForArrow(std::string_view type_url,
+                                        std::string_view type_name,
+                                        ::phaser::BufferOffset* offset) {
+    clear_value();
+    set_type_url(type_url);
+    absl::StatusOr<Message*> created =
+        AllocateEmbeddedMessage(std::string(type_name));
+    if (!created.ok()) {
+      return created.status();
+    }
+    std::unique_ptr<Message> owned(*created);
+    if (runtime == nullptr || value().data() == nullptr) {
+      return internal::AllocationFailedError();
+    }
+    *offset = runtime->ToOffset(const_cast<char*>(value().data()));
+    return absl::OkStatus();
   }
 
   // With kTrustSerializedSize, 'size' must be at least SerializedSize().

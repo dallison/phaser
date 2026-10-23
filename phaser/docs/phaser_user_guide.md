@@ -27,7 +27,8 @@ Other features include:
 7. Full zero-copy support for `google.protobuf.Any`
 8. ROS fixed arrays, variant-like oneofs, and ROS1 intrinsic types
 9. Hybrid field metadata, reflection, enums, and presence masks
-10. Bazel integration and modern C++17 with Google Abseil
+10. Generated conversion to and from the Arrow C Data Interface
+11. Bazel integration and modern C++17 with Google Abseil
 
 ## How Phaser works
 Phaser works as a plugin for the Protocol Buffers compiler (protoc).  This means that protoc
@@ -1142,11 +1143,99 @@ Copying or assigning a message of the protobuf frontend copies the handle, not
 the contents: afterwards both refer to the same message.  Use `CopyFrom` to copy
 the contents into another message.
 
+## Arrow
+
+Every generated message can be copied to and from an [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html)
+batch. Phaser does not link libarrow. The result is an `ArrowSchema` and an
+`ArrowArray` that an Arrow consumer can import. A whole native payload cannot
+be shared with Arrow without copying: Phaser stores one row's fields together,
+and Arrow stores one column's values together. The generated code copies the
+values.
+
+```c++
+std::vector<foo::bar::phaser::TestMessage> batch = {unset, set};
+ArrowSchema schema{};
+ArrowArray array{};
+absl::Status status =
+    foo::bar::phaser::TestMessage::ToArrow(batch, &schema, &array);
+
+std::vector<foo::bar::phaser::TestMessage> out;
+status = foo::bar::phaser::TestMessage::FromArrow(&schema, &array, &out);
+
+if (schema.release != nullptr) schema.release(&schema);
+if (array.release != nullptr) array.release(&array);
+```
+
+One message has the same operations as instance and static methods:
+`msg.ToArrow(&schema, &array)` writes a one-row batch. You own the top-level
+`ArrowSchema` and `ArrowArray` objects. `release` frees the buffers and child
+arrays stored inside them, not those two objects.
+
+`ToArrow` walks the batch, builds the schema, then writes one Arrow row per
+message. An unset proto3 field becomes an Arrow null. A field set to zero stays
+present, so presence survives the round trip. The column layout follows the
+`.proto` field order:
+
+| Protobuf field | Arrow column |
+| --- | --- |
+| Singular number, bool, string, or bytes | Nullable primitive, utf8, or binary |
+| Enum | Nullable int32 |
+| Singular message | Nullable struct |
+| `repeated` field | Non-null list; an absent field is an empty list |
+| ROS fixed array (`phaser.array_size`) | Non-null fixed-size list |
+| `map` | Non-null map; the key is not nullable |
+| `oneof` | Non-null struct of nullable arms |
+| `google.protobuf.Any` | Nullable struct of `type_url` and a dense union |
+
+A nested message is the struct produced by that message's own schema. On the
+ROS frontend, `google.protobuf.Timestamp` and `google.protobuf.Duration` are
+structs of `seconds` (int64) and `nanos` (int32). `std_msgs.Header` is `seq`,
+that timestamp struct, and `frame_id`.
+
+### AppendArrowSchema
+
+`ToArrow` builds the schema by calling the generated function:
+
+```c++
+static absl::Status AppendArrowSchema(
+    ::phaser::arrow::SchemaBuilder& builder,
+    std::string_view name,
+    bool nullable,
+    const ::phaser::arrow::TypeSet& types);
+```
+
+`AppendArrowSchema` adds this message as one struct field named `name`. A
+message field calls the nested message's `AppendArrowSchema`, so the Arrow tree
+matches the protobuf tree. Call it yourself only when you are assembling a
+schema that contains the message as a field. `ToArrow` is the call that writes
+values.
+
+`types` is the set of concrete message types found inside `Any` fields. `ToArrow`
+fills it before building the schema. A message with no `Any` ignores it. The
+`Any` value is a dense union: child 0 is a null arm named `none`, and each
+following child is one concrete type, in the order that type first appeared in
+the batch. The child's name is the protobuf full name. An unknown `type_url` is
+an error. Because the union's children depend on the batch, two batches of the
+same message can have different `Any` schemas.
+
+A message that contains itself cannot be represented as an Arrow tree.
+`AppendArrowSchema` returns an unimplemented error for that type. There is no
+conversion from Arrow to ROS or from Arrow to protobuf; convert the Phaser
+message with the wire APIs after `FromArrow`.
+
+The Phaser bank can build and read an `Any` payload whose type is known only by
+name. Those entry points are `PhaserBankAppendArrowSchema`,
+`PhaserBankCollectArrowTypesAtOffset`, `PhaserBankWriteArrowAtOffset`, and
+`PhaserBankReadArrowAtOffset`. Generated messages call them. Application code
+normally uses `ToArrow` and `FromArrow`.
+
 ## The Phaser Bank
 A significant feature that is missing from protobuf implementations (that I
 am aware of anyway) is the ability to do things with messages given only their
 message type name.  Most people end up creating a database of type name versus
-message descriptor and use reflection to handle this.
+message descriptor and use reflection to handle this. The bank also converts
+protobuf wire bytes, ROS1 bytes, and native Phaser payloads by message name,
+and looks up an `Any` payload's generated Arrow functions.
 
 Phaser has a built-in feature called the `Phaser Bank`, which, as its name suggest
 is a bank of Phaser messages, indexed by message name.  This allows you to manipulate
@@ -1241,6 +1330,21 @@ absl::StatusOr<std::string_view> PhaserBankProtobufName(
     std::string_view full_name);
 absl::StatusOr<const google::protobuf::Descriptor *>
     PhaserBankProtobufDescriptor(std::string_view full_name);
+
+absl::Status PhaserBankAppendArrowSchema(
+    std::string_view full_name, ::phaser::arrow::SchemaBuilder *builder,
+    std::string_view name, bool nullable,
+    const ::phaser::arrow::TypeSet *types);
+absl::Status PhaserBankCollectArrowTypesAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, ::phaser::arrow::TypeSet *types);
+absl::Status PhaserBankWriteArrowAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, ::phaser::arrow::FieldWriter *writer,
+    const ::phaser::arrow::TypeSet *types);
+absl::Status PhaserBankReadArrowAtOffset(
+    std::string_view full_name, ::phaser::RuntimeHandle runtime,
+    ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader *reader);
 ```
 
 All the functions take the message type name and return an Abseil Status or
@@ -1301,7 +1405,11 @@ functions.  The serialization and deserialization use a class called `::phaser::
 to hold the binary data.  This is defined in the file `phaser/runtime/wireformat.h` and provides
 a dynamically (or statically) sized byte buffer.  It's pretty easy to follow.
 
-### ROS conversion
+### Protobuf and ROS conversion
+These are the type-erased forms of the generated wire conversions. The message
+full name is the bank key, the same string as `Descriptor::full_name()`. A
+missing conversion function returns an error rather than crashing.
+
 `PhaserBankProtobufToROS` and `PhaserBankPhaserToROS` convert protobuf wire
 bytes or a native Phaser payload into ROS1 bytes. Both take the message full
 name, the input bytes, and a `::phaser::ROSBuffer`.
@@ -1324,6 +1432,13 @@ built from the `FileDescriptorProto` embedded in the generated Phaser library.
 Linking the protobuf `.pb.cc` is not required. `descriptor.proto`, and any
 file already provided by libprotobuf, are read from the generated descriptor
 pool. The function is declared in `phaser/runtime/phaser_bank_protobuf.h`.
+
+### Arrow
+`PhaserBankAppendArrowSchema`, `PhaserBankCollectArrowTypesAtOffset`,
+`PhaserBankWriteArrowAtOffset`, and `PhaserBankReadArrowAtOffset` call the
+generated Arrow functions for a message identified by its protobuf full name.
+`ToArrow` uses them to convert the concrete payload inside an `Any`. See the
+[Arrow](#arrow) section for the schema and the `ToArrow` / `FromArrow` API.
 
 ### Streaming and DebugString
 You can stream a message to `std::ostream` using the `PhaserStreamTo` function.  If you want this

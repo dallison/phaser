@@ -46,6 +46,7 @@ cc_test(
 cc_library(
     name = "phaser_runtime",
     srcs = [
+        "arrow.cc",
         "md5.cc",
         "message.cc",
         "phaser_bank.cc",
@@ -58,6 +59,8 @@ cc_library(
     hdrs = [
         "active_message.h",
         "any.h",
+        "arrow.h",
+        "arrow_abi.h",
         "arrays.h",
         "fields.h",
         "iterators.h",
@@ -146,6 +149,17 @@ cc_test(
 cc_test(
     name = "ros_wireformat_test",
     srcs = ["ros_wireformat_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
+    deps = [
+        ":phaser_runtime",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "arrow_test",
+    srcs = ["arrow_test.cc"],
     copts = PHASER_COPTS,
     data = ["//phaser:valgrind.supp"],
     deps = [
