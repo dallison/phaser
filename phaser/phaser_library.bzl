@@ -335,8 +335,12 @@ def phaser_library(
         libdeps = libdeps + [runtime]
     libdeps = libdeps + cc_deps
 
+    # PhaserBank entries are registered by static initializers in the generated
+    # sources. alwayslink keeps those objects when a binary depends on the
+    # library but only calls the bank by message name.
     cc_library(
         name = name,
+        alwayslink = True,
         copts = copts,
         srcs = [srcs],
         hdrs = [hdrs],

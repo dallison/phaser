@@ -3,11 +3,14 @@
 // See LICENSE file for licensing information.
 
 #pragma once
+#include <string>
 #include <string_view>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/types/span.h"
 #include "phaser/runtime/message.h"
+#include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/wireformat.h"
 
 namespace phaser {
@@ -40,6 +43,12 @@ struct BankInfo {
   bool (*has_field)(const Message& msg, int number);
   void* (*get_field_by_name)(Message& msg, const std::string& name);
   void* (*get_field_by_number)(Message& msg, int number);
+  absl::Status (*protobuf_to_ros)(std::string_view bytes, ROSBuffer& output);
+  absl::Status (*phaser_to_ros)(absl::Span<const char> bytes,
+                                ROSBuffer& output);
+  std::string_view (*ros_data_type)();
+  std::string (*ros_md5)();
+  std::string_view (*ros_definition)();
 };
 
 extern std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>>
@@ -122,6 +131,23 @@ absl::StatusOr<const MessageInfo*> PhaserBankMessageInfo(
 
 absl::StatusOr<bool> PhaserBankHasField(const std::string& message_type,
                                         const Message& msg, int number);
+
+// Convert protobuf wire bytes or a native Phaser payload to ROS1 bytes.
+// `full_name` is the message's protobuf full name, the same key used by
+// PhaserBankRegisterMessage.
+absl::Status PhaserBankProtobufToROS(std::string_view full_name,
+                                     std::string_view bytes, ROSBuffer& output);
+absl::Status PhaserBankPhaserToROS(std::string_view full_name,
+                                   absl::Span<const char> bytes,
+                                   ROSBuffer& output);
+
+// ROS datatype, MD5, and definition. These are available when the message was
+// compiled with ROS metadata.
+absl::StatusOr<std::string_view> PhaserBankRosDataType(
+    std::string_view full_name);
+absl::StatusOr<std::string> PhaserBankRosMd5(std::string_view full_name);
+absl::StatusOr<std::string_view> PhaserBankRosDefinition(
+    std::string_view full_name);
 
 template <typename Field>
 absl::StatusOr<Field*> inline PhaserBankGetFieldByName(

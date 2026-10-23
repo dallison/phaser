@@ -1133,6 +1133,18 @@ template <typename Field>
 absl::StatusOr<Field *>
 PhaserBankGetFieldByNumber(const std::string &message_type, Message &msg,
                            int number);
+
+absl::Status PhaserBankProtobufToROS(std::string_view full_name,
+                                     std::string_view bytes,
+                                     ROSBuffer &output);
+absl::Status PhaserBankPhaserToROS(std::string_view full_name,
+                                   absl::Span<const char> bytes,
+                                   ROSBuffer &output);
+absl::StatusOr<std::string_view> PhaserBankRosDataType(
+    std::string_view full_name);
+absl::StatusOr<std::string> PhaserBankRosMd5(std::string_view full_name);
+absl::StatusOr<std::string_view> PhaserBankRosDefinition(
+    std::string_view full_name);
 ```
 
 All the functions take the message type name and return an Abseil Status or
@@ -1165,6 +1177,12 @@ struct BankInfo {
   bool (*has_field)(const Message &msg, int number);
   void *(*get_field_by_name)(Message &msg, const std::string &name);
   void *(*get_field_by_number)(Message &msg, int number);
+  absl::Status (*protobuf_to_ros)(std::string_view bytes, ROSBuffer &output);
+  absl::Status (*phaser_to_ros)(absl::Span<const char> bytes,
+                                ROSBuffer &output);
+  std::string_view (*ros_data_type)();
+  std::string (*ros_md5)();
+  std::string_view (*ros_definition)();
 };
 ```
 
@@ -1180,6 +1198,15 @@ You can serialize and deserialize Phaser messages to and from protobuf wireforma
 functions.  The serialization and deserialization use a class called `::phaser::ProtoBuffer`
 to hold the binary data.  This is defined in the file `phaser/runtime/wireformat.h` and provides
 a dynamically (or statically) sized byte buffer.  It's pretty easy to follow.
+
+### ROS conversion
+`PhaserBankProtobufToROS` and `PhaserBankPhaserToROS` convert protobuf wire
+bytes or a native Phaser payload into ROS1 bytes. Both take the message full
+name, the input bytes, and a `::phaser::ROSBuffer`.
+
+`PhaserBankRosDataType`, `PhaserBankRosMd5`, and `PhaserBankRosDefinition`
+return the ROS datatype, MD5, and message definition. These are present when
+the message was compiled with ROS metadata. Otherwise they return an error.
 
 ### Streaming and DebugString
 You can stream a message to `std::ostream` using the `PhaserStreamTo` function.  If you want this

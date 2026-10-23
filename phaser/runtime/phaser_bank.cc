@@ -102,7 +102,8 @@ absl::Status PhaserBankDeserializeAtOffset(
   if (!bank_info.ok()) {
     return bank_info.status();
   }
-  return (*bank_info)->deserialize_at_offset(std::move(runtime), offset, buffer);
+  return (*bank_info)
+      ->deserialize_at_offset(std::move(runtime), offset, buffer);
 }
 
 absl::StatusOr<size_t> PhaserBankSerializedSizeAtOffset(
@@ -179,5 +180,76 @@ absl::StatusOr<bool> PhaserBankHasField(const std::string& message_type,
     return bank_info.status();
   }
   return (*bank_info)->has_field(msg, number);
+}
+
+namespace {
+
+absl::Status MissingBankFunction(std::string_view full_name,
+                                 std::string_view operation) {
+  return absl::FailedPreconditionError(absl::StrFormat(
+      "Phaser message '%s' does not support %s", full_name, operation));
+}
+
+}  // namespace
+
+absl::Status PhaserBankProtobufToROS(std::string_view full_name,
+                                     std::string_view bytes,
+                                     ROSBuffer& output) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->protobuf_to_ros == nullptr) {
+    return MissingBankFunction(full_name, "protobuf to ROS conversion");
+  }
+  return (*bank_info)->protobuf_to_ros(bytes, output);
+}
+
+absl::Status PhaserBankPhaserToROS(std::string_view full_name,
+                                   absl::Span<const char> bytes,
+                                   ROSBuffer& output) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->phaser_to_ros == nullptr) {
+    return MissingBankFunction(full_name, "Phaser to ROS conversion");
+  }
+  return (*bank_info)->phaser_to_ros(bytes, output);
+}
+
+absl::StatusOr<std::string_view> PhaserBankRosDataType(
+    std::string_view full_name) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->ros_data_type == nullptr) {
+    return MissingBankFunction(full_name, "ROS datatype");
+  }
+  return (*bank_info)->ros_data_type();
+}
+
+absl::StatusOr<std::string> PhaserBankRosMd5(std::string_view full_name) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->ros_md5 == nullptr) {
+    return MissingBankFunction(full_name, "ROS MD5");
+  }
+  return (*bank_info)->ros_md5();
+}
+
+absl::StatusOr<std::string_view> PhaserBankRosDefinition(
+    std::string_view full_name) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->ros_definition == nullptr) {
+    return MissingBankFunction(full_name, "ROS definition");
+  }
+  return (*bank_info)->ros_definition();
 }
 }  // namespace phaser

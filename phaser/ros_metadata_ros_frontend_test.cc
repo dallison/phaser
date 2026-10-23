@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "phaser/runtime/md5.h"
+#include "phaser/runtime/phaser_bank.h"
 #include "phaser/testdata/ros_metadata_ros_phaser/phaser/testdata/RosMetadata.phaser.h"
 
 namespace example_msgs::proto::ros_api {
@@ -34,6 +35,19 @@ TEST(RosMetadataRosFrontendTest, MatchesRosMetadata) {
             "==============\n"
             "MSG: example_msgs/LegacyStatus\n"
             "# Legacy status.\nuint8 OK = 0\n");
+
+  absl::StatusOr<std::string_view> data_type =
+      ::phaser::PhaserBankRosDataType(Bool::FullName());
+  ASSERT_TRUE(data_type.ok());
+  EXPECT_EQ(*data_type, Bool::RosDataType());
+  absl::StatusOr<std::string> md5 =
+      ::phaser::PhaserBankRosMd5(Bool::FullName());
+  ASSERT_TRUE(md5.ok());
+  EXPECT_EQ(*md5, Bool::RosMd5());
+  absl::StatusOr<std::string_view> definition =
+      ::phaser::PhaserBankRosDefinition(Bool::FullName());
+  ASSERT_TRUE(definition.ok());
+  EXPECT_EQ(*definition, Bool::RosDefinition());
 }
 
 }  // namespace

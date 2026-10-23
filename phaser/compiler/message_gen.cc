@@ -1785,7 +1785,8 @@ void MessageGenerator::GenerateCreators(std::ostream& os, bool decl) {
         "  ::phaser::MessageRuntime runtime(pb, size);\n"
         "  // Reject payloads whose header is not structurally valid before "
         "any\n"
-        "  // field offset is dereferenced.  An invalid buffer yields a message "
+        "  // field offset is dereferenced.  An invalid buffer yields a "
+        "message "
         "bound\n"
         "  // to offset 0 so every accessor safely returns a default value.\n"
         "  if (addr == nullptr ||\n"
@@ -3143,8 +3144,7 @@ void MessageGenerator::GenerateDirectProtobufField(
          << " _phaser_ignored{};\n";
       os << indent << "        {\n";
       GenerateDirectProtobufReadValue(os, field, "ros_count_scan",
-                                      "_phaser_ignored",
-                                      indent + "          ");
+                                      "_phaser_ignored", indent + "          ");
       os << indent << "        }\n";
       os << indent << "        ++ros_count;\n";
       os << indent << "      }\n";
@@ -3153,8 +3153,7 @@ void MessageGenerator::GenerateDirectProtobufField(
          << " _phaser_ignored{};\n";
       os << indent << "      {\n";
       GenerateDirectProtobufReadValue(os, field, "ros_count_scan",
-                                      "_phaser_ignored",
-                                      indent + "        ");
+                                      "_phaser_ignored", indent + "        ");
       os << indent << "      }\n";
       os << indent << "      ++ros_count;\n";
     }
@@ -4668,6 +4667,22 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
      << "GetFieldByName,\n";
   os << "  .get_field_by_number = " << MessageName(message_)
      << "GetFieldByNumber,\n";
+  os << "  .protobuf_to_ros = " << MessageName(message_)
+     << "::ProtobufToROS,\n";
+  os << "  .phaser_to_ros = " << MessageName(message_) << "::PhaserToROS,\n";
+  const bool has_ros_metadata =
+      generate_ros_metadata_ ||
+      message_->options().HasExtension(phaser::ros_message);
+  if (has_ros_metadata) {
+    os << "  .ros_data_type = " << MessageName(message_) << "::RosDataType,\n";
+    os << "  .ros_md5 = " << MessageName(message_) << "::RosMd5,\n";
+    os << "  .ros_definition = " << MessageName(message_)
+       << "::RosDefinition,\n";
+  } else {
+    os << "  .ros_data_type = nullptr,\n";
+    os << "  .ros_md5 = nullptr,\n";
+    os << "  .ros_definition = nullptr,\n";
+  }
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";
