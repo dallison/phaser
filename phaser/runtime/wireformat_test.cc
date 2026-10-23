@@ -170,6 +170,12 @@ TEST(Wireformat, OwnedBufferGrowsToFitAWrite) {
   const std::string data(100, 'x');
   ASSERT_TRUE(out.SerializeLengthDelimited(1, data.data(), data.size()).ok());
   EXPECT_EQ(out.AsString(), std::string("\x0a\x64", 2) + data);
+
+  ProtoBuffer reserved;
+  ASSERT_TRUE(reserved.EnsureSpace(1000).ok());
+  const std::string more(1000, 'y');
+  ASSERT_TRUE((reserved.SerializeRaw(more.data(), more.size()).ok()));
+  EXPECT_EQ(reserved.AsString(), more);
 }
 
 int main(int argc, char** argv) {

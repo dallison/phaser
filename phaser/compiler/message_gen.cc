@@ -3308,8 +3308,8 @@ void MessageGenerator::GenerateROSFieldWrite(
       } else {
         os << indent << "if (absl::Status _phaser_status = ("
            << value_expression
-           << ").SerializeToROS(_phaser_buffer); !_phaser_status.ok()) return "
-              "_phaser_status;\n";
+           << ").PhaserSerializeToROS(_phaser_buffer); !_phaser_status.ok()) "
+              "return _phaser_status;\n";
       }
       return;
     case google::protobuf::FieldDescriptor::TYPE_GROUP:
@@ -4902,18 +4902,35 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   if (decl) {
     GenerateROSFixedSize(os);
     os << "  size_t ROSSerializedSize() const;\n";
-    os << "  absl::Status SerializeToROS("
-          "::phaser::ROSBuffer& _phaser_buffer) const;\n";
+    os << R"XXX(  absl::Status SerializeToROS(::phaser::ROSBuffer& _phaser_buffer) const {
+    if constexpr (::phaser::kTrustSerializedSize) {
+      if (absl::Status _phaser_status =
+              _phaser_buffer.EnsureSpace(ROSSerializedSize());
+          !_phaser_status.ok()) {
+        return _phaser_status;
+      }
+    }
+    return PhaserSerializeToROS(::phaser::ROSMessageWriter(_phaser_buffer));
+  }
+  // SerializeToROS() into a buffer that, with kTrustSerializedSize, already
+  // has room for the message.
+  absl::Status PhaserSerializeToROS(
+      ::phaser::ROSMessageWriter _phaser_buffer) const;
+)XXX";
     os << "  absl::Status DeserializeFromROS("
           "::phaser::ROSReader& _phaser_buffer);\n";
     os << "  // DeserializeFromROS for a message that is already clear.\n";
     os << "  absl::Status DeserializeFromROSUncleared("
           "::phaser::ROSReader& _phaser_buffer);\n";
     os << "  absl::Status ParseFromROS(absl::Span<const char> input);\n";
-    os << R"XXX(  absl::Status SerializeToROSArray(
+    os << R"XXX(  // With kTrustSerializedSize, '_phaser_size' must be at least
+  // ROSSerializedSize().
+  absl::Status SerializeToROSArray(
       void* _phaser_data, size_t _phaser_size) const {
+    assert(!::phaser::kTrustSerializedSize ||
+           _phaser_size >= ROSSerializedSize());
     ::phaser::ROSBuffer _phaser_buffer(_phaser_data, _phaser_size);
-    return SerializeToROS(_phaser_buffer);
+    return PhaserSerializeToROS(::phaser::ROSMessageWriter(_phaser_buffer));
   }
   absl::Status SerializeToROSString(std::string* _phaser_output) const {
     if (_phaser_output == nullptr) {
@@ -4922,7 +4939,8 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
     _phaser_output->resize(ROSSerializedSize());
     ::phaser::ROSBuffer _phaser_buffer(
         _phaser_output->data(), _phaser_output->size());
-    absl::Status _phaser_status = SerializeToROS(_phaser_buffer);
+    absl::Status _phaser_status =
+        PhaserSerializeToROS(::phaser::ROSMessageWriter(_phaser_buffer));
     if (!_phaser_status.ok()) {
       _phaser_output->clear();
     }
@@ -5046,7 +5064,8 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
   os << "}\n\n";
 
   os << "absl::Status " << name
-     << "::SerializeToROS(::phaser::ROSBuffer& _phaser_buffer) const {\n";
+     << "::PhaserSerializeToROS(::phaser::ROSMessageWriter _phaser_buffer) "
+        "const {\n";
   if (IsRosTime(message_)) {
     os << "  if (absl::Status _phaser_status = _phaser_buffer.Write("
           "static_cast<uint32_t>(seconds())); !_phaser_status.ok()) "
@@ -5385,12 +5404,26 @@ void MessageGenerator::GenerateSerializedSize(std::ostream& os, bool decl) {
 
 void MessageGenerator::GenerateSerializer(std::ostream& os, bool decl) {
   if (decl) {
-    os << "  absl::Status Serialize("
-          "::phaser::ProtoBuffer &_phaser_buffer) const;\n";
+    os << R"XXX(  absl::Status Serialize(::phaser::ProtoBuffer &_phaser_buffer) const {
+    if constexpr (::phaser::kTrustSerializedSize) {
+      if (absl::Status _phaser_status =
+              _phaser_buffer.EnsureSpace(SerializedSize());
+          !_phaser_status.ok()) {
+        return _phaser_status;
+      }
+    }
+    return PhaserSerialize(::phaser::ProtoMessageWriter(_phaser_buffer));
+  }
+  // Serialize() into a buffer that, with kTrustSerializedSize, already has
+  // room for the message.
+  absl::Status PhaserSerialize(
+      ::phaser::ProtoMessageWriter _phaser_buffer) const;
+)XXX";
     return;
   }
   os << "absl::Status " << MessageName(message_)
-     << "::Serialize(::phaser::ProtoBuffer &_phaser_buffer) const {\n";
+     << "::PhaserSerialize(::phaser::ProtoMessageWriter _phaser_buffer) "
+        "const {\n";
   os << "  if (AllocationFailed()) return "
         "::phaser::internal::AllocationFailedError();\n";
   for (auto& field : fields_) {
@@ -5512,9 +5545,14 @@ void MessageGenerator::GenerateProtobufSerialization(std::ostream& os) {
     return static_cast<int>(ByteSizeLong());
   }
 
+  // With kTrustSerializedSize, '_phaser_size' must be at least
+  // SerializedSize().
   bool SerializeToArray(char* _phaser_array, size_t _phaser_size) const {
+    assert(!::phaser::kTrustSerializedSize ||
+           _phaser_size >= SerializedSize());
     ::phaser::ProtoBuffer _phaser_buffer(_phaser_array, _phaser_size);
-    if (absl::Status _phaser_status = Serialize(_phaser_buffer);
+    if (absl::Status _phaser_status =
+            PhaserSerialize(::phaser::ProtoMessageWriter(_phaser_buffer));
         !_phaser_status.ok()) return false;
     return true;
   }

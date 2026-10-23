@@ -287,7 +287,7 @@ class RosMessageField : public IndirectMessageField<Backend, kInline, Loc> {
     return Base::SerializedSize();
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     SyncToPayload();
     return Base::Serialize(buffer);
   }
@@ -709,7 +709,7 @@ class RosHeaderField : public IndirectMessageField<Backend, kInline, Loc> {
     SyncToPayload();
     return Base::SerializedSize();
   }
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     SyncToPayload();
     return Base::Serialize(buffer);
   }

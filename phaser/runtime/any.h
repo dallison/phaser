@@ -13,6 +13,7 @@
 // MutableAny). On protobuf wire, `value` is length-delimited *protobuf* bytes
 // of the inner message; Serialize/Deserialize transcode at this boundary.
 //
+#include <assert.h>
 #include <stddef.h>
 
 #include <cstring>
@@ -125,27 +126,46 @@ class AnyMessage : public Message {
   }
 
   absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
+    if constexpr (kTrustSerializedSize) {
+      if (absl::Status status = buffer.EnsureSpace(SerializedSize());
+          !status.ok()) {
+        return status;
+      }
+    }
+    return PhaserSerialize(ProtoMessageWriter(buffer));
+  }
+
+  // Serialize() into a buffer that, with kTrustSerializedSize, already has
+  // room for the message.
+  absl::Status PhaserSerialize(ProtoMessageWriter buffer) const {
+    // SerializedSize() is 0 for a value of unknown size, so nothing may be
+    // written before its size is found.
+    std::string_view type;
+    ::phaser::BufferOffset offset = 0;
+    size_t inner_size = 0;
+    if (value_.IsPresent()) {
+      type = MessageTypeName();
+      offset = runtime->ToOffset(const_cast<char*>(value().data()));
+      absl::StatusOr<size_t> size =
+          PhaserBankSerializedSizeAtOffset(type, runtime, offset);
+      if (!size.ok()) {
+        return size.status();
+      }
+      inner_size = *size;
+    }
     if (type_url_.IsPresent()) {
       if (absl::Status status = type_url_.Serialize(buffer); !status.ok()) {
         return status;
       }
     }
     if (value_.IsPresent()) {
-      const std::string_view type = MessageTypeName();
-      const ::phaser::BufferOffset offset =
-          runtime->ToOffset(const_cast<char*>(value().data()));
-      absl::StatusOr<size_t> inner_size =
-          PhaserBankSerializedSizeAtOffset(type, runtime, offset);
-      if (!inner_size.ok()) {
-        return inner_size.status();
-      }
       if (absl::Status status =
-              buffer.SerializeLengthDelimitedHeader(2, *inner_size);
+              buffer.SerializeLengthDelimitedHeader(2, inner_size);
           !status.ok()) {
         return status;
       }
-      if (absl::Status status =
-              PhaserBankSerializeAtOffset(type, runtime, offset, buffer);
+      if (absl::Status status = PhaserBankSerializeAtOffset(
+              type, runtime, offset, buffer.buffer());
           !status.ok()) {
         return status;
       }
@@ -341,9 +361,12 @@ class AnyMessage : public Message {
     return str;
   }
 
+  // With kTrustSerializedSize, 'size' must be at least SerializedSize().
   bool SerializeToArray(char* array, size_t size) const {
+    assert(!kTrustSerializedSize || size >= SerializedSize());
     ProtoBuffer buffer(array, size);
-    if (absl::Status status = Serialize(buffer); !status.ok()) {
+    if (absl::Status status = PhaserSerialize(ProtoMessageWriter(buffer));
+        !status.ok()) {
       return false;
     }
     return true;

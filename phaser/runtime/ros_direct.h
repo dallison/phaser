@@ -141,9 +141,14 @@ inline auto ForEachMessageVectorElement(const ::phaser::PayloadBuffer* pb,
 // position is passed and returned by value: one kept in memory would be
 // reloaded after every byte written, as the bytes could alias it.
 
+// Whether 'length' bytes fit at 'out', which kTrustSerializedSize assumes.
+inline bool RoomFor(const char* out, const char* end, size_t length) {
+  return kTrustSerializedSize || static_cast<size_t>(end - out) >= length;
+}
+
 template <typename T>
 inline char* WriteROSValue(char* out, char* end, T value) {
-  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < sizeof(T))) {
+  if (ABSL_PREDICT_FALSE(!RoomFor(out, end, sizeof(T)))) {
     return nullptr;
   }
   ::phaser::ROSBuffer::Encode(out, value);
@@ -152,8 +157,7 @@ inline char* WriteROSValue(char* out, char* end, T value) {
 
 // 's' is a string in a Phaser buffer, so its length fits in 32 bits.
 inline char* WriteROSString(char* out, char* end, std::string_view s) {
-  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) <
-                         sizeof(uint32_t) + s.size())) {
+  if (ABSL_PREDICT_FALSE(!RoomFor(out, end, sizeof(uint32_t) + s.size()))) {
     return nullptr;
   }
   ::phaser::ROSBuffer::Encode(out, static_cast<uint32_t>(s.size()));
@@ -163,7 +167,7 @@ inline char* WriteROSString(char* out, char* end, std::string_view s) {
 
 inline char* WriteROSRaw(char* out, char* end, const void* data,
                          size_t length) {
-  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < length)) {
+  if (ABSL_PREDICT_FALSE(!RoomFor(out, end, length))) {
     return nullptr;
   }
   if (length != 0) {
@@ -179,7 +183,7 @@ inline char* WriteROSArray(char* out, char* end, absl::Span<const T> values) {
   using Wire = std::conditional_t<std::is_enum_v<T>, int32_t, T>;
   static_assert(sizeof(Wire) == sizeof(T), "ROS enum storage must be 32 bits");
   const size_t byte_size = values.size() * sizeof(Wire);
-  if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < byte_size)) {
+  if (ABSL_PREDICT_FALSE(!RoomFor(out, end, byte_size))) {
     return nullptr;
   }
   const uint16_t endian_marker = 1;
@@ -243,7 +247,7 @@ inline char* WriteROSAt(const RuntimeHandle& runtime,
   }
   if constexpr (HasROSUncheckedSerializeAt<T>::value) {
     constexpr size_t kSize = T::PhaserROSFixedSize();
-    if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) < kSize)) {
+    if (ABSL_PREDICT_FALSE(!RoomFor(out, end, kSize))) {
       return nullptr;
     }
     T::PhaserSerializeToROSUncheckedAt(
@@ -253,7 +257,9 @@ inline char* WriteROSAt(const RuntimeHandle& runtime,
     return T::PhaserWriteROSAt(runtime, offset, out, end);
   } else {
     ::phaser::ROSBuffer buffer(out, static_cast<size_t>(end - out));
-    if (!T(BorrowedRuntime(runtime), offset).SerializeToROS(buffer).ok()) {
+    if (!T(BorrowedRuntime(runtime), offset)
+             .PhaserSerializeToROS(::phaser::ROSMessageWriter(buffer))
+             .ok()) {
       return nullptr;
     }
     return out + buffer.size();
@@ -286,8 +292,8 @@ inline char* WriteMessageVectorROS(const RuntimeHandle& runtime,
   const ::phaser::PayloadBuffer* pb = runtime->pb;
   if constexpr (HasROSUncheckedSerializeAt<T>::value) {
     constexpr size_t kSize = T::PhaserROSFixedSize();
-    if (ABSL_PREDICT_FALSE(static_cast<size_t>(end - out) <
-                           size_t{VectorSizeAt(pb, header)} * kSize)) {
+    if (ABSL_PREDICT_FALSE(
+            !RoomFor(out, end, size_t{VectorSizeAt(pb, header)} * kSize))) {
       return nullptr;
     }
     const char* base = reinterpret_cast<const char*>(pb);
@@ -503,9 +509,10 @@ absl::Status SerializeMessageVectorToROSSlow(
 // Writes the elements of the vector of T whose VectorHeader is at 'header',
 // without the sequence length.
 template <typename T>
-inline absl::Status SerializeMessageVectorToROS(const RuntimeHandle& runtime,
-                                                ::phaser::BufferOffset header,
-                                                ::phaser::ROSBuffer& buffer) {
+inline absl::Status SerializeMessageVectorToROS(
+    const RuntimeHandle& runtime, ::phaser::BufferOffset header,
+    ::phaser::ROSMessageWriter writer) {
+  ::phaser::ROSBuffer& buffer = writer.buffer();
   const auto write = [&](char* out, char* end) {
     return WriteMessageVectorROS<T>(runtime, header, out, end);
   };

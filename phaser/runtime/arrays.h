@@ -311,7 +311,7 @@ class PrimitiveArrayField : public FieldBase<Loc> {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = ActiveElementCount();
     if (sz == 0) {
       return absl::OkStatus();
@@ -737,7 +737,7 @@ class EnumArrayField : public FieldBase<Loc> {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = ActiveElementCount();
     if (sz == 0) {
       return absl::OkStatus();
@@ -1060,7 +1060,7 @@ class MessageArrayField : public MessageVectorField<T, Loc> {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t count = parsed_count_for_serialize();
     for (size_t i = 0; i < count; i++) {
       if (absl::Status status = buffer.SerializeLengthDelimitedHeader(
@@ -1068,7 +1068,8 @@ class MessageArrayField : public MessageVectorField<T, Loc> {
           !status.ok()) {
         return status;
       }
-      if (absl::Status status = (*this)[i].Serialize(buffer); !status.ok()) {
+      if (absl::Status status = (*this)[i].PhaserSerialize(buffer);
+          !status.ok()) {
         return status;
       }
     }
@@ -1344,7 +1345,7 @@ class StringArrayField : public FieldBase<StoredFieldLoc> {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t count = parsed_count_for_serialize();
     for (size_t i = 0; i < count; i++) {
       const NonEmbeddedStringField& slot = ConstSlot(i);

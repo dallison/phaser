@@ -571,7 +571,7 @@ class StringFieldFacade {
                ProtoBuffer::VarintSize<type, Signed>(Get());                   \
       }                                                                        \
     }                                                                          \
-    absl::Status Serialize(ProtoBuffer& buffer) const {                        \
+    absl::Status Serialize(ProtoMessageWriter buffer) const {                  \
       if constexpr (FixedSize) {                                               \
         return buffer.SerializeFixed<type>(Number(), Get());                   \
       } else {                                                                 \
@@ -732,7 +732,7 @@ class EnumField : public FieldBase<Loc> {
                static_cast<int32_t>(GetUnderlying()));
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     return buffer.SerializeVarint<int32_t, false>(
         Number(), static_cast<int32_t>(GetUnderlying()));
   }
@@ -892,9 +892,9 @@ class BasicStringField : public FieldBase<Loc>,
     return ProtoBuffer::LengthDelimitedSize(Number(), s);
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t s = size();
-    return buffer.ProtoBuffer::SerializeLengthDelimited(Number(), data(), s);
+    return buffer.SerializeLengthDelimited(Number(), data(), s);
   }
 
   absl::Status Deserialize(ProtoBuffer& buffer) {
@@ -1284,7 +1284,7 @@ class IndirectMessageField
                                             Handle().SerializedSize());
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     const Location location = Locate();
     if (location.offset < 0) {
       return absl::OkStatus();
@@ -1301,7 +1301,7 @@ class IndirectMessageField
       return status;
     }
 
-    return Handle().Serialize(buffer);
+    return Handle().PhaserSerialize(buffer);
   }
 
   absl::Status Deserialize(ProtoBuffer& buffer) {
@@ -1603,8 +1603,8 @@ class MessageObject {
 
   size_t SerializedSize() const { return msg_.SerializedSize(); }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
-    return msg_.Serialize(buffer);
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
+    return msg_.PhaserSerialize(buffer);
   }
 
   absl::Status Deserialize(ProtoBuffer& buffer) {

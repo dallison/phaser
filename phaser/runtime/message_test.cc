@@ -256,6 +256,16 @@ struct InnerMessage : public Message {
   }
 
   absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
+    if constexpr (phaser::kTrustSerializedSize) {
+      if (absl::Status status = buffer.EnsureSpace(SerializedSize());
+          !status.ok()) {
+        return status;
+      }
+    }
+    return PhaserSerialize(phaser::ProtoMessageWriter(buffer));
+  }
+
+  absl::Status PhaserSerialize(phaser::ProtoMessageWriter buffer) const {
     if (str_.IsPresent()) {
       if (absl::Status status = str_.Serialize(buffer); !status.ok()) {
         return status;
@@ -722,6 +732,16 @@ struct TestMessage : public Message {
   }
 
   absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
+    if constexpr (phaser::kTrustSerializedSize) {
+      if (absl::Status status = buffer.EnsureSpace(SerializedSize());
+          !status.ok()) {
+        return status;
+      }
+    }
+    return PhaserSerialize(phaser::ProtoMessageWriter(buffer));
+  }
+
+  absl::Status PhaserSerialize(phaser::ProtoMessageWriter buffer) const {
     if (x_.IsPresent()) {
       if (absl::Status status = x_.Serialize(buffer); !status.ok()) {
         return status;

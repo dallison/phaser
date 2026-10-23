@@ -81,7 +81,7 @@ class UnionMemberField {
                    Get(runtime, abs_offset));                                  \
       }                                                                        \
     }                                                                          \
-    absl::Status Serialize(int number, ProtoBuffer& buffer,                    \
+    absl::Status Serialize(int number, ProtoMessageWriter buffer,              \
                            const RuntimeHandle& runtime,                       \
                            uint32_t abs_offset) const {                        \
       if constexpr (FixedSize) {                                               \
@@ -177,7 +177,7 @@ class UnionEnumField : public UnionMemberField {
                GetUnderlying(runtime, abs_offset));
   }
 
-  absl::Status Serialize(int number, ProtoBuffer& buffer,
+  absl::Status Serialize(int number, ProtoMessageWriter buffer,
                          const RuntimeHandle& runtime,
                          uint32_t abs_offset) const {
     return buffer.SerializeVarint<T, false>(number,
@@ -258,7 +258,7 @@ class UnionStringField : public UnionMemberField {
            sz;
   }
 
-  absl::Status Serialize(int number, ProtoBuffer& buffer,
+  absl::Status Serialize(int number, ProtoMessageWriter buffer,
                          const RuntimeHandle& runtime,
                          uint32_t abs_offset) const {
     return buffer.SerializeLengthDelimited(number, data(runtime, abs_offset),
@@ -432,7 +432,7 @@ class UnionMessageField : public UnionMemberField {
         number, Get(runtime, abs_offset).SerializedSize());
   }
 
-  absl::Status Serialize(int number, ProtoBuffer& buffer,
+  absl::Status Serialize(int number, ProtoMessageWriter buffer,
                          const RuntimeHandle& runtime,
                          uint32_t abs_offset) const {
     if (absl::Status status = buffer.SerializeLengthDelimitedHeader(
@@ -440,7 +440,7 @@ class UnionMessageField : public UnionMemberField {
         !status.ok()) {
       return status;
     }
-    return Get(runtime, abs_offset).Serialize(buffer);
+    return Get(runtime, abs_offset).PhaserSerialize(buffer);
   }
 
   absl::Status Deserialize(ProtoBuffer& buffer, const RuntimeHandle& runtime,
@@ -731,7 +731,7 @@ class UnionField : public FieldBase<StoredFieldLoc> {
   }
 
   template <int Id>
-  absl::Status Serialize(int discriminator, ProtoBuffer& buffer) const {
+  absl::Status Serialize(int discriminator, ProtoMessageWriter buffer) const {
     int32_t relative_offset = Parent()->FindFieldOffset(field_numbers_[Id]);
     if (relative_offset < 0) {  // Field not present.
       return absl::OkStatus();

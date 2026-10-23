@@ -11,6 +11,7 @@
 #include <string_view>
 #include <type_traits>
 
+#include "absl/base/attributes.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -18,6 +19,17 @@
 #include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
+
+// Whether serializing a message writes without checking for room, as a build
+// defining PHASER_TRUST_SERIALIZED_SIZE does.  Serializing into a buffer still
+// makes room for the message first, but a caller serializing into an array
+// must pass at least the message's serialized size.  Converting between wire
+// formats checks for room regardless.
+#ifdef PHASER_TRUST_SERIALIZED_SIZE
+inline constexpr bool kTrustSerializedSize = true;
+#else
+inline constexpr bool kTrustSerializedSize = false;
+#endif
 
 enum class MessageWireFormat {
   kProtobuf,
@@ -287,12 +299,16 @@ class ProtoBuffer {
     return LengthDelimitedSize(field_number, str.size());
   }
 
-  // Serialization functions.
+  // Makes room for 'n' more bytes, growing the buffer if it owns it.
+  absl::Status EnsureSpace(size_t n) { return HasSpaceFor(n); }
 
-  template <typename T, bool Signed>
+  // Serialization functions.  Those taking 'kCheckSpace' false assume the
+  // caller made room.
+
+  template <typename T, bool Signed, bool kCheckSpace = true>
   absl::Status SerializeRawVarint(T value) {
     uint64_t uvalue = ToVarintWire<T, Signed>(value);
-    if (auto status = HasSpaceFor(VarintSize<uint64_t, false>(uvalue));
+    if (auto status = Reserve<kCheckSpace>(VarintSize<uint64_t, false>(uvalue));
         !status.ok()) {
       return status;
     }
@@ -307,28 +323,31 @@ class ProtoBuffer {
     return absl::OkStatus();
   }
 
-  template <typename T, bool Signed>
+  template <typename T, bool Signed, bool kCheckSpace = true>
   absl::Status SerializeVarint(int field_number, T value) {
-    if (auto status = SerializeTag(field_number, WireType::kVarint);
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, WireType::kVarint);
         !status.ok()) {
       return status;
     }
-    return SerializeRawVarint<T, Signed>(value);
+    return SerializeRawVarint<T, Signed, kCheckSpace>(value);
   }
 
+  template <bool kCheckSpace = true>
   absl::Status SerializeTag(int field_number, WireType wire_type) {
-    return SerializeRawVarint<uint32_t, false>(
+    return SerializeRawVarint<uint32_t, false, kCheckSpace>(
         static_cast<uint32_t>(MakeTag(field_number, wire_type)));
   }
 
-  template <typename T>
+  template <typename T, bool kCheckSpace = true>
   absl::Status SerializeFixed(int field_number, T value) {
-    if (auto status = SerializeTag(field_number, FixedWireType<T>());
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, FixedWireType<T>());
         !status.ok()) {
       return status;
     }
 
-    if (auto status = HasSpaceFor(sizeof(T)); !status.ok()) {
+    if (auto status = Reserve<kCheckSpace>(sizeof(T)); !status.ok()) {
       return status;
     }
     memcpy(addr_, &value, sizeof(T));
@@ -336,18 +355,20 @@ class ProtoBuffer {
     return absl::OkStatus();
   }
 
+  template <bool kCheckSpace = true>
   absl::Status SerializeLengthDelimited(int field_number, const void* data,
                                         size_t length) {
-    if (auto status = SerializeTag(field_number, WireType::kLengthDelimited);
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, WireType::kLengthDelimited);
         !status.ok()) {
       return status;
     }
-    if (absl::Status status =
-            SerializeRawVarint<int32_t, false>(static_cast<int32_t>(length));
+    if (absl::Status status = SerializeRawVarint<int32_t, false, kCheckSpace>(
+            static_cast<int32_t>(length));
         !status.ok()) {
       return status;
     }
-    if (auto status = HasSpaceFor(length); !status.ok()) {
+    if (auto status = Reserve<kCheckSpace>(length); !status.ok()) {
       return status;
     }
     memcpy(addr_, data, length);
@@ -355,12 +376,15 @@ class ProtoBuffer {
     return absl::OkStatus();
   }
 
+  template <bool kCheckSpace = true>
   absl::Status SerializeLengthDelimitedHeader(int field_number, size_t length) {
-    if (auto status = SerializeTag(field_number, WireType::kLengthDelimited);
+    if (auto status =
+            SerializeTag<kCheckSpace>(field_number, WireType::kLengthDelimited);
         !status.ok()) {
       return status;
     }
-    return SerializeRawVarint<int32_t, false>(static_cast<int32_t>(length));
+    return SerializeRawVarint<int32_t, false, kCheckSpace>(
+        static_cast<int32_t>(length));
   }
 
   absl::Status SerializeRaw(const void* data, size_t length) {
@@ -504,6 +528,15 @@ class ProtoBuffer {
   }
 
  private:
+  template <bool kCheckSpace>
+  absl::Status Reserve(size_t n) {
+    if constexpr (kCheckSpace) {
+      return HasSpaceFor(n);
+    } else {
+      return absl::OkStatus();
+    }
+  }
+
   size_t static MakeTag(int field_number, WireType wire_type) {
     return static_cast<size_t>((field_number << kFieldIdShift) |
                                int(wire_type));
@@ -557,6 +590,51 @@ class ProtoBuffer {
   size_t size_ = 0;
   char* addr_ = nullptr;
   char* end_ = nullptr;
+};
+
+// The ProtoBuffer a message serializes into, checking for room as it writes
+// unless kTrustSerializedSize.  Its writes are inlined so that, checking, they
+// are the buffer's own.
+class ProtoMessageWriter {
+ public:
+  explicit ProtoMessageWriter(ProtoBuffer& buffer) : buffer_(&buffer) {}
+
+  template <typename T, bool Signed>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeVarint(int field_number,
+                                                            T value) {
+    return buffer_->SerializeVarint<T, Signed, kCheckSpace>(field_number,
+                                                            value);
+  }
+
+  template <typename T, bool Signed>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeRawVarint(T value) {
+    return buffer_->SerializeRawVarint<T, Signed, kCheckSpace>(value);
+  }
+
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeFixed(int field_number,
+                                                           T value) {
+    return buffer_->SerializeFixed<T, kCheckSpace>(field_number, value);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeLengthDelimited(
+      int field_number, const void* data, size_t length) {
+    return buffer_->SerializeLengthDelimited<kCheckSpace>(field_number, data,
+                                                          length);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status SerializeLengthDelimitedHeader(
+      int field_number, size_t length) {
+    return buffer_->SerializeLengthDelimitedHeader<kCheckSpace>(field_number,
+                                                                length);
+  }
+
+  ProtoBuffer& buffer() const { return *buffer_; }
+
+ private:
+  static constexpr bool kCheckSpace = !kTrustSerializedSize;
+
+  ProtoBuffer* buffer_;
 };
 
 // A protobuf sink that either writes to a ProtoBuffer or only counts bytes.

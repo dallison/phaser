@@ -337,6 +337,18 @@ bool   ParseFromString(const std::string& str);
 binary message you can access directly (via `Is<T>()` / `As<T>()` / `MutableAny<T>()`), with
 `PackFrom` / `UnpackTo` provided for protobuf-compatible copying.
 
+## Trusting serialized sizes
+
+A program that sizes its output with `SerializedSize()` or `ROSSerializedSize()` before
+calling `SerializeToArray` or `SerializeToROSArray` can build with
+`--@phaser//phaser/runtime:trust_serialized_size` (CMake:
+`-DPHASER_TRUST_SERIALIZED_SIZE=ON`). Serializing a message then writes without checking
+for room, which takes about half the instructions for protobuf and up to 15% fewer for
+ROS. The array passed must be at least the serialized size; debug builds assert this.
+`Serialize` and `SerializeToROS` still make room for the whole message in their buffer
+first, and wire-to-wire conversions check as they write. The setting reaches everything
+built against the runtime, so all of a program's messages serialize the same way.
+
 ## Wire-to-wire backend conversions
 
 Wire conversion APIs are generated for every message in both frontend styles.

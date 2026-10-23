@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load(
     "//phaser:copts.bzl",
@@ -6,6 +7,18 @@ load(
 )
 
 package(default_visibility = ["//visibility:public"])
+
+# Serializing a message writes without checking for room, trusting the
+# caller to have made enough (see kTrustSerializedSize in wireformat.h).
+bool_flag(
+    name = "trust_serialized_size",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "trusts_serialized_size",
+    flag_values = {":trust_serialized_size": "True"},
+)
 
 cc_library(
     name = "payload_buffer",
@@ -38,6 +51,10 @@ cc_library(
         "phaser_bank.cc",
     ],
     copts = PHASER_COPTS,
+    defines = select({
+        ":trusts_serialized_size": ["PHASER_TRUST_SERIALIZED_SIZE"],
+        "//conditions:default": [],
+    }),
     hdrs = [
         "active_message.h",
         "any.h",

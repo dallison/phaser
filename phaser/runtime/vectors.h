@@ -466,7 +466,7 @@ class PrimitiveVectorField : public FieldBase<Loc> {
     return ProtoBuffer::LengthDelimitedSize(Number(), length);
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
@@ -952,7 +952,7 @@ class EnumVectorField : public FieldBase<Loc> {
     return ProtoBuffer::LengthDelimitedSize(Number(), length);
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
@@ -1962,7 +1962,7 @@ class MessageVectorField : public FieldBase<Loc> {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
@@ -1975,7 +1975,7 @@ class MessageVectorField : public FieldBase<Loc> {
           !status.ok()) {
         return status;
       }
-      if (absl::Status status = msg.Serialize(buffer); !status.ok()) {
+      if (absl::Status status = msg.PhaserSerialize(buffer); !status.ok()) {
         return status;
       }
     }
@@ -2589,7 +2589,7 @@ class BasicStringVectorField : public FieldBase<Loc> {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();

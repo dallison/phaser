@@ -347,8 +347,12 @@ TEST(ROSWireConversionTest, FixedOutputAndErrorsAreReported) {
   EXPECT_EQ(std::string(exact.data(), exact.size()), expected);
 
   std::vector<char> too_small(expected.size() - 1);
-  EXPECT_FALSE(
-      message.SerializeToROSArray(too_small.data(), too_small.size()).ok());
+  if (!::phaser::kTrustSerializedSize) {
+    EXPECT_FALSE(
+        message.SerializeToROSArray(too_small.data(), too_small.size()).ok());
+  }
+  ::phaser::ROSBuffer fixed(too_small.data(), too_small.size());
+  EXPECT_FALSE(message.SerializeToROS(fixed).ok());
   EXPECT_FALSE(message.SerializeToROSString(nullptr).ok());
 
   ::phaser::ROSBuffer output;
@@ -1444,6 +1448,9 @@ TEST(ROSWireConversionTest, MutableVectorElementsReportShortOutput) {
   const size_t size = message.ROSSerializedSize();
   std::vector<char> output(size);
   ASSERT_TRUE(message.SerializeToROSArray(output.data(), output.size()).ok());
+  if (::phaser::kTrustSerializedSize) {
+    GTEST_SKIP() << "Trusting serialized sizes leaves short output unchecked";
+  }
   for (size_t short_size : {size_t{1}, size_t{5}, size / 2, size - 1}) {
     std::vector<char> too_small(short_size);
     EXPECT_FALSE(

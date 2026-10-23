@@ -27,6 +27,9 @@ option(PHASER_BUILD_COMPILER "Build the protoc-gen-phaser plugin"
        ${PHASER_BUILD_COMPILER_DEFAULT})
 set(PHASER_PLUGIN_EXECUTABLE "" CACHE FILEPATH
     "Host protoc-gen-phaser used when the plugin is not built here")
+option(PHASER_TRUST_SERIALIZED_SIZE
+       "Serialize messages without checking for room, trusting the caller"
+       OFF)
 
 include(FetchContent)
 
@@ -79,6 +82,10 @@ target_link_libraries(phaser_runtime PUBLIC
     absl::span
     toolbelt
 )
+if(PHASER_TRUST_SERIALIZED_SIZE)
+    target_compile_definitions(phaser_runtime PUBLIC
+        PHASER_TRUST_SERIALIZED_SIZE)
+endif()
 
 # --- protoc plugin ---
 if(PHASER_BUILD_COMPILER)

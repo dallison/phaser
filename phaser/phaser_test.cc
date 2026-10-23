@@ -800,6 +800,18 @@ TEST(PhaserTest, Any) {
   ASSERT_EQ(pb_debug_string, phaser_debug_string);
 }
 
+// The value's type has no size to serialize with, even given all the room
+// SerializedSize() asks for.
+TEST(PhaserTest, AnyOfAnUnknownTypeDoesNotSerialize) {
+  foo::bar::phaser::TestMessage msg;
+  auto any = msg.mutable_any();
+  any->set_type_url("type.googleapis.com/no.such.Message");
+  any->set_value("value");
+
+  std::vector<char> wire(msg.SerializedSize());
+  EXPECT_FALSE(msg.SerializeToArray(wire.data(), wire.size()));
+}
+
 TEST(PhaserTest, Garbage) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
