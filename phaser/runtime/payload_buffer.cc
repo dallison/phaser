@@ -37,6 +37,24 @@ void PayloadBuffer::AllocateMetadata(PayloadBuffer **self, void *md,
   (*self)->metadata = (*self)->ToOffset(m);
 }
 
+char *PayloadBuffer::NewLongString(PayloadBuffer **self, const char *s,
+                                   size_t len, BufferOffset header_offset) {
+  if (len <= UINT32_MAX - sizeof(uint32_t)) {
+    const uint32_t length = uint32_t(len);
+    // The buffer does not move, so 's' stays valid even if it is in it.
+    char *block = static_cast<char *>((*self)->TryAllocateInPlace(
+        length + uint32_t(sizeof(uint32_t)), false));
+    if (block != nullptr) {
+      memcpy(block, &length, sizeof(length));
+      memcpy(block + sizeof(length), s, length);
+      (*self)->Set<BufferOffset>(header_offset,
+                                 (*self)->UncheckedOffset(block));
+      return block;
+    }
+  }
+  return NewStringSlow(self, s, len, header_offset);
+}
+
 char *PayloadBuffer::NewStringSlow(PayloadBuffer **self, const char *s,
                                    size_t len, BufferOffset header_offset) {
   if (len > UINT32_MAX - sizeof(uint32_t)) {

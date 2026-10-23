@@ -296,6 +296,9 @@ struct PayloadBuffer {
   ABSL_ATTRIBUTE_ALWAYS_INLINE static char *
   NewString(PayloadBuffer **self, const char *s, size_t len,
             BufferOffset header_offset);
+  // NewString() of a string longer than internal::kMaxShortString.
+  static char *NewLongString(PayloadBuffer **self, const char *s, size_t len,
+                             BufferOffset header_offset);
   // NewString() where the string may not fit without moving the buffer.
   static char *NewStringSlow(PayloadBuffer **self, const char *s, size_t len,
                              BufferOffset header_offset);
@@ -620,6 +623,9 @@ class StringSource {
 };
 
 namespace internal {
+// The longest string CopyString() copies without a call.
+inline constexpr size_t kMaxShortString = 32;
+
 // memcpy without a call for the short strings most messages hold.  'dst' and
 // 'src' must not overlap.
 inline void CopyString(char *dst, const char *src, size_t n) {
@@ -644,11 +650,15 @@ inline void CopyString(char *dst, const char *src, size_t n) {
     return;
   }
   if (n <= 32) {
-    char first[16], last[16];
-    memcpy(first, src, sizeof(first));
-    memcpy(last, src + n - sizeof(last), sizeof(last));
-    memcpy(dst, first, sizeof(first));
-    memcpy(dst + n - sizeof(last), last, sizeof(last));
+    uint64_t a, b, c, d;
+    memcpy(&a, src, sizeof(a));
+    memcpy(&b, src + 8, sizeof(b));
+    memcpy(&c, src + n - 16, sizeof(c));
+    memcpy(&d, src + n - 8, sizeof(d));
+    memcpy(dst, &a, sizeof(a));
+    memcpy(dst + 8, &b, sizeof(b));
+    memcpy(dst + n - 16, &c, sizeof(c));
+    memcpy(dst + n - 8, &d, sizeof(d));
     return;
   }
   memcpy(dst, src, n);
@@ -657,20 +667,23 @@ inline void CopyString(char *dst, const char *src, size_t n) {
 
 inline char *PayloadBuffer::NewString(PayloadBuffer **self, const char *s,
                                       size_t len, BufferOffset header_offset) {
-  PayloadBuffer *pb = *self;
-  if (ABSL_PREDICT_TRUE(len <= UINT32_MAX - sizeof(uint32_t))) {
-    const uint32_t length = uint32_t(len);
-    // The buffer does not move, so 's' stays valid even if it is in it.
-    char *block = static_cast<char *>(
-        pb->TryAllocateInPlace(length + uint32_t(sizeof(uint32_t)), false));
-    if (ABSL_PREDICT_TRUE(block != nullptr)) {
-      memcpy(block, &length, sizeof(length));
-      internal::CopyString(block + sizeof(length), s, length);
-      pb->Set<BufferOffset>(header_offset, pb->UncheckedOffset(block));
-      return block;
-    }
+  // Longer strings are copied with a call, which would make every string
+  // save registers.
+  if (len > internal::kMaxShortString) {
+    return NewLongString(self, s, len, header_offset);
   }
-  return NewStringSlow(self, s, len, header_offset);
+  PayloadBuffer *pb = *self;
+  const uint32_t length = uint32_t(len);
+  // The buffer does not move, so 's' stays valid even if it is in it.
+  char *block = static_cast<char *>(
+      pb->TryAllocateInPlace(length + uint32_t(sizeof(uint32_t)), false));
+  if (ABSL_PREDICT_FALSE(block == nullptr)) {
+    return NewStringSlow(self, s, len, header_offset);
+  }
+  memcpy(block, &length, sizeof(length));
+  internal::CopyString(block + sizeof(length), s, length);
+  pb->Set<BufferOffset>(header_offset, pb->UncheckedOffset(block));
+  return block;
 }
 
 template <>
