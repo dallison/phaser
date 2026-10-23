@@ -7,16 +7,18 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #include "absl/strings/str_format.h"
+#include "phaser/runtime/payload_buffer.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "phaser/testdata/TestMessage.phaser.h"
 #include "test_helpers.h"
 #include "toolbelt/hexdump.h"
-#include "toolbelt/payload_buffer.h"
 
 TEST(PhaserTest, ProtobufCompat) {
   foo::bar::phaser::TestMessage msg;
@@ -168,6 +170,339 @@ TEST(PhaserTest, NewFieldsRepeatedBasic) {
   ASSERT_EQ(msg2.vstr(0), msg.vstr(0));
   ASSERT_EQ(msg2.vstr(1), msg.vstr(1));
   ASSERT_EQ(msg2.vstr(2), msg.vstr(2));
+}
+
+namespace {
+void SetInnerMessage(foo::bar::phaser::InnerMessage inner, int i) {
+  inner.set_str(absl::StrFormat("element %d", i));
+  inner.set_f(i);
+  for (int j = 0; j < i % 4; j++) {
+    inner.add_ev(foo::bar::phaser::BAR);
+  }
+}
+
+template <typename Inner>
+void ExpectInnerMessage(const Inner& inner, int i) {
+  EXPECT_EQ(absl::StrFormat("element %d", i), inner.str());
+  EXPECT_EQ(i, inner.f());
+  EXPECT_EQ(i % 4, inner.ev_size());
+}
+
+template <typename Message>
+void ExpectInnerMessages(const Message& msg, int count) {
+  ASSERT_EQ(count, msg.vm_size());
+  for (int i = 0; i < count; i++) {
+    ExpectInnerMessage(msg.vm(i), i);
+  }
+}
+}  // namespace
+
+TEST(PhaserTest, RepeatedMessagesGrowAcrossChunks) {
+  constexpr int kCount = 100;
+  foo::bar::phaser::TestMessage msg;
+  std::vector<foo::bar::phaser::InnerMessage> handles;
+  for (int i = 0; i < kCount; i++) {
+    handles.push_back(msg.add_vm());
+  }
+  // Every handle is still valid after the later elements were added.
+  for (int i = 0; i < kCount; i++) {
+    SetInnerMessage(handles[i], i);
+  }
+  ExpectInnerMessages(msg, kCount);
+  EXPECT_GE(msg.vm().capacity(), size_t(kCount));
+
+  const char* base = static_cast<const char*>(msg.Data());
+  std::vector<char> recv(base, base + msg.Size());
+  ExpectInnerMessages(
+      foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size()),
+      kCount);
+  ExpectInnerMessages(foo::bar::phaser::TestMessageNewFields::CreateReadonly(
+                          recv.data(), recv.size()),
+                      kCount);
+
+  std::string serialized;
+  ASSERT_TRUE(msg.SerializeToString(&serialized));
+  foo::bar::TestMessage pb;
+  ASSERT_TRUE(pb.ParseFromString(serialized));
+  ASSERT_EQ(kCount, pb.vm_size());
+  for (int i = 0; i < kCount; i++) {
+    EXPECT_EQ(absl::StrFormat("element %d", i), pb.vm(i).str());
+    EXPECT_EQ(i, pb.vm(i).f());
+  }
+  foo::bar::phaser::TestMessage parsed;
+  ASSERT_TRUE(parsed.ParseFromString(serialized));
+  ExpectInnerMessages(parsed, kCount);
+
+  foo::bar::phaser::TestMessage copy;
+  ASSERT_TRUE(copy.CloneFrom(msg).ok());
+  ExpectInnerMessages(copy, kCount);
+}
+
+// A buffer is sent finalized, without the index of its metadata, so a reader
+// with a newer schema finds each field through the message's own metadata.
+TEST(PhaserTest, NewFieldsInFinalizedBuffer) {
+  foo::bar::phaser::TestMessage msg;
+  msg.set_x(1234);
+  msg.set_y(5678);
+  msg.set_s("hello world");
+  msg.mutable_m()->set_str("nested");
+  SetInnerMessage(msg.add_vm(), 7);
+  msg.Finalize();
+  EXPECT_EQ(0u,
+            static_cast<const ::phaser::PayloadBuffer*>(msg.Data())->metadata);
+
+  const char* base = static_cast<const char*>(msg.Data());
+  std::vector<char> recv(base, base + msg.Size());
+  auto same =
+      foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size());
+  EXPECT_TRUE(same.FieldLocationsKnown());
+  EXPECT_TRUE(same.m().FieldLocationsKnown());
+
+  auto evolved = foo::bar::phaser::TestMessageNewFields::CreateReadonly(
+      recv.data(), recv.size());
+  EXPECT_FALSE(evolved.FieldLocationsKnown());
+  EXPECT_EQ(1234, evolved.x());
+  EXPECT_EQ(5678, evolved.y());
+  EXPECT_EQ("hello world", evolved.s());
+  EXPECT_FALSE(evolved.has_new1());
+  EXPECT_FALSE(evolved.has_new2());
+  EXPECT_EQ(0, evolved.new3_size());
+  EXPECT_EQ("nested", evolved.m().str());
+  ASSERT_EQ(1, evolved.vm_size());
+  ExpectInnerMessage(evolved.vm(0), 7);
+}
+
+TEST(PhaserTest, PartHandlesBorrowTheMessage) {
+  foo::bar::phaser::TestMessage msg;
+  EXPECT_TRUE(msg.FieldLocationsKnown());
+  const auto& owners =
+      static_cast<::phaser::DynamicMutableMessageRuntime*>(msg.runtime)
+          ->owners_;
+  EXPECT_TRUE(msg.OwnsRuntime());
+  EXPECT_EQ(1u, owners.load());
+  foo::bar::phaser::InnerMessage element = msg.add_vm();
+  foo::bar::phaser::InnerMessage* nested = msg.mutable_m();
+  foo::bar::phaser::InnerMessage* member = msg.mutable_u3b();
+  foo::bar::phaser::InnerMessage copy = element;
+  EXPECT_EQ(1u, owners.load());
+  EXPECT_FALSE(element.OwnsRuntime());
+  EXPECT_FALSE(copy.OwnsRuntime());
+
+  // The handles see the payload buffer after it grows.
+  ASSERT_NE(nullptr, msg.allocate_buffer(1 << 20).data());
+  element.set_f(1);
+  copy.set_str("copy");
+  nested->set_str("nested");
+  member->set_str("member");
+  EXPECT_EQ(1, msg.vm(0).f());
+  EXPECT_EQ("copy", msg.vm(0).str());
+  EXPECT_EQ("nested", msg.m().str());
+  EXPECT_EQ("member", msg.u3b().str());
+
+  // A received message's nested handles find their fields where they were
+  // compiled when the nested type's layout matches.
+  const char* base = static_cast<const char*>(msg.Data());
+  std::vector<char> recv(base, base + msg.Size());
+  auto readonly =
+      foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size());
+  EXPECT_TRUE(readonly.m().FieldLocationsKnown());
+  EXPECT_EQ("nested", readonly.m().str());
+  EXPECT_TRUE(readonly.u3b().FieldLocationsKnown());
+  EXPECT_EQ("member", readonly.u3b().str());
+  auto evolved = foo::bar::phaser::TestMessageNewFields::CreateReadonly(
+      recv.data(), recv.size());
+  EXPECT_FALSE(evolved.FieldLocationsKnown());
+  EXPECT_TRUE(evolved.m().FieldLocationsKnown());
+  EXPECT_EQ("nested", evolved.m().str());
+}
+
+TEST(PhaserTest, CopiesOfDynamicMessageShareIt) {
+  auto msg = std::make_unique<foo::bar::phaser::TestMessage>();
+  msg->set_x(1);
+  const auto& owners =
+      static_cast<::phaser::DynamicMutableMessageRuntime*>(msg->runtime)
+          ->owners_;
+  foo::bar::phaser::TestMessage copy = *msg;
+  EXPECT_TRUE(copy.OwnsRuntime());
+  EXPECT_EQ(msg->runtime, copy.runtime);
+  EXPECT_EQ(2u, owners.load());
+
+  foo::bar::phaser::TestMessage moved = std::move(copy);
+  EXPECT_FALSE(copy.OwnsRuntime());
+  EXPECT_EQ(nullptr, copy.runtime);
+  EXPECT_EQ(2u, owners.load());
+
+  msg.reset();
+  EXPECT_EQ(1u, owners.load());
+  EXPECT_EQ(1, moved.x());
+  ASSERT_NE(nullptr, moved.allocate_buffer(1 << 20).data());
+  moved.set_y(2);
+
+  // Assigning releases the runtime the handle owned.
+  foo::bar::phaser::TestMessage other;
+  other = moved;
+  EXPECT_EQ(moved.runtime, other.runtime);
+  EXPECT_EQ(2u, owners.load());
+  EXPECT_EQ(2, other.y());
+  other = foo::bar::phaser::TestMessage();
+  EXPECT_NE(moved.runtime, other.runtime);
+  EXPECT_EQ(1u, owners.load());
+}
+
+// Assigning a protobuf-frontend message makes it refer to the other message,
+// as copying one does.
+TEST(PhaserTest, AssignedMessageRefersToTheOther) {
+  foo::bar::phaser::TestMessage msg;
+  msg.set_x(1);
+  msg.mutable_u3b()->set_str("member");
+  msg.mutable_m()->set_str("nested");
+
+  foo::bar::phaser::TestMessage other;
+  other.set_x(2);
+  other.mutable_u3b()->set_str("other");
+  other = msg;
+  EXPECT_EQ(msg.runtime, other.runtime);
+  EXPECT_EQ(1, other.x());
+  EXPECT_EQ("member", other.u3b().str());
+  EXPECT_EQ("nested", other.m().str());
+  other.mutable_u3b()->set_str("changed");
+  EXPECT_EQ("changed", msg.u3b().str());
+
+  foo::bar::phaser::TestMessage empty;
+  other = empty;
+  EXPECT_EQ(empty.runtime, other.runtime);
+  EXPECT_FALSE(other.has_u3b());
+  EXPECT_EQ("changed", msg.u3b().str());
+}
+
+TEST(PhaserTest, RepeatedMessagesResizeAndReserve) {
+  foo::bar::phaser::TestMessage msg;
+  for (int i = 0; i < 40; i++) {
+    SetInnerMessage(msg.add_vm(), i);
+  }
+  msg.resize_vm(10);
+  ExpectInnerMessages(msg, 10);
+
+  // An element reused after shrinking starts out empty.
+  auto reused = msg.add_vm();
+  EXPECT_EQ("", reused.str());
+  EXPECT_EQ(0, reused.f());
+  EXPECT_EQ(0, reused.ev_size());
+  SetInnerMessage(reused, 10);
+  msg.resize_vm(30);
+  ASSERT_EQ(30, msg.vm_size());
+  for (int i = 0; i < 11; i++) {
+    ExpectInnerMessage(msg.vm(i), i);
+  }
+  EXPECT_EQ("", msg.vm(29).str());
+  for (int i = 11; i < 30; i++) {
+    SetInnerMessage(msg.mutable_vm(i), i);
+  }
+  ExpectInnerMessages(msg, 30);
+
+  msg.clear_vm();
+  EXPECT_EQ(0, msg.vm_size());
+  EXPECT_EQ(0, msg.vm().capacity());
+
+  // Reserving empty storage sizes it exactly; growing past it doubles it.
+  msg.reserve_vm(40);
+  EXPECT_EQ(40, msg.vm().capacity());
+  for (int i = 0; i < 41; i++) {
+    SetInnerMessage(msg.add_vm(), i);
+  }
+  EXPECT_EQ(80, msg.vm().capacity());
+  ExpectInnerMessages(msg, 41);
+}
+
+TEST(PhaserTest, ClearedRepeatedMessagesReuseTheBuffer) {
+  foo::bar::phaser::TestMessage msg;
+  for (int i = 0; i < 50; i++) {
+    SetInnerMessage(msg.add_vm(), i);
+  }
+  msg.clear_vm();
+  const size_t size = msg.Size();
+  for (int round = 0; round < 20; round++) {
+    for (int i = 0; i < 50; i++) {
+      SetInnerMessage(msg.add_vm(), i);
+    }
+    ExpectInnerMessages(msg, 50);
+    msg.clear_vm();
+  }
+  EXPECT_EQ(size, msg.Size());
+}
+
+// A hostile sender can corrupt the block that holds a vector of messages.
+// Reading it must stay inside the received bytes; run under AddressSanitizer
+// to check.
+TEST(PhaserTest, HostileRepeatedMessageBlockIsBounded) {
+  constexpr int kCount = 20;
+  foo::bar::phaser::TestMessage src;
+  for (int i = 0; i < kCount; i++) {
+    SetInnerMessage(src.add_vm(), i);
+  }
+  const char* base = static_cast<const char*>(src.Data());
+  const std::vector<char> original(base, base + src.Size());
+
+  // Find the VectorHeader {kCount, block} whose block starts with the stride.
+  const uint32_t stride =
+      (foo::bar::phaser::InnerMessage::BinarySize() + 7) & ~size_t(7);
+  size_t header = 0;
+  uint32_t block = 0;
+  for (size_t i = 0; i + 2 * sizeof(uint32_t) <= original.size(); i += 4) {
+    uint32_t num, data, word;
+    std::memcpy(&num, original.data() + i, sizeof(num));
+    std::memcpy(&data, original.data() + i + 4, sizeof(data));
+    if (num == kCount && data + sizeof(word) <= original.size()) {
+      std::memcpy(&word, original.data() + data, sizeof(word));
+      if (word == stride) {
+        header = i;
+        block = data;
+        break;
+      }
+    }
+  }
+  ASSERT_NE(0, block);
+  uint32_t directory;
+  std::memcpy(&directory, original.data() + block + 12, sizeof(directory));
+  ASSERT_NE(0, directory);
+
+  const struct {
+    size_t offset;
+    uint32_t value;
+  } corruptions[] = {
+      {header, 0xffffffffu},         // num_elements
+      {header + 4, 0xfffffff0u},     // data
+      {block, 0},                    // stride
+      {block, 0xfffffff8u},          // stride
+      {block, 8},                    // stride
+      {block + 4, 0},                // first_capacity
+      {block + 4, 0xffffffffu},      // first_capacity
+      {block + 4, 1},                // first_capacity
+      {block + 8, 0xfffffff0u},      // metadata
+      {block + 12, 0xfffffff0u},     // directory
+      {block + 12, block},           // directory
+      {directory, 0xffffffffu},      // chunk count
+      {directory, 31},               // chunk count
+      {directory + 4, 0xfffffff0u},  // first chunk
+      {directory + 4, 8},            // first chunk
+  };
+  for (const auto& corruption : corruptions) {
+    std::vector<char> recv = original;
+    std::memcpy(recv.data() + corruption.offset, &corruption.value,
+                sizeof(corruption.value));
+    auto msg =
+        foo::bar::phaser::TestMessage::CreateReadonly(recv.data(), recv.size());
+    const size_t count = msg.vm_size();
+    ASSERT_LE(count, recv.size() / sizeof(uint64_t));
+    for (size_t i = 0; i < count + 2; i++) {
+      const auto inner = msg.vm(i);
+      ASSERT_LE(inner.str().size(), recv.size());
+      (void)inner.f();
+      (void)inner.ev_size();
+    }
+    (void)msg.vm().capacity();
+    (void)msg.DebugString();
+  }
 }
 
 // A malicious sender can build a structurally valid payload but corrupt the
@@ -465,6 +800,18 @@ TEST(PhaserTest, Any) {
   ASSERT_EQ(pb_debug_string, phaser_debug_string);
 }
 
+// The value's type has no size to serialize with, even given all the room
+// SerializedSize() asks for.
+TEST(PhaserTest, AnyOfAnUnknownTypeDoesNotSerialize) {
+  foo::bar::phaser::TestMessage msg;
+  auto any = msg.mutable_any();
+  any->set_type_url("type.googleapis.com/no.such.Message");
+  any->set_value("value");
+
+  std::vector<char> wire(msg.SerializedSize());
+  EXPECT_FALSE(msg.SerializeToArray(wire.data(), wire.size()));
+}
+
 TEST(PhaserTest, Garbage) {
   char buffer[256];
   for (int i = 0; i < 256; i++) {
@@ -581,7 +928,7 @@ TEST(PhaserTest, GarbageWithValidMagic) {
     buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic.
-  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer) = ::phaser::kFixedBufferMagic;
 
   auto msg =
       foo::bar::phaser::TestMessage::CreateReadonly(buffer, sizeof(buffer));
@@ -620,7 +967,7 @@ TEST(PhaserTest, GarbageWithTailoring) {
     buffer[i] = static_cast<char>(rand() & 0xff);
   }
   // Set the magic and the header fields.
-  *reinterpret_cast<uint32_t*>(buffer) = ::toolbelt::kFixedBufferMagic;
+  *reinterpret_cast<uint32_t*>(buffer) = ::phaser::kFixedBufferMagic;
   *reinterpret_cast<uint32_t*>(buffer + 4) = 0x1c;   // message location.
   *reinterpret_cast<uint32_t*>(buffer + 8) = 1024;   // hwm.
   *reinterpret_cast<uint32_t*>(buffer + 12) = 1000;  // full_size
@@ -713,9 +1060,12 @@ TEST(PhaserTest, Reflection) {
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, x_number);
   ASSERT_TRUE(has_x.ok());
 
-  absl::StatusOr<::phaser::Int32Field<>*> x =
-      ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
-          "foo.bar.TestMessage", msg, 100);
+  // The field type is the one declared in the generated message, which has
+  // the field's offset, presence id and number in it.
+  using XField =
+      ::phaser::Int32Field<false, false, ::phaser::FieldSpec<8, 0, 100>>;
+  absl::StatusOr<XField*> x = ::phaser::PhaserBankGetFieldByNumber<XField>(
+      "foo.bar.TestMessage", msg, 100);
   ASSERT_TRUE(x.ok());
   ASSERT_NE(nullptr, *x);
   ASSERT_EQ(1234, (*x)->Get());
@@ -725,12 +1075,14 @@ TEST(PhaserTest, Reflection) {
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, 104);
   ASSERT_TRUE(has_vi32.ok());
 
-  auto vi32 = ::phaser::PhaserBankGetFieldByNumber<
-      ::phaser::PrimitiveVectorField<int32_t>>("foo.bar.TestMessage", msg, 104);
+  using Vi32Field =
+      std::remove_cv_t<std::remove_reference_t<decltype(msg.vi32())>>;
+  auto vi32 = ::phaser::PhaserBankGetFieldByNumber<Vi32Field>(
+      "foo.bar.TestMessage", msg, 104);
   ASSERT_TRUE(vi32.ok());
   ASSERT_NE(nullptr, *vi32);
 
-  ::phaser::PrimitiveVectorField<int32_t>& vi32r = **vi32;
+  Vi32Field& vi32r = **vi32;
   ASSERT_EQ(3, vi32r.Size());
   ASSERT_EQ(1, vi32r[0]);
 

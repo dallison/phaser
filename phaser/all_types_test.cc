@@ -507,6 +507,28 @@ TEST(AllTypesTest, ClearAndResetScalars) {
   EXPECT_EQ("bytes", msg.f_bytes());
 }
 
+TEST(AllTypesTest, ClearReusesRepeatedMessageMemory) {
+  auto fill = [](RepeatedMessages& m) {
+    for (int i = 0; i < 8; i++) {
+      FillRepeatedMessages(m);
+    }
+  };
+  RepeatedMessages msg;
+  fill(msg);
+  RepeatedMessages expected;
+  fill(expected);
+  const size_t size = msg.Size();
+  for (int round = 0; round < 5; round++) {
+    msg.clear_items();
+    ASSERT_EQ(0u, msg.items_size());
+    fill(msg);
+    // The clear frees every element's strings, so refilling reuses them
+    // rather than growing the buffer.
+    ASSERT_EQ(size, msg.Size());
+  }
+  ExpectRepeatedMessagesMatch(expected, msg);
+}
+
 TEST(AllTypesTest, ProtobufRoundTrip) {
   AllScalars msg;
   FillAllScalars(msg);

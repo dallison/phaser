@@ -13,6 +13,7 @@
 // MutableAny). On protobuf wire, `value` is length-delimited *protobuf* bytes
 // of the inner message; Serialize/Deserialize transcode at this boundary.
 //
+#include <assert.h>
 #include <stddef.h>
 
 #include <cstring>
@@ -41,8 +42,7 @@ class AnyMessage : public Message {
       : type_url_(offsetof(AnyMessage, type_url_), HeaderSize() + 0, 0, 1),
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
 
-  AnyMessage(std::shared_ptr<phaser::MessageRuntime> rt,
-             ::toolbelt::BufferOffset offset)
+  AnyMessage(::phaser::RuntimeHandle rt, ::phaser::BufferOffset offset)
       : Message(rt, offset),
         type_url_(offsetof(AnyMessage, type_url_), HeaderSize() + 0, 0, 1),
         value_(offsetof(AnyMessage, value_), HeaderSize() + 4, 1, 2) {}
@@ -74,11 +74,6 @@ class AnyMessage : public Message {
   }
 
   friend std::ostream& operator<<(std::ostream& os, const AnyMessage& msg);
-
-  void Indent(int indent) {
-    type_url_.Indent(indent);
-    value_.Indent(indent);
-  }
 
   const MessageInfo* GetMessageInfo() const override {
     return nullptr;  // Implement this.
@@ -131,27 +126,46 @@ class AnyMessage : public Message {
   }
 
   absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
+    if constexpr (kTrustSerializedSize) {
+      if (absl::Status status = buffer.EnsureSpace(SerializedSize());
+          !status.ok()) {
+        return status;
+      }
+    }
+    return PhaserSerialize(ProtoMessageWriter(buffer));
+  }
+
+  // Serialize() into a buffer that, with kTrustSerializedSize, already has
+  // room for the message.
+  absl::Status PhaserSerialize(ProtoMessageWriter buffer) const {
+    // SerializedSize() is 0 for a value of unknown size, so nothing may be
+    // written before its size is found.
+    std::string_view type;
+    ::phaser::BufferOffset offset = 0;
+    size_t inner_size = 0;
+    if (value_.IsPresent()) {
+      type = MessageTypeName();
+      offset = runtime->ToOffset(const_cast<char*>(value().data()));
+      absl::StatusOr<size_t> size =
+          PhaserBankSerializedSizeAtOffset(type, runtime, offset);
+      if (!size.ok()) {
+        return size.status();
+      }
+      inner_size = *size;
+    }
     if (type_url_.IsPresent()) {
       if (absl::Status status = type_url_.Serialize(buffer); !status.ok()) {
         return status;
       }
     }
     if (value_.IsPresent()) {
-      const std::string_view type = MessageTypeName();
-      const toolbelt::BufferOffset offset =
-          runtime->ToOffset(const_cast<char*>(value().data()));
-      absl::StatusOr<size_t> inner_size =
-          PhaserBankSerializedSizeAtOffset(type, runtime, offset);
-      if (!inner_size.ok()) {
-        return inner_size.status();
-      }
       if (absl::Status status =
-              buffer.SerializeLengthDelimitedHeader(2, *inner_size);
+              buffer.SerializeLengthDelimitedHeader(2, inner_size);
           !status.ok()) {
         return status;
       }
-      if (absl::Status status =
-              PhaserBankSerializeAtOffset(type, runtime, offset, buffer);
+      if (absl::Status status = PhaserBankSerializeAtOffset(
+              type, runtime, offset, buffer.buffer());
           !status.ok()) {
         return status;
       }
@@ -258,10 +272,18 @@ class AnyMessage : public Message {
     constexpr std::string_view full_name = T::FullName();
     absl::Span<char> url =
         type_url_.Allocate(prefix.size() + full_name.size(), false);
-    memcpy(url.data(), prefix.data(), prefix.size());
-    memcpy(url.data() + prefix.size(), full_name.data(), full_name.size());
     size_t size = T::BinarySize();
-    absl::Span<char> memory = value_.Allocate(size, true);
+    absl::Span<char> memory;
+    if (url.data() != nullptr) {
+      memcpy(url.data(), prefix.data(), prefix.size());
+      memcpy(url.data() + prefix.size(), full_name.data(), full_name.size());
+      memory = value_.Allocate(size, true);
+    }
+    if (memory.data() == nullptr) {
+      T detached(InternalDefault{});
+      internal::BindToAllocationFailureSink(detached);
+      return detached;
+    }
     auto msg = T(runtime, runtime->ToOffset(memory.data()));
     msg.template InstallMetadata<T>();
     return msg;
@@ -339,9 +361,12 @@ class AnyMessage : public Message {
     return str;
   }
 
+  // With kTrustSerializedSize, 'size' must be at least SerializedSize().
   bool SerializeToArray(char* array, size_t size) const {
+    assert(!kTrustSerializedSize || size >= SerializedSize());
     ProtoBuffer buffer(array, size);
-    if (absl::Status status = Serialize(buffer); !status.ok()) {
+    if (absl::Status status = PhaserSerialize(ProtoMessageWriter(buffer));
+        !status.ok()) {
       return false;
     }
     return true;
@@ -356,6 +381,9 @@ class AnyMessage : public Message {
       return binary_size.status();
     }
     absl::Span<char> memory = value_.Allocate(*binary_size, true);
+    if (memory.data() == nullptr) {
+      return internal::AllocationFailedError();
+    }
     return PhaserBankAllocateAtOffset(type, runtime,
                                       runtime->ToOffset(memory.data()));
   }
@@ -370,6 +398,9 @@ class AnyMessage : public Message {
       return binary_size.status();
     }
     absl::Span<char> memory = value_.Allocate(*binary_size, true);
+    if (memory.data() == nullptr) {
+      return internal::AllocationFailedError();
+    }
     ProtoBuffer sub(wire);
     return PhaserBankDeserializeAtOffset(
         type, runtime, runtime->ToOffset(memory.data()), sub);
@@ -399,36 +430,36 @@ class AnyField : public IndirectMessageField<AnyMessage> {
 
   template <typename T>
   bool PackFrom(const T& msg) {
-    return msg_.PackFrom(msg);
+    return Handle().PackFrom(msg);
   }
 
   template <typename T>
   bool UnpackTo(T* msg) const {
-    return msg_.UnpackTo(msg);
+    return Handle().UnpackTo(msg);
   }
 
   bool ParseFromString(const std::string& str) {
-    return msg_.ParseFromString(str);
+    return Handle().ParseFromString(str);
   }
 
   bool SerializeToString(std::string* str) const {
-    return msg_.SerializeToString(str);
+    return Handle().SerializeToString(str);
   }
 
   template <typename T>
   bool Is() const {
-    return msg_.Is<T>();
+    return Handle().Is<T>();
   }
 
   template <typename T>
   void CloneFrom(const T& msg) {
-    msg_.CloneFrom(msg);
+    Handle().CloneFrom(msg);
   }
 
-  bool has_type_url() const { return msg_.has_type_url(); }
-  bool has_value() const { return msg_.has_value(); }
-  std::string_view type_url() const { return msg_.type_url(); }
-  std::string_view value() const { return msg_.value(); }
+  bool has_type_url() const { return Handle().has_type_url(); }
+  bool has_value() const { return Handle().has_value(); }
+  std::string_view type_url() const { return Handle().type_url(); }
+  std::string_view value() const { return Handle().value(); }
 };
 
 }  // namespace phaser

@@ -1,0 +1,1036 @@
+#pragma once
+
+// Phaser's own PayloadBuffer, forked from toolbelt::PayloadBuffer so that its
+// allocator and layout can change without affecting other toolbelt users.
+// Phaser buffers are not readable through toolbelt::PayloadBuffer.
+
+#include "absl/base/attributes.h"
+#include "absl/types/span.h"
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <new>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
+namespace phaser {
+
+// The magic is the bytes 0x00 'P' 'H' and a flags byte.  A non-empty protobuf
+// message cannot start with a zero byte, so the first byte tells a payload
+// buffer from protobuf.  The flags byte holds a set top bit, the format version
+// in bits 2-5, the allocation-failed flag in bit 6, the movable flag in bit 1
+// and the bitmap allocator flag in bit 0 (bits 25 and 24 of the magic).
+constexpr uint32_t kBufferFormatVersion = 1;
+constexpr uint32_t kFixedBufferMagic =
+    ((0x80 | (kBufferFormatVersion << 2)) << 24) | (uint32_t{'H'} << 16) |
+    (uint32_t{'P'} << 8);
+constexpr uint32_t kMovableBufferMagic = kFixedBufferMagic | (1u << 25);
+static_assert((kFixedBufferMagic & 0xff) == 0 && kBufferFormatVersion < 16);
+
+// Set for enabling bitmap allocator.
+constexpr uint32_t kBitMapFlag = 1u << 24;
+constexpr uint32_t kBitMapMask = ~kBitMapFlag;
+
+// Set when an allocation failed because a fixed size buffer was full.  The
+// buffer's contents up to that point are unchanged.  In-process reads ignore
+// this bit.  A receiver rejects the buffer, because the bit is not part of a
+// valid magic.
+constexpr uint32_t kAllocationFailedFlag = 1u << 30;
+constexpr uint32_t kMagicFlagsMask = kBitMapFlag | kAllocationFailedFlag;
+
+using BufferOffset = uint32_t;
+
+struct FreeBlockHeader {
+  uint32_t length;   // Length of the free block, including the header.
+  BufferOffset next; // Absolute offset into buffer for next free block.
+};
+
+// The 'data' member refers to a block of allocated memory in the
+// buffer.  Since it's been allocated using Allocate, the preceding
+// 8 bytes contains the length of the block in bytes (little endian).
+// To get the count of the number of elements in the allocated block
+// (the vector's capacity), divide this by sizeof(T) where T is the
+// type of the values stored in the vector.
+struct VectorHeader {
+  uint32_t num_elements; // Number of populated elements.
+  BufferOffset data;     // Absolute offset of vector data.
+};
+
+// The data of a vector of messages.  The elements are held inline in chunks
+// that never move, so a handle to an element stays valid as the vector grows.
+// This block is followed by the first chunk, of 'first_capacity' elements.
+// Chunk k after it holds first_capacity << (k - 1) elements, so each chunk
+// doubles the capacity, and is listed in the directory: a uint32_t count
+// followed by the offsets of the chunks.
+struct MessageVectorBlock {
+  uint32_t stride;         // Bytes per element, a multiple of 8.
+  uint32_t first_capacity; // Elements in the first chunk.
+  BufferOffset metadata;   // Metadata of the element type.
+  BufferOffset directory;  // The further chunks, or 0 if there are none.
+};
+
+struct PayloadBuffer;
+
+// A string is held in an allocated block as a 4 byte little endian
+// length field, followed immediately by the string data.  The block
+// length is aligned to a multiple of 4 bytes, so that can't be
+// used to hold the actual length of the string.
+// A StringHeader is the absolute offset into the buffer of the
+// length field of the string.
+using StringHeader = BufferOffset;
+
+// The resizer function is called when the buffer needs to be expanded.
+// Its responsibility is to:
+// 1. Allocate memory for the new buffer with the size given.
+// 2. Copy the current buffer contents to the new memory
+// 3. Set *buffer to the address of the new buffer.
+// 4. Freeing up the old buffer if necessary.
+//
+// It is not responsible for adding the new memory to the free list in
+// the buffer to make it available for allocation.  If the buffer
+// is allocated using malloc, the resize would be a simple call
+// to realloc.  However, care must be taken to preserve the
+// contents of the resizer function.
+using Resizer =
+    std::function<void(PayloadBuffer **, size_t old_size, size_t new_size)>;
+
+// Small block allocator.  In order to reduce fragmentation and speed up
+// allocation of small blocks, blocks of up to 128 bytes are rounded up to one
+// of a fixed number of size classes.  Each size class has a LIFO free list
+// (like the fastbins in common malloc implementations) whose head offset is
+// held in the PayloadBuffer header ('bitmaps', a name kept for layout
+// compatibility).  A free small block holds the offset of the next free block
+// of its class in its first 4 bytes.  When a class's free list is empty a
+// single block is carved from the main free list, so a freshly created buffer
+// is filled by what is effectively bump allocation and no space is reserved
+// for blocks that are never used.  Freed small blocks stay in their class and
+// are not coalesced back into the main free list.
+
+// Number of small block size classes.
+inline constexpr size_t kNumBitmapRuns = 4;
+
+// Block size for each small block class.
+inline constexpr int kBitmapRunSize1 = 16;
+inline constexpr int kBitmapRunSize2 = 32;
+inline constexpr int kBitmapRunSize3 = 64;
+inline constexpr int kBitmapRunSize4 = 128;
+
+// The 8 bytes preceding an allocated block hold its size.  To distinguish a
+// small block from a regular block allocated from the free list, a small
+// block's size word has the top bit set with the requested size (at most 128)
+// in bits 7-0.  The requested size always maps back to the block's size class
+// because a block is always taken from the smallest class that fits.
+inline constexpr uint32_t kSmallBlockFlag = 1U << 31;
+inline constexpr uint32_t kBitmapRunSizeMask = 0xff;
+
+// This is a buffer that holds the contents of a message.
+// It is located at the first address of the actual buffer with the
+// reset of the buffer memory following it.
+//
+struct PayloadBuffer {
+  uint32_t magic;         // Magic to identify wireformat.
+  BufferOffset message;   // Offset for the message.
+  uint32_t hwm;           // Offset one beyond the highest used.
+  uint32_t full_size;     // Full size of buffer.
+  BufferOffset free_list; // Heap free list.
+  BufferOffset metadata;  // Offset to message metadata.
+  BufferOffset
+      bitmaps[kNumBitmapRuns]; // Free list head for each small block class.
+
+  // Initialize a new PayloadBuffer at this with a message of the
+  // given size.  This is a fixed size buffer.
+  PayloadBuffer(uint32_t size, bool bitmap_allocator = true)
+      : magic(kFixedBufferMagic | (bitmap_allocator ? kBitMapFlag : 0)),
+        message(0), hwm(0), full_size(size), metadata(0) {
+    for (size_t i = 0; i < kNumBitmapRuns; i++) {
+      bitmaps[i] = 0;
+    }
+    InitFreeList();
+  }
+
+  // This is a variable sized buffer with the resizer being a function to
+  // allocate new memory.  A pointer to the resizer function is stored in the
+  // memory immediately above the header.  We can't store the actual
+  // std::function in the memory because the memory will be deleted during the
+  // call to the std::function which invalidates its this pointer.  Instead we
+  // copy the std::function to the heap and store a raw pointer to it.  The heap
+  // copy will be destructed when the payload buffer is destructed.
+  // This implies that you need to destruct the payload buffer to avoid
+  // a memory leak.  This is only necessary for resizable buffers.  Fixed
+  // size buffers don't need to be destructed.
+  PayloadBuffer(uint32_t initial_size, Resizer r, bool bitmap_allocator = true)
+      : magic(kMovableBufferMagic | (bitmap_allocator ? kBitMapFlag : 0)),
+        message(0), hwm(0), full_size(initial_size), metadata(0) {
+    for (size_t i = 0; i < kNumBitmapRuns; i++) {
+      bitmaps[i] = 0;
+    }
+    InitFreeList();
+    SetResizer(std::move(r));
+  }
+
+  ~PayloadBuffer() {
+    if (IsMoveable()) {
+      // Destruct the resizer.
+      Resizer **addr = reinterpret_cast<Resizer **>(this + 1);
+      delete *addr;
+    }
+  }
+
+  bool BitmapsEnabled() const { return (magic & kBitMapFlag) != 0; }
+
+  void SetResizer(Resizer r) {
+    // Place a pointer to the resizer function in the buffer just after the
+    // header.
+    Resizer **addr = reinterpret_cast<Resizer **>(this + 1);
+    Resizer *on_heap = new Resizer(std::move(r)); // Moved to heap memory.
+    *addr = on_heap;                              // Place address in memory.
+  }
+
+  Resizer *GetResizer() {
+    if (!IsMoveable()) {
+      return nullptr;
+    }
+    return *reinterpret_cast<Resizer **>(this + 1);
+  }
+
+  size_t Size() const { return size_t(hwm); }
+
+  // Allocate space for the main message in the buffer and set the
+  // 'message' field to its offset.
+  static void *AllocateMainMessage(PayloadBuffer **self, size_t size);
+
+  // Allocate space for the message metadata and copy it in.
+  static void AllocateMetadata(PayloadBuffer **self, void *md, size_t size);
+  // The small block allocator has no per-class setup cost so there is nothing
+  // to prime.  Always returns true.
+  static bool PrimeBitmapAllocator(PayloadBuffer **self, size_t size);
+
+  // Address and offset conversions without validation, for a buffer this
+  // process built and is mutating, whose offsets all came from the buffer.
+  template <typename T = void> T *UncheckedAddress(BufferOffset offset) {
+    return offset == 0 ? nullptr
+                       : reinterpret_cast<T *>(reinterpret_cast<char *>(this) +
+                                               offset);
+  }
+  template <typename T = void>
+  BufferOffset UncheckedOffset(const T *addr) const {
+    return addr == nullptr
+               ? 0
+               : BufferOffset(reinterpret_cast<const char *>(addr) -
+                              reinterpret_cast<const char *>(this));
+  }
+
+  // The offset of 'p' if it points into this buffer, otherwise 0.
+  BufferOffset ContainedOffset(const void *p) const {
+    const uintptr_t at = reinterpret_cast<uintptr_t>(p);
+    const uintptr_t start = reinterpret_cast<uintptr_t>(this);
+    return at > start && at - start < full_size ? BufferOffset(at - start) : 0;
+  }
+
+  // The address of 'offset' in a buffer this process built, for an offset
+  // that cannot be 0, such as one inside a message.
+  template <typename T = void> T *AddressOf(BufferOffset offset) {
+    return reinterpret_cast<T *>(reinterpret_cast<char *>(this) + offset);
+  }
+
+  // Presence bits are packed 32 to a little-endian word, so bit 'bit' is bit
+  // bit % 8 of byte bit / 8.  The accessors for one field use that byte
+  // alone, which measured faster than updating the word when setting fields
+  // one after another.
+
+  // The writers below are only used on mutable buffers.
+  void SetPresenceBit(uint32_t bit, uint32_t offset) {
+    AddressOf<uint8_t>(offset)[bit / 8] |= uint8_t(1U << (bit % 8));
+  }
+
+  void ClearPresenceBit(uint32_t bit, uint32_t offset) {
+    AddressOf<uint8_t>(offset)[bit / 8] &= uint8_t(~(1U << (bit % 8)));
+  }
+
+  bool IsPresent(uint32_t bit, uint32_t offset) const {
+    // Validate the byte read so a hostile field id cannot walk off the end of
+    // the buffer.
+    const uint8_t *p = ToAddress<const uint8_t>(offset + bit / 8);
+    if (p == nullptr) {
+      return false;
+    }
+    return (*p & (1U << (bit % 8))) != 0;
+  }
+
+  static uint32_t DecodeSize(const BufferOffset *addr) {
+    // Length is 64 bits long but we only need the bottom 32 bits of it.
+    const uint32_t *p = reinterpret_cast<const uint32_t *>(addr) - 2;
+    if ((*p & kSmallBlockFlag) == 0) {
+      return *p;
+    }
+    return *p & kBitmapRunSizeMask;
+  }
+
+  template <typename MessageType>
+  static MessageType *NewMessage(PayloadBuffer **self, uint32_t size,
+                                 BufferOffset offset);
+
+  // Allocate space for the string.
+  // 'header_offset' is the offset into the buffer of the StringHeader.
+  // The string is copied in.  Returns null, leaving any old string, if the
+  // string does not fit.  A fixed buffer then records that allocation failed.
+
+  // C-string style (allows for no allocation of std::string).
+  static char *SetString(PayloadBuffer **self, const char *s, size_t len,
+                         BufferOffset header_offset);
+
+  template <typename Str>
+  static char *SetString(PayloadBuffer **self, Str s,
+                         BufferOffset header_offset) {
+    return SetString(self, s.data(), s.size(), header_offset);
+  }
+
+  // SetString() for a StringHeader that holds no string yet.  Returns null if
+  // the string does not fit.  Always inlined, so only for
+  // the few callers that are worth the code.
+  ABSL_ATTRIBUTE_ALWAYS_INLINE static char *
+  NewString(PayloadBuffer **self, const char *s, size_t len,
+            BufferOffset header_offset);
+  // NewString() of a string longer than internal::kMaxShortString.
+  static char *NewLongString(PayloadBuffer **self, const char *s, size_t len,
+                             BufferOffset header_offset);
+  // NewString() where the string may not fit without moving the buffer.
+  static char *NewStringSlow(PayloadBuffer **self, const char *s, size_t len,
+                             BufferOffset header_offset);
+
+  static void ClearString(PayloadBuffer **self, BufferOffset header_offset) {
+    PayloadBuffer *pb = *self;
+    BufferOffset *hdr = pb->ToAddress<BufferOffset>(header_offset);
+    if (hdr != nullptr && *hdr != 0) {
+      pb->FreeAt(*hdr);
+      *hdr = 0;
+    }
+  }
+  // ClearString() in a buffer this process built, whose offsets need no
+  // checking.
+  static void ClearBuiltString(PayloadBuffer **self,
+                               BufferOffset header_offset);
+
+  // Frees the block this buffer allocated at 'offset'.  An offset outside
+  // the buffer is ignored.
+  void FreeAt(BufferOffset offset) {
+    if (offset >= uint32_t(sizeof(uint64_t)) &&
+        offset <= full_size - uint32_t(sizeof(BufferOffset))) {
+      Free(reinterpret_cast<char *>(this) + offset);
+    }
+  }
+
+  static absl::Span<char> AllocateString(PayloadBuffer **self, size_t len,
+                                         BufferOffset header_offset,
+                                         bool clear = false);
+
+  bool IsNull(BufferOffset offset) {
+    BufferOffset *p = ToAddress<BufferOffset>(offset);
+    return *p == 0;
+  }
+
+  // Only for a mutable buffer.
+  template <typename T> void Set(BufferOffset offset, T v);
+  template <typename T> T &Get(BufferOffset offset);
+
+  // False, leaving the vector unchanged, if the buffer has no space.
+  template <typename T>
+  static bool VectorPush(PayloadBuffer **self, VectorHeader *hdr, T v,
+                         bool enable_small_block = true);
+  // VectorPush when the vector's block has no room for another element.
+  template <typename T>
+  static bool VectorPushSlow(PayloadBuffer **self, VectorHeader *hdr, T v,
+                             bool enable_small_block);
+
+  template <typename T>
+  static bool VectorReserve(PayloadBuffer **self, VectorHeader *hdr, size_t n,
+                            bool enable_small_block = true);
+
+  template <typename T>
+  static bool VectorResize(PayloadBuffer **self, VectorHeader *hdr, size_t n);
+
+  template <typename T>
+  static void VectorClear(PayloadBuffer **self, VectorHeader *hdr);
+
+  // 'header_offset' is the offset into the buffer StringHeader.
+  std::string GetString(BufferOffset header_offset) const {
+    return GetString(ToAddress<const BufferOffset>(header_offset));
+  }
+  std::string_view GetStringView(BufferOffset header_offset) const {
+    return GetStringView(ToAddress<const BufferOffset>(header_offset));
+  }
+  size_t StringSize(BufferOffset header_offset) const {
+    return StringSize(ToAddress<const BufferOffset>(header_offset));
+  }
+
+  const char *StringData(BufferOffset header_offset) const {
+    return StringData(ToAddress<const BufferOffset>(header_offset));
+  }
+
+  std::string GetString(const StringHeader *addr) const;
+  std::string_view GetStringView(const StringHeader *addr) const;
+  size_t StringSize(const StringHeader *addr) const;
+  const char *StringData(const StringHeader *addr) const;
+
+  // Size-aware string readers.  'buffer_size' is the number of bytes actually
+  // known to be available at 'this'.  A value of 0 means "trust full_size" and
+  // must only be used for buffers we own and built ourselves.  When reading
+  // data received from an untrusted source, pass the real received size so the
+  // stored string length cannot be used to read out of bounds: both the
+  // location of the length word and the returned length are validated against
+  // 'buffer_size'.
+  std::string GetString(BufferOffset header_offset, size_t buffer_size) const;
+  std::string_view GetStringView(BufferOffset header_offset,
+                                 size_t buffer_size) const;
+  size_t StringSize(BufferOffset header_offset, size_t buffer_size) const;
+  const char *StringData(BufferOffset header_offset, size_t buffer_size) const;
+
+  template <typename T>
+  T VectorGet(const VectorHeader *hdr, size_t index) const;
+
+  void Dump(std::ostream &os);
+  void DumpFreeList(std::ostream &os);
+  void CheckFreeList();
+
+  void InitFreeList();
+  FreeBlockHeader *FreeList() { return ToAddress<FreeBlockHeader>(free_list); }
+
+  // Allocate some memory in the buffer.  The buffer might move.  The common
+  // cases (reusing a free small block, or carving from the start of the first
+  // free block) are handled inline; everything else goes to AllocateSlow.
+  // Not inlined into its callers, which would grow them all for little.
+  ABSL_ATTRIBUTE_NOINLINE static void *Allocate(PayloadBuffer **buffer,
+                                                uint32_t n, bool clear = true,
+                                                bool enable_small_block = true);
+  // Allocate(), always inlined, for the few callers that are worth the code.
+  ABSL_ATTRIBUTE_ALWAYS_INLINE static void *
+  AllocateInline(PayloadBuffer **buffer, uint32_t n, bool clear,
+                 bool enable_small_block = true);
+  // The inline cases of Allocate(), which never move the buffer, or nullptr
+  // where it would need AllocateSlow().
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void *
+  TryAllocateInPlace(uint32_t n, bool clear, bool enable_small_block = true);
+  static void *AllocateSlow(PayloadBuffer **buffer, uint32_t n, bool clear,
+                            bool enable_small_block);
+  void Free(void *p);
+  void FreeSlow(void *p);
+
+  // Index of the small block class for an allocation of 'n' bytes, or -1 if
+  // it is too big for a small block.
+  static int SmallBlockIndex(uint32_t n) {
+    return n <= uint32_t(kBitmapRunSize1)   ? 0
+           : n <= uint32_t(kBitmapRunSize2) ? 1
+           : n <= uint32_t(kBitmapRunSize3) ? 2
+           : n <= uint32_t(kBitmapRunSize4) ? 3
+                                             : -1;
+  }
+  static uint32_t SmallBlockSize(int index) { return 16U << index; }
+  static void *Realloc(PayloadBuffer **buffer, void *p, uint32_t n,
+                       bool clear = true, bool enable_small_block = true);
+  static void *AllocateSmallBlock(PayloadBuffer **pb, uint32_t size, int index,
+                                  bool clear = true);
+  static void FreeSmallBlock(PayloadBuffer *pb, void *p, int index);
+
+  // Allocate 'n' items of size 'size' in the buffer.  The buffer might move.
+  // Each allocation is capable of being freed
+  // individually. The addresses of the allocated items are returned in a
+  // vector.
+  static std::vector<void *> AllocateMany(PayloadBuffer **buffer, uint32_t size,
+                                          uint32_t n, bool clear = true);
+
+  bool IsValidMagic() const {
+    uint32_t m = magic & ~kMagicFlagsMask;
+    return m == kFixedBufferMagic || m == kMovableBufferMagic;
+  }
+  bool IsMoveable() const {
+    return (magic & ~kMagicFlagsMask) == kMovableBufferMagic;
+  }
+
+  // True if an allocation has failed because the buffer was full.
+  bool AllocationFailed() const {
+    return (magic & kAllocationFailedFlag) != 0;
+  }
+  // Also empties the free lists, so that later allocations fail without
+  // testing the flag.  Free() keeps them empty.
+  void MarkAllocationFailed() {
+    magic |= kAllocationFailedFlag;
+    free_list = 0;
+    for (BufferOffset &head : bitmaps) {
+      head = 0;
+    }
+  }
+  // For a buffer whose free lists have been remade.
+  void ClearAllocationFailed() { magic &= ~kAllocationFailedFlag; }
+
+  // Returns true if [addr, addr + nbytes) lies entirely within the first
+  // 'size' bytes of this buffer (or full_size when size == 0).
+  bool IsValidAddress(const void *addr, size_t size,
+                      size_t nbytes = 1) const {
+    if (nbytes == 0) {
+      return false;
+    }
+    if (size == 0) {
+      size = full_size;
+    }
+    const char *base = reinterpret_cast<const char *>(this);
+    const char *a = reinterpret_cast<const char *>(addr);
+    if (a < base) {
+      return false;
+    }
+    // Compute the offset without forming an out-of-range end pointer (which
+    // would be undefined behavior for a hostile 'size').
+    const size_t off = static_cast<size_t>(a - base);
+    if (off >= size) {
+      return false;
+    }
+    // Require the full object (nbytes) to fit; start-only checks let a
+    // uint32_t length word at size-1 through and then heap-overflow on read.
+    return nbytes <= size - off;
+  }
+
+  // Given the address of a block, return the size of the block.  This is
+  // in the previous 8 bytes but might be encoded if the block is a small
+  // block.
+  static uint32_t DecodedSize(BufferOffset *addr) {
+    BufferOffset *p = addr - 2;
+    if (*p & kSmallBlockFlag) {
+      return *p & kBitmapRunSizeMask;
+    }
+    return *p;
+  }
+
+  template <typename T = void>
+  T *ToAddress(BufferOffset offset, size_t size = 0) {
+    if (offset == 0) {
+      return nullptr;
+    }
+    if (!IsValidMagic()) {
+      return nullptr;
+    }
+    // void* probes a single byte; typed pointers must fit sizeof(T).
+    // Use conditional_t so sizeof(void) is never evaluated.
+    constexpr size_t kN =
+        sizeof(typename std::conditional<std::is_void<T>::value, char, T>::type);
+    char *addr = reinterpret_cast<char *>(this) + offset;
+    if (!IsValidAddress(addr, size, kN)) {
+      return nullptr;
+    }
+
+    return reinterpret_cast<T *>(addr);
+  }
+
+  template <typename T = void> BufferOffset ToOffset(T *addr, size_t size = 0) {
+    if (addr == reinterpret_cast<T *>(this) || addr == nullptr) {
+      return 0;
+    }
+    if (!IsValidMagic()) {
+      return 0;
+    }
+    constexpr size_t kN =
+        sizeof(typename std::conditional<std::is_void<T>::value, char, T>::type);
+    if (!IsValidAddress(addr, size, kN)) {
+      return 0;
+    }
+    return reinterpret_cast<const char *>(addr) -
+           reinterpret_cast<const char *>(this);
+  }
+
+  template <typename T = void>
+  const T *ToAddress(BufferOffset offset, size_t size = 0) const {
+    if (offset == 0) {
+      return nullptr;
+    }
+    if (!IsValidMagic()) {
+      return nullptr;
+    }
+    constexpr size_t kN =
+        sizeof(typename std::conditional<std::is_void<T>::value, char, T>::type);
+    const char *addr = reinterpret_cast<const char *>(this) + offset;
+    if (!IsValidAddress(addr, size, kN)) {
+      return nullptr;
+    }
+
+    return reinterpret_cast<const T *>(addr);
+  }
+
+  template <typename T = void>
+  BufferOffset ToOffset(const T *addr, size_t size = 0) const {
+    if (addr == reinterpret_cast<const T *>(this) || addr == nullptr) {
+      return 0;
+    }
+    if (!IsValidMagic()) {
+      return 0;
+    }
+    constexpr size_t kN =
+        sizeof(typename std::conditional<std::is_void<T>::value, char, T>::type);
+    if (!IsValidAddress(addr, size, kN)) {
+      return 0;
+    }
+    return reinterpret_cast<const char *>(addr) -
+           reinterpret_cast<const char *>(this);
+  }
+
+  void InsertNewFreeBlockAtEnd(FreeBlockHeader *free_block,
+                               FreeBlockHeader *prev, uint32_t length);
+
+  void MergeWithAboveIfPossible(FreeBlockHeader *alloc_block,
+                                FreeBlockHeader *alloc_header,
+                                FreeBlockHeader *free_block,
+                                BufferOffset *next_ptr, size_t alloc_length);
+
+  void ShrinkBlock(FreeBlockHeader *alloc_block, uint32_t orig_length,
+                   uint32_t new_length, uint64_t *len_ptr);
+
+  uint64_t *MergeWithFreeBlockBelow(void *alloc_block, FreeBlockHeader *prev,
+                                    FreeBlockHeader *free_block,
+                                    uint32_t new_length, uint32_t orig_length,
+                                    bool clear);
+
+  void ExpandIntoFreeBlockAbove(FreeBlockHeader *free_block,
+                                uint32_t new_length, uint32_t len_diff,
+                                uint32_t free_remaining, uint64_t *len_ptr,
+                                BufferOffset *next_ptr, bool clear);
+  uint32_t TakeStartOfFreeBlock(FreeBlockHeader *block, uint32_t num_bytes,
+                                uint32_t full_length, FreeBlockHeader *prev);
+
+  void UpdateHWM(void *p) { UpdateHWM(ToOffset(p)); }
+
+  void UpdateHWM(BufferOffset off) {
+    if (off > hwm) {
+      hwm = off;
+    }
+  }
+};
+
+// A string to be copied into a buffer.  It can be in that buffer, which
+// allocating can move, so it is found again there by its offset.
+class StringSource {
+ public:
+  StringSource(const PayloadBuffer *pb, std::string_view s)
+      : data_(s.data()), size_(s.size()), offset_(pb->ContainedOffset(data_)) {}
+
+  std::string_view In(const PayloadBuffer *pb) const {
+    return std::string_view(
+        offset_ == 0 ? data_ : reinterpret_cast<const char *>(pb) + offset_,
+        size_);
+  }
+
+ private:
+  const char *data_;
+  size_t size_;
+  BufferOffset offset_;
+};
+
+namespace internal {
+// The longest string CopyString() copies without a call.
+inline constexpr size_t kMaxShortString = 32;
+
+// memcpy without a call for the short strings most messages hold.  'dst' and
+// 'src' must not overlap.
+inline void CopyString(char *dst, const char *src, size_t n) {
+  if (n <= 16) {
+    if (n >= 8) {
+      uint64_t first, last;
+      memcpy(&first, src, sizeof(first));
+      memcpy(&last, src + n - sizeof(last), sizeof(last));
+      memcpy(dst, &first, sizeof(first));
+      memcpy(dst + n - sizeof(last), &last, sizeof(last));
+    } else if (n >= 4) {
+      uint32_t first, last;
+      memcpy(&first, src, sizeof(first));
+      memcpy(&last, src + n - sizeof(last), sizeof(last));
+      memcpy(dst, &first, sizeof(first));
+      memcpy(dst + n - sizeof(last), &last, sizeof(last));
+    } else if (n > 0) {
+      dst[0] = src[0];
+      dst[n / 2] = src[n / 2];
+      dst[n - 1] = src[n - 1];
+    }
+    return;
+  }
+  if (n <= 32) {
+    uint64_t a, b, c, d;
+    memcpy(&a, src, sizeof(a));
+    memcpy(&b, src + 8, sizeof(b));
+    memcpy(&c, src + n - 16, sizeof(c));
+    memcpy(&d, src + n - 8, sizeof(d));
+    memcpy(dst, &a, sizeof(a));
+    memcpy(dst + 8, &b, sizeof(b));
+    memcpy(dst + n - 16, &c, sizeof(c));
+    memcpy(dst + n - 8, &d, sizeof(d));
+    return;
+  }
+  memcpy(dst, src, n);
+}
+} // namespace internal
+
+inline char *PayloadBuffer::NewString(PayloadBuffer **self, const char *s,
+                                      size_t len, BufferOffset header_offset) {
+  // Longer strings are copied with a call, which would make every string
+  // save registers.
+  if (len > internal::kMaxShortString) {
+    return NewLongString(self, s, len, header_offset);
+  }
+  PayloadBuffer *pb = *self;
+  const uint32_t length = uint32_t(len);
+  // The buffer does not move, so 's' stays valid even if it is in it.
+  char *block = static_cast<char *>(
+      pb->TryAllocateInPlace(length + uint32_t(sizeof(uint32_t)), false));
+  if (ABSL_PREDICT_FALSE(block == nullptr)) {
+    return NewStringSlow(self, s, len, header_offset);
+  }
+  memcpy(block, &length, sizeof(length));
+  internal::CopyString(block + sizeof(length), s, length);
+  pb->Set<BufferOffset>(header_offset, pb->UncheckedOffset(block));
+  return block;
+}
+
+template <>
+inline char *PayloadBuffer::SetString(PayloadBuffer **self, const char *s,
+                                      BufferOffset header_offset) {
+  return SetString(self, s, strlen(s), header_offset);
+}
+
+inline void *PayloadBuffer::Allocate(PayloadBuffer **buffer, uint32_t n,
+                                     bool clear, bool enable_small_block) {
+  return AllocateInline(buffer, n, clear, enable_small_block);
+}
+
+inline void *PayloadBuffer::AllocateInline(PayloadBuffer **buffer, uint32_t n,
+                                           bool clear,
+                                           bool enable_small_block) {
+  void *addr = (*buffer)->TryAllocateInPlace(n, clear, enable_small_block);
+  if (ABSL_PREDICT_TRUE(addr != nullptr)) {
+    return addr;
+  }
+  return AllocateSlow(buffer, n, clear, enable_small_block);
+}
+
+inline void *PayloadBuffer::TryAllocateInPlace(uint32_t n, bool clear,
+                                               bool enable_small_block) {
+  PayloadBuffer *pb = this;
+  // Once a fixed buffer has failed an allocation it is incomplete.  Later
+  // allocations, even ones that would fit in the leftover space, must fail so
+  // a caller cannot publish a field after the failure.  They do here because
+  // the failure emptied the free lists.
+  if (n == 0 || n > pb->full_size) {
+    return nullptr;
+  }
+  char *base = reinterpret_cast<char *>(pb);
+  uint64_t size_word;
+  uint32_t block_size;
+  int index = -1;
+  if (enable_small_block && pb->BitmapsEnabled() &&
+      (index = SmallBlockIndex(n)) >= 0) {
+    block_size = SmallBlockSize(index);
+    size_word = kSmallBlockFlag | n;
+    const BufferOffset head = pb->bitmaps[index];
+    if (head != 0) {
+      if (head > pb->full_size - block_size) {
+        return nullptr;
+      }
+      char *addr = base + head;
+      pb->bitmaps[index] = *reinterpret_cast<BufferOffset *>(addr);
+      *(reinterpret_cast<uint64_t *>(addr) - 1) = size_word;
+      if (clear) {
+        memset(addr, 0, block_size);
+      }
+      return addr;
+    }
+  } else {
+    block_size = (n + 7) & ~7U;
+    size_word = block_size;
+  }
+  // Carve from the start of the first free block, leaving room for the
+  // remainder's FreeBlockHeader.
+  const BufferOffset first = pb->free_list;
+  const uint32_t full_length = block_size + uint32_t(sizeof(uint64_t));
+  if (first == 0 ||
+      first > pb->full_size - uint32_t(sizeof(FreeBlockHeader))) {
+    return nullptr;
+  }
+  FreeBlockHeader *free_block = reinterpret_cast<FreeBlockHeader *>(base + first);
+  const uint32_t length = free_block->length;
+  if (length < full_length + uint32_t(sizeof(FreeBlockHeader))) {
+    return nullptr;
+  }
+  const BufferOffset rest_offset = first + full_length;
+  FreeBlockHeader *rest = reinterpret_cast<FreeBlockHeader *>(base + rest_offset);
+  rest->next = free_block->next;
+  rest->length = length - full_length;
+  pb->free_list = rest_offset;
+  pb->UpdateHWM(rest_offset + uint32_t(sizeof(FreeBlockHeader)));
+  uint64_t *header = reinterpret_cast<uint64_t *>(free_block);
+  *header = size_word;
+  void *addr = header + 1;
+  if (clear) {
+    memset(addr, 0, block_size);
+  }
+  return addr;
+}
+
+inline void PayloadBuffer::Free(void *p) {
+  // A failed buffer's free lists stay empty, so its blocks are dropped.
+  if (p == nullptr || AllocationFailed()) {
+    return;
+  }
+  const uint64_t size_word = *(reinterpret_cast<uint64_t *>(p) - 1);
+  if ((size_word & kSmallBlockFlag) != 0) {
+    const int index =
+        SmallBlockIndex(static_cast<uint32_t>(size_word & kBitmapRunSizeMask));
+    if (index >= 0) {
+      *reinterpret_cast<BufferOffset *>(p) = bitmaps[index];
+      bitmaps[index] = BufferOffset(reinterpret_cast<char *>(p) -
+                                    reinterpret_cast<char *>(this));
+      return;
+    }
+  }
+  FreeSlow(p);
+}
+
+template <typename T> inline void PayloadBuffer::Set(BufferOffset offset, T v) {
+  memcpy(AddressOf<T>(offset), &v, sizeof(T));
+}
+
+template <typename T> inline T &PayloadBuffer::Get(BufferOffset offset) {
+  T *addr = ToAddress<T>(offset);
+  return *addr;
+}
+
+template <typename T>
+inline bool PayloadBuffer::VectorPush(PayloadBuffer **self, VectorHeader *hdr,
+                                      T v, bool enable_small_block) {
+  if (hdr == nullptr) {
+    return false;
+  }
+  PayloadBuffer *pb = *self;
+  const uint32_t needed = (hdr->num_elements + 1) * uint32_t(sizeof(T));
+  if (hdr->data != 0 && needed <= pb->full_size &&
+      hdr->data <= pb->full_size - needed) {
+    char *block = reinterpret_cast<char *>(pb) + hdr->data;
+    uint64_t *size_ptr = reinterpret_cast<uint64_t *>(block) - 1;
+    const uint32_t size_word = static_cast<uint32_t>(*size_ptr);
+    uint32_t capacity = size_word;
+    if ((size_word & kSmallBlockFlag) != 0) {
+      // A small block can use the rest of its size class.  Its size word must
+      // still cover the elements, and stays in the same class because the
+      // block came from the smallest class that fit.
+      const int index = SmallBlockIndex(size_word & kBitmapRunSizeMask);
+      capacity = index >= 0 ? SmallBlockSize(index) : 0;
+      if (needed <= capacity && needed > (size_word & kBitmapRunSizeMask)) {
+        *size_ptr = kSmallBlockFlag | needed;
+      }
+    }
+    if (needed <= capacity) {
+      memcpy(block + needed - sizeof(T), &v, sizeof(T));
+      hdr->num_elements++;
+      return true;
+    }
+  }
+  return VectorPushSlow(self, hdr, v, enable_small_block);
+}
+
+template <typename T>
+inline bool PayloadBuffer::VectorPushSlow(PayloadBuffer **self,
+                                          VectorHeader *hdr, T v,
+                                          bool enable_small_block) {
+  // hdr points to a VectorHeader:
+  // uint32_t num_elements;     - number of elements in the vector
+  // BufferOffset data;         - BufferOffset to vector contents
+  // The vector contents is allocated in the buffer.  It is preceded
+  // by the block size (in bytes).
+  BufferOffset hdr_offset = (*self)->ToOffset(hdr);
+
+  if (hdr->data == 0) {
+    // The vector is empty, allocate it with a default size of 2.
+    void *vecp = Allocate(self, 2 * sizeof(T), true, enable_small_block);
+    if (vecp == nullptr) {
+      return false;
+    }
+    VectorHeader *new_hdr = (*self)->ToAddress<VectorHeader>(hdr_offset);
+    if (new_hdr == nullptr) {
+      return false;
+    }
+    new_hdr->data = (*self)->ToOffset(vecp);
+    hdr = new_hdr;
+  } else {
+    // Vector has some values in it.  Retrieve the total size from
+    // the allocated block header (before the start of the memory)
+    uint32_t *block = (*self)->ToAddress<uint32_t>(hdr->data);
+    if (block == nullptr) {
+      return false;
+    }
+    uint32_t current_size = DecodeSize(block);
+    const uint32_t needed = (hdr->num_elements + 1) * sizeof(T);
+    if (needed > current_size) {
+      // Grow to fit the next element; at least double prior capacity.
+      const uint32_t min_capacity =
+          2u * static_cast<uint32_t>(sizeof(T));
+      const uint32_t new_size = std::max<uint32_t>(
+          needed, std::max<uint32_t>(current_size * 2, min_capacity));
+      void *vecp = Realloc(self, block, new_size, true, enable_small_block);
+      if (vecp == nullptr) {
+        return false;
+      }
+      VectorHeader *new_hdr = (*self)->ToAddress<VectorHeader>(hdr_offset);
+      if (new_hdr == nullptr) {
+        return false;
+      }
+      new_hdr->data = (*self)->ToOffset(vecp);
+      hdr = new_hdr;
+    }
+  }
+  // Get address of next location in vector.
+  T *valuep = (*self)->ToAddress<T>(hdr->data);
+  if (valuep == nullptr) {
+    return false;
+  }
+  valuep += hdr->num_elements;
+  // Assign value.
+  *valuep = v;
+  // Increment the number of elements.
+  hdr->num_elements++;
+  return true;
+}
+
+template <typename T>
+inline bool PayloadBuffer::VectorReserve(PayloadBuffer **self,
+                                         VectorHeader *hdr, size_t n,
+                                         bool enable_small_block) {
+  if (hdr == nullptr) {
+    return false;
+  }
+  if (n == 0) {
+    return true;
+  }
+  BufferOffset hdr_offset = (*self)->ToOffset(hdr);
+  if (hdr->data == 0) {
+    if (n > UINT32_MAX / sizeof(T)) {
+      (*self)->MarkAllocationFailed();
+      return false;
+    }
+    void *vecp = Allocate(self, static_cast<uint32_t>(n * sizeof(T)), false,
+                          enable_small_block);
+    if (vecp == nullptr) {
+      return false;
+    }
+    VectorHeader* new_hdr = (*self)->ToAddress<VectorHeader>(hdr_offset);
+    if (new_hdr == nullptr) {
+      return false;
+    }
+    new_hdr->data = (*self)->ToOffset(vecp);
+  } else {
+    // Vector has some values in it.  Retrieve the total size from
+    // the allocated block header (before the start of the memory)
+    uint32_t *block = (*self)->ToAddress<uint32_t>(hdr->data);
+    if (block == nullptr) {
+      return false;
+    }
+    uint32_t current_size = DecodeSize(block);
+    if (current_size < n * sizeof(T)) {
+      if (n > UINT32_MAX / sizeof(T)) {
+        (*self)->MarkAllocationFailed();
+        return false;
+      }
+      // Need to expand the memory to the size given.
+      void *vecp = Realloc(self, block, static_cast<uint32_t>(n * sizeof(T)),
+                           false, enable_small_block);
+      if (vecp == nullptr) {
+        return false;
+      }
+      VectorHeader* new_hdr = (*self)->ToAddress<VectorHeader>(hdr_offset);
+      if (new_hdr == nullptr) {
+        return false;
+      }
+      new_hdr->data = (*self)->ToOffset(vecp);
+    }
+  }
+  return true;
+}
+
+template <typename T>
+inline bool PayloadBuffer::VectorResize(PayloadBuffer **self, VectorHeader *hdr,
+                                        size_t n) {
+  if (hdr == nullptr) {
+    return false;
+  }
+  if (n > UINT32_MAX / sizeof(T)) {
+    (*self)->MarkAllocationFailed();
+    return false;
+  }
+  BufferOffset hdr_offset = (*self)->ToOffset(hdr);
+  const uint32_t bytes = static_cast<uint32_t>(n * sizeof(T));
+  if (hdr->data == 0) {
+    if (n != 0) {
+      void *vecp = Allocate(self, bytes);
+      if (vecp == nullptr) {
+        return false;
+      }
+      VectorHeader* new_hdr = (*self)->ToAddress<VectorHeader>(hdr_offset);
+      if (new_hdr == nullptr) {
+        return false;
+      }
+      new_hdr->data = (*self)->ToOffset(vecp);
+      hdr = new_hdr;
+    }
+  } else {
+    uint32_t *block = (*self)->ToAddress<uint32_t>(hdr->data);
+    if (block == nullptr) {
+      return false;
+    }
+    uint32_t current_size = DecodeSize(block);
+    if (current_size < bytes) {
+      // clear=true, matching the previous resize which zeroed the new tail.
+      void *vecp = Realloc(self, block, bytes, true);
+      if (vecp == nullptr) {
+        return false;
+      }
+      VectorHeader* new_hdr = (*self)->ToAddress<VectorHeader>(hdr_offset);
+      if (new_hdr == nullptr) {
+        return false;
+      }
+      new_hdr->data = (*self)->ToOffset(vecp);
+      hdr = new_hdr;
+    }
+  }
+  hdr->num_elements = static_cast<uint32_t>(n);
+  return true;
+}
+
+template <typename T>
+inline void PayloadBuffer::VectorClear(PayloadBuffer **self,
+                                       VectorHeader *hdr) {
+  if (hdr->data != 0) {
+    (*self)->Free((*self)->ToAddress<void>(hdr->data));
+  }
+  hdr->data = 0;
+  hdr->num_elements = 0;
+}
+
+template <typename T>
+inline T PayloadBuffer::VectorGet(const VectorHeader *hdr, size_t index) const {
+  if (index >= hdr->num_elements) {
+    return static_cast<T>(0);
+  }
+  const T *addr = ToAddress<const T>(hdr->data);
+  if (addr == nullptr) {
+    return static_cast<T>(0);
+  }
+  return addr[index];
+}
+
+template <typename MessageType>
+inline MessageType *PayloadBuffer::NewMessage(PayloadBuffer **self,
+                                              uint32_t size,
+                                              BufferOffset offset) {
+  void *msg = Allocate(self, size);
+  BufferOffset *p = (*self)->ToAddress<BufferOffset>(offset);
+  *p = (*self)->ToOffset(msg);
+  return reinterpret_cast<MessageType *>(msg);
+}
+} // namespace phaser

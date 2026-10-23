@@ -95,4 +95,37 @@ TEST(RosNativeFrontendCompatibilityTest,
   EXPECT_EQ(protobuf_view.choice_child().label(), "selected");
 }
 
+// The ROS frontend stores nested messages inline and the protobuf frontend
+// through offsets, so each must read the other's layout from its metadata.
+TEST(RosNativeFrontendCompatibilityTest,
+     RosFrontendReadsProtobufFrontendNativePayload) {
+  ProtobufMessage protobuf_message;
+  protobuf_message.mutable_stamp()->set_seconds(12);
+  protobuf_message.mutable_stamp()->set_nanos(345);
+  protobuf_message.mutable_timeout()->set_seconds(-4);
+  protobuf_message.mutable_timeout()->set_nanos(-500);
+  auto* header = protobuf_message.mutable_header();
+  header->set_seq(9);
+  header->mutable_stamp()->set_seconds(21);
+  header->mutable_stamp()->set_nanos(654);
+  header->set_frame_id("map");
+  protobuf_message.set_count(42);
+
+  const size_t native_size = protobuf_message.ByteSizeLong();
+  std::vector<char> native_payload(native_size);
+  std::memcpy(native_payload.data(), protobuf_message.Data(), native_size);
+
+  const RosMessage ros_view =
+      RosMessage::CreateReadonly(native_payload.data(), native_payload.size());
+  EXPECT_EQ(ros_view.stamp->sec, 12u);
+  EXPECT_EQ(ros_view.stamp->nsec, 345u);
+  EXPECT_EQ(ros_view.timeout->sec, -4);
+  EXPECT_EQ(ros_view.timeout->nsec, -500);
+  EXPECT_EQ(ros_view.header->seq, 9u);
+  EXPECT_EQ(ros_view.header->stamp.sec, 21u);
+  EXPECT_EQ(ros_view.header->stamp.nsec, 654u);
+  EXPECT_EQ(ros_view.header.Get().frame_id, "map");
+  EXPECT_EQ(ros_view.count.Get(), 42);
+}
+
 }  // namespace

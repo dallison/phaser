@@ -32,9 +32,10 @@ class CodeGenerator : public google::protobuf::compiler::CodeGenerator {
   mutable std::string added_namespace_;
   mutable std::string package_name_;
   mutable std::string target_name_;
-  // When true, generated message types get a public `std::any active_message`
-  // field. Enabled via the `active_message=true` plugin command-line option
-  // (set by phaser_library(enable_active_message = True)).
+  // When true, generated message types get a public
+  // `phaser::ActiveMessage active_message` field. Enabled via the
+  // `active_message=true` plugin command-line option (set by
+  // phaser_library(enable_active_message = True)).
   mutable bool generate_active_message_ = false;
   mutable bool generate_ros_metadata_ = false;
   mutable FrontendStyle frontend_style_ = FrontendStyle::kProtobuf;

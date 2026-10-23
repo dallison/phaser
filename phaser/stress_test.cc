@@ -67,7 +67,7 @@ TEST(StressTest, FinalizeSetsPayloadSize) {
   TestMessage msg(512);
   msg.set_x(42);
   msg.set_s("finalize-me");
-  auto* payload = reinterpret_cast<::toolbelt::PayloadBuffer*>(msg.Data());
+  auto* payload = reinterpret_cast<::phaser::PayloadBuffer*>(msg.Data());
 
   msg.Finalize();
 

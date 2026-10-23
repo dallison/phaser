@@ -251,7 +251,7 @@ phaser_library(
 When invoking the plugin directly, pass `frontend=ros` in `--phaser_out`.
 Unknown frontend values are rejected.
 
-The frontend controls source-level syntax, not storage or wire compatibility:
+The frontend controls source-level syntax, not wire compatibility:
 
 ```c++
 // frontend = "protobuf"
@@ -267,8 +267,9 @@ ros_message.name = "camera";
 ros_message.values.push_back(1.5);
 ```
 
-Both types use the same native Phaser payload layout. A receiver can attach the
-other frontend to the same bytes without conversion:
+Both types use the same native Phaser payload format, though the ROS frontend
+stores nested messages inline (see [Message fields](#message-fields)). A receiver
+can attach the other frontend to the same bytes without conversion:
 
 ```c++
 foo::bar::protobuf_api::Foo source;
@@ -284,9 +285,24 @@ wire-to-wire conversion APIs. You do not need the ROS frontend to produce or
 consume ROS1 wire bytes.
 
 Set `enable_active_message = True` on `phaser_library`, or pass
-`active_message=true` to the plugin, to add a public `std::any active_message`
-member to every generated message. This is application-side transient state;
-it is not stored in the native payload or serialized to protobuf or ROS.
+`active_message=true` to the plugin, to add a public `active_message` member to
+every generated message. This is application-side transient state; it is not
+stored in the native payload or serialized to protobuf or ROS.
+
+The member is a `phaser::ActiveMessage`, which holds a `std::any` on the heap
+so that an empty one costs a pointer. It is assigned, tested, and reset like a
+`std::any`, and converts to `std::any&` for `std::any_cast`:
+
+```c++
+msg.active_message = std::make_shared<Buffer>(bytes);
+if (msg.active_message.has_value()) {
+  auto& buffer = std::any_cast<std::shared_ptr<Buffer>&>(msg.active_message);
+}
+msg.active_message.reset();
+```
+
+Initializing a `std::any` from it stores the `ActiveMessage` itself; to copy
+the value, write `std::any(static_cast<const std::any&>(msg.active_message))`.
 
 ### ROS field syntax
 Scalar, enum, string, message, and repeated fields provide value-like syntax,
@@ -313,13 +329,32 @@ a borrowed view of the caller-owned receive buffer. Iterators and string views
 into a dynamic message can be invalidated by an operation that grows or compacts
 its payload buffer, so reacquire them after mutation.
 
+A string view into a message can still be passed to a string setter, `push_back`
+or `insert` of the same message, which finds the string again if the buffer
+moves. The exception is assigning it with `=` to a repeated string element
+that has never held a string, or to an element of a fixed string array that
+has not been changed yet: making the element can move the buffer before the
+assignment, so use `Set(index, view)` there instead.
+
 `CreateReadonly` messages support const field access and serialization. A
 non-const proxy operation requires a mutable message.
 
 Repeated strings index and iterate as `std::string_view`. Repeated and
 fixed-array messages index and iterate as generated message handles returned by
 value; `add_*` and `mutable_*` message accessors also return handles by value.
-The collection `Get()` helpers materialize owning vectors and may allocate.
+A handle to an element or a nested message borrows the message it came from:
+it stays valid when that message's payload buffer grows, but not after the
+message is destroyed. The collection `Get()` helpers materialize owning vectors and may allocate.
+
+A repeated message whose fields are all singular scalars also has the bulk
+`Add(n, f)` described under [Repeated fields](#repeated-fields):
+
+```c++
+msg.points.Add(count, [&](auto point, size_t i) {
+  point.set_x(xs[i]);
+  point.set_y(ys[i]);
+});
+```
 
 ### ROS1 intrinsic types
 The ROS frontend recognizes three singular protobuf message declarations and
@@ -477,11 +512,12 @@ recursively by those public wrappers; most callers should use
 `ProtobufToROS` and `ROSToProtobuf`.
 `PhaserToROS` attaches a read-only message to a valid native Phaser payload for
 the duration of the conversion. `ConvertToROS` calls
-`InferMessageWireFormat` and selects either input path. Inference validates the
-complete generic protobuf field structure and the Phaser payload header rather
-than checking only the four-byte magic: those magic bytes can also begin a
-valid protobuf tag. The result enum can report `kProtobuf`, `kPhaser`,
-`kUnknown`, or `kAmbiguous`; automatic conversion rejects the latter two.
+`InferMessageWireFormat` and selects either input path. Inference reads only
+the first byte and, for a Phaser payload, its header. A Phaser payload starts
+with a zero byte, which a non-empty protobuf message cannot. Any other input,
+including empty input, is reported as `kProtobuf` and is validated when it is
+parsed. Input that starts with a zero byte is `kPhaser` if its header is valid
+and `kUnknown` otherwise; automatic conversion rejects `kUnknown`.
 
 #### Direct protobuf wire to ROS1
 
@@ -619,9 +655,9 @@ This base class contains the following:
 ```c++
 struct Message {
   Message() = default;
-  Message(std::shared_ptr<MessageRuntime> rt, ::toolbelt::BufferOffset start)
+  Message(MessageRuntime *rt, ::phaser::BufferOffset start)
       : runtime(rt), absolute_binary_offset(start) {}
-  virtual ~Message() = default;
+  virtual ~Message();
 
   virtual const MessageInfo *GetMessageInfo() const { return nullptr; }
   virtual std::string GetName() const { return "Message"; }
@@ -629,8 +665,8 @@ struct Message {
   virtual void Clear() {}
   virtual void CopyFrom(const Message &src) {}
 
-  std::shared_ptr<MessageRuntime> runtime;
-  ::toolbelt::BufferOffset absolute_binary_offset;
+  MessageRuntime *runtime;
+  ::phaser::BufferOffset absolute_binary_offset;
 };
 ```
 
@@ -646,32 +682,34 @@ the `PayloadBuffer` (see below).
 The member `runtime` is a pointer to the following struct:
 
 ```c++
-// Each message contains a std::shared_ptr to one of these, allocated from
-// the heap.  This is used when creating a message in the payload buffer
-// so that we know where the metadata for each message is stored.  The
-// metadata offset is held in the message header.
+// Each message points to one of these.  This is used when creating a message
+// in the payload buffer so that we know where the metadata for each message is
+// stored.  The metadata offset is held in the message header.
 struct MessageRuntime {
-  MessageRuntime(::toolbelt::PayloadBuffer *p) : pb(p) {}
-  MessageRuntime(::toolbelt::PayloadBuffer *p, size_t size)
-      : pb(p), buffer_size(size) {}
-  virtual ~MessageRuntime() = default;
-  ::toolbelt::PayloadBuffer *pb;
+  MessageRuntime(::phaser::PayloadBuffer *p, bool is_mutable = false);
+  MessageRuntime(::phaser::PayloadBuffer *p, size_t size,
+                 bool is_mutable = false);
+  ::phaser::PayloadBuffer *pb;
 
-  // This is the size of the buffer.  If it is zero, the size is inside
-  // the payload buffer.  If it's non-zero, it's the size of the received
-  // buffer.  We can't rely on the size inside the payload buffer if we
-  // are looking at received data (someone could set it to anything and we
-  // have no way to check it's valid).
-  size_t buffer_size = 0;
+  // The number of bytes of a readonly buffer that are trusted, or 0 for a
+  // mutable buffer, whose size is the one inside the payload buffer.  We can't
+  // rely on the size inside the payload buffer if we are looking at received
+  // data (someone could set it to anything and we have no way to check it's
+  // valid).
+  size_t BufferSize() const;
+  bool IsMutable() const;
 };
 
 ```
 The members of this are:
 
 1. `pb`: a pointer to a `PayloadBuffer` object that holds the actual binary for the message data
-2. `buffer_size`: the size of the buffer if it was received
+2. `BufferSize()`: the size of the buffer if it was received.  A received buffer made without a
+   size trusts the size inside it.
 
-The `PayloadBuffer` is part of my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt) and
+The `PayloadBuffer` (`phaser/runtime/payload_buffer.h`) is Phaser's own fork of the one
+in my [C++ Toolbelt library](https://github.com/dallison/cpp_toolbelt), so that Phaser can
+change its allocator and layout without affecting other toolbelt users.  It
 provides a relocatable heap (malloc/free/realloc) inside a variable or fixed buffer.  It
 holds the binary values for all fields in the message in a relocatable form.  Generally,
 you won't have to concern yourself about the `PayloadBuffer`.
@@ -684,10 +722,24 @@ This diagram shows the general layout of a message.
 
 
 The source message is located either on the stack frame or on the heap.  It refers to a MessageRuntime
-struct through a `std::shared_ptr` which contains a pointer to a `PayloadBuffer` (where the actual message
+struct through a pointer, and the runtime contains a pointer to a `PayloadBuffer` (where the actual message
 contents are stored).  If the message is **mutable** a `MutableMessageRuntime` is used instead and that also
 contains a map that contains information about the location of the message's `metadata` (where the fields
 are located).
+
+Only the runtime of a message made with `CreateDynamicMutable` is allocated from the heap.  The handles of
+that message own it: a copy of the handle shares it, a move passes it on, and the last handle to go
+deletes it and the buffer (`OwnsRuntime()` says whether a handle is one of them).  Any other handle
+borrows its runtime, or holds a copy of it when the runtime is not one that can grow the buffer, so a
+handle for part of a message, such as a nested message or a vector element, is valid only while the
+message's own handle is.
+
+The diagram shows fields that hold where they are, as the fields of a message written by hand do.
+In a generated message, a field's offset and presence id in the binary message and its field number
+are part of its C++ type (`::phaser::FieldSpec<offset, id, number>`).  Most fields then hold nothing:
+they take no space in the source message and are at its start, so they find the message from their own
+address.  A field that holds values of its own, such as a singular message field, which holds a handle
+for the nested message, holds only its offset in the source message.
 
 ### Tuning the memory allocator
 The memory for the actual message contents is allocated inside the `PayloadBuffer` using a memory allocator (think malloc and free in a restricted, relocatable area of memory).  There are two modes for this memory allocator:
@@ -939,9 +991,36 @@ field:
 
 The `resize` and `reserve` functions operate similarly to `std::vector`.  The
 `allocate` function allocates `n` messages in a block and returns lightweight
-message handles by value. The handles retain the shared mutable runtime and
-remain valid if the payload buffer relocates. This is a performance enhancement
+message handles by value. The handles borrow the message, so they remain valid
+if the payload buffer relocates but not after the message is destroyed. This is
+a performance enhancement
 for a common protobuf message-building pattern.
+
+When every field of the element type is a singular scalar (a number, `bool` or
+enum, not in a `oneof`), there is also a bulk form of `add`:
+
+```c++
+  template <typename F>
+  void add_vm(size_t n, F&& f);
+```
+
+It appends `n` elements and calls `f(writer, i)` for the `i`th of them.  The
+writer is an `InnerMessage::PhaserWriter`, which has a `set_` function for
+each field and writes straight into the element at the field's compiled
+offset, without a handle:
+
+```c++
+points.add_vm(count, [&](auto point, size_t i) {
+  point.set_x(xs[i]);
+  point.set_y(ys[i]);
+});
+```
+
+The fields are set and marked present just as their setters would.  The writer
+is valid only during the call, and `f` must not change the message: an element
+may be built in a local copy and stored when `f` returns, and the vector's size
+includes the new elements only once all `n` are added.  This makes building a large vector of small messages about
+as fast as filling a `std::vector` of structs.
 
 ### Oneof fields
 A `oneof` field is a discriminated union that holds only one of a number of
@@ -1059,6 +1138,10 @@ provided by the regular protobuf messages.  Protobuf provides others (like
 ## Cloning and copying
 Like protobuf, Phaser provides a `CopyFrom` method to copy messages.
 
+Copying or assigning a message of the protobuf frontend copies the handle, not
+the contents: afterwards both refer to the same message.  Use `CopyFrom` to copy
+the contents into another message.
+
 ## The Phaser Bank
 A significant feature that is missing from protobuf implementations (that I
 am aware of anyway) is the ability to do things with messages given only their
@@ -1093,18 +1176,18 @@ absl::StatusOr<size_t> PhaserBankSerializedSize(const std::string &message_type,
 
 absl::StatusOr<Message *>
 PhaserBankAllocateAtOffset(const std::string &message_type,
-                           std::shared_ptr<::phaser::MessageRuntime> runtime,
-                           toolbelt::BufferOffset offset);
+                           ::phaser::MessageRuntime *runtime,
+                           ::phaser::BufferOffset offset);
 
 template <typename T>
-absl::StatusOr<std::pair<T *, toolbelt::BufferOffset>>
+absl::StatusOr<std::pair<T *, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string &message_type,
-                   std::shared_ptr<::phaser::MessageRuntime> runtime);
+                   ::phaser::MessageRuntime *runtime);
 
 template <>
-absl::StatusOr<std::pair<Message *, toolbelt::BufferOffset>>
+absl::StatusOr<std::pair<Message *, ::phaser::BufferOffset>>
 PhaserBankAllocate(const std::string &message_type,
-                   std::shared_ptr<::phaser::MessageRuntime> runtime);              
+                   ::phaser::MessageRuntime *runtime);              
 
 absl::Status PhaserBankClear(const std::string &message_type, Message &msg);
 
@@ -1113,7 +1196,7 @@ absl::Status PhaserBankCopy(const std::string &message_type, const Message &src,
 
 absl::StatusOr<const Message *>
 PhaserBankMakeExisting(const std::string &message_type,
-                       std::shared_ptr<::phaser::MessageRuntime> runtime,
+                       ::phaser::MessageRuntime *runtime,
                        const void *data);
 
 absl::StatusOr<size_t> PhaserBankBinarySize(const std::string &message_type);
@@ -1152,14 +1235,14 @@ struct BankInfo {
   absl::Status (*deserialize_from_buffer)(Message &msg, ProtoBuffer &buffer);
   size_t (*serialized_size)(const Message &msg);
   Message *(*allocate_at_offset)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime,
-      toolbelt::BufferOffset offset);
-  std::pair<Message *, toolbelt::BufferOffset> (*allocate)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime);
+      ::phaser::MessageRuntime *runtime,
+      ::phaser::BufferOffset offset);
+  std::pair<Message *, ::phaser::BufferOffset> (*allocate)(
+      ::phaser::MessageRuntime *runtime);
   void (*clear)(Message &msg);
   absl::Status (*copy)(const Message &src, Message &dst);
   const Message *(*make_existing)(
-      std::shared_ptr<::phaser::MessageRuntime> runtime, const void *data);
+      ::phaser::MessageRuntime *runtime, const void *data);
   size_t (*binary_size)();
   const MessageInfo *(*message_info)();
   bool (*has_field)(const Message &msg, int number);
@@ -1224,30 +1307,38 @@ type.  You can:
 1. See if a field is present in the message
 2. Look up a field in a message by number or name
 
-The result of looking up a field is an instance of an internal field class.  In order
+The result of looking up a field is a pointer to an instance of an internal field class.  In order
 to use these, please see the files `runtime/fields.h`, `runtime/union.h` and `runtime/vectors.h`.
 It's beyond the scope of this user guide to explain these, but I will provide further
 documentation to cover them.
 
-However, as an example, here's how to access an int32 field called `x` with number 100.
+The field class you ask for must be the type the field is declared with in the generated
+message, which includes where the field is (see the message layout above).  The generated
+header shows it.
+
+As an example, here's how to access an int32 field called `x` with number 100, declared
+as `::phaser::Int32Field<false, false, ::phaser::FieldSpec<8, 0, 100>> x_;`.
 
 ```c++
   absl::StatusOr<bool> has_x =
       ::phaser::PhaserBankHasField("foo.bar.TestMessage", msg, 100);
 
-  absl::StatusOr<::phaser::Int32Field<> *> x =
-      ::phaser::PhaserBankGetFieldByNumber<::phaser::Int32Field<>>(
-          "foo.bar.TestMessage", msg, 100);
+  using XField =
+      ::phaser::Int32Field<false, false, ::phaser::FieldSpec<8, 0, 100>>;
+  absl::StatusOr<XField *> x = ::phaser::PhaserBankGetFieldByNumber<XField>(
+      "foo.bar.TestMessage", msg, 100);
   int x_value = (*x)->Get();
 ```
 
-The class `phaser:;Int32Field` is in `runtime/fields.h`.
+The class `phaser::Int32Field` is in `runtime/fields.h`.
 
-To access a repeated field:
+To access a repeated field, whose accessor returns the field:
 
 ```c++
- auto vi32 = ::phaser::PhaserBankGetFieldByNumber<
-      ::phaser::PrimitiveVectorField<int32_t>>("foo.bar.TestMessage", msg, 104);
+  using Vi32Field =
+      std::remove_cv_t<std::remove_reference_t<decltype(msg.vi32())>>;
+  auto vi32 = ::phaser::PhaserBankGetFieldByNumber<Vi32Field>(
+      "foo.bar.TestMessage", msg, 104);
 ```
 
 ## Message information
@@ -1305,6 +1396,8 @@ struct FieldInfo {
 
 ```
 
+A field that holds nothing is at the start of the source message, so its `offset` is 0.
+
 There is a derived class for all primitive fields (non-oneof fields):
 
 ```c++
@@ -1359,7 +1452,7 @@ union field in a message (I'll show how to use this in a details document).
 
 ## The Payload Buffer
 Whereas the source message is what the user's program interacts with, the location
-of the actual message field values is stored in a [PayloadBuffer](https://github.com/dallison/cpp_toolbelt/toolbelt/payload_buffer.h).
+of the actual message field values is stored in a [PayloadBuffer](../runtime/payload_buffer.h).
 
 This is C++ class that provides a heap inside a relocatable buffer.  The buffer's memory
 can be either provided by the user or allocated by Phaser.  If it is allocated
@@ -1398,17 +1491,22 @@ The start of every PayloadBuffer contains a header, shown in the following diagr
 <img src="PayloadBuffer header.png"/>
 </div>
 
-Each member is 4-bytes long.  The first member is the `magic` which is either:
+Each member is 4-bytes long.  The first member is the `magic`, which is the
+bytes `00 'P' 'H'` followed by a flags byte:
 
-1. toolbelt::kFixedBufferMagic
-2. toolbelt::kMovableBufferMagic
+| Bit | Meaning |
+|-----|---------|
+| 7 | Always 1 |
+| 6 | Allocation failed (`::phaser::kAllocationFailedFlag`). A receiver rejects the buffer; the process that filled it can still read what was stored |
+| 2-5 | Format version (`::phaser::kBufferFormatVersion`, currently 1) |
+| 1 | Movable buffer (`::phaser::kMovableBufferMagic`) rather than fixed (`::phaser::kFixedBufferMagic`) |
+| 0 | Bitmap allocator on (`::phaser::kBitMapFlag`) |
 
-This serves to identify the buffer as a PayloadBuffer and also whether it is
-movable or fixed.  Movable buffers are only moved when creating the message, however
-all buffers are relocatable in memory.
-
-The bottom bit of the magic field is used to specify whether the `bitmap allocator`
-is on or off (0 = off).
+The magic identifies the buffer as a PayloadBuffer of this format version.
+Because a non-empty protobuf message cannot start with a zero byte, the first
+byte alone tells a PayloadBuffer from protobuf.  Buffers with a different
+version are not valid PayloadBuffers.  Movable buffers are only moved when
+creating the message, however all buffers are relocatable in memory.
 
 The next member, `message` contains the offset to the root of the message tree
 in the buffer - the top level message.
@@ -1474,8 +1572,9 @@ direct lookup for the first group and one sparse entry for the outlier.
 The field id is used as a bit number for the `presence mask`, which is located
 immediately after the metadata offset in the message. The presence mask has a
 bit position for every primitive field and may not be present if there are no
-primitive fields. Field proxies cache both the resolved offset and id after
-their first access, including a missing-field result.
+primitive fields. A message whose metadata matches its compiled type has its
+fields at their compiled locations; otherwise each field access looks the field
+up in the metadata.
 
 Hybrid metadata changes the native Phaser payload format. This runtime can
 still read legacy metadata using its previous all-fields binary-search layout,
@@ -1501,18 +1600,36 @@ These have a header that contains the offset (relative to the PayloadBuffer) of 
 message, which is in the format described here.  Like strings, a value of 0 means
 that the field is not present.
 
+The ROS frontend instead stores a singular message that is not in a `oneof`
+inside the message that holds it, after the other fields, unless its type can
+reach the holding type through singular fields.  ROS messages have no presence
+for nested messages, so these are normally all set, and storing them inline
+saves an allocation and an offset per message.  An inline message is not
+present while its metadata offset is 0.  Its field metadata entry has the id
+`kInlineMessageFieldId`, so a reader whose compiled layout differs, such as a
+protobuf frontend type, still finds the message.
+
 ### Repeated fields (vectors)
 The header for these is 8-bytes long and contains:
 
 1. The number of elements in the repeated field
 2. The offset (relative to the PayloadBuffer) of the contiguous memory for the fields
 
-The data for the vector is held contiguously in memory and can be moved if the
-vector is expanded.  The contents of the memory depends on the type of the
-repeated field.  The `capacity` of the vector (the amount of memory allocated) is
-held immediately before the data and says how many bytes are allocated, not elements as
-in the header (this is because it's just the size of the block allocated by
-the allocator).
+For scalars and strings, the data for the vector is held contiguously in
+memory and can be moved if the vector is expanded.  The contents of the memory
+depends on the type of the repeated field.  The `capacity` of the vector (the
+amount of memory allocated) is held immediately before the data and says how
+many bytes are allocated, not elements as in the header (this is because it's
+just the size of the block allocated by the allocator).
+
+For messages, the data is a `MessageVectorBlock` holding the element stride,
+the number of elements in the first chunk, the element type's metadata and the
+offset of a chunk directory.  The first chunk follows the block, and each
+element in it is a whole message binary of `stride` bytes.  When a chunk is
+full, a new one doubles the capacity and its offset is added to the directory.
+Chunks never move, so a handle to an element stays valid as the vector grows.
+`reserve(n)` on an empty vector, and parsing a ROS sequence of `n` elements,
+make a first chunk of exactly `n`.
 
 ### Buffer expansion
 The intention of zero-copy systems like Phaser is to allow you to create messages

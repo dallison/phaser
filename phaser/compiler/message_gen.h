@@ -6,6 +6,8 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -39,6 +41,10 @@ struct FieldInfo {
   std::string member_type;
   std::string c_type;
   uint32_t binary_size;
+  // A singular message stored inside this message.  Its offset is a C++
+  // constant, since it follows the other fields and the sizes of the
+  // messages before it are only known to the C++ compiler.
+  bool inline_message = false;
 };
 
 struct UnionInfo : public FieldInfo {
@@ -88,6 +94,24 @@ class MessageGenerator {
   void CompileFields();
   void CompileUnions();
   void FinalizeOffsetsAndSizes();
+  // Whether the singular message 'field' is stored inside this message
+  // rather than through an offset.
+  bool StoresMessageInline(const google::protobuf::FieldDescriptor* field);
+  // Whether a message of 'type' can own no more than 'blocks' blocks outside
+  // its body, which it takes from 'blocks'.
+  bool OwnsAtMostBlocks(const google::protobuf::Descriptor* type, int& blocks);
+  // C++ constant expressions for the field's offset in this message and its
+  // id in the field metadata.
+  std::string FieldOffset(const FieldInfo& field) const;
+  std::string FieldId(const FieldInfo& field) const;
+  // Whether the field's offset, id and number are in its C++ type rather
+  // than in the field.
+  bool FieldLocationInType(const FieldInfo& field) const;
+  // The C++ type of the field's member, in namespace ::phaser.
+  std::string FieldMemberType(const FieldInfo& field) const;
+  // Declares the offsets of the inline messages and returns a C++ constant
+  // expression for where the message's binary ends.
+  std::string GenerateInlineMessageOffsets(std::ostream& os);
 
   void GenerateDefaultConstructor(std::ostream& os, bool decl);
   void GenerateInternalDefaultConstructor(std::ostream& os, bool decl);
@@ -95,10 +119,20 @@ class MessageGenerator {
   void GenerateConstructors(std::ostream& os, bool decl);
   void GenerateFieldInitializers(std::ostream& os, const char* sep = ": ");
   void GenerateSizeFunctions(std::ostream& os);
-  size_t ReachableMessageTypeCount() const;
+  // The message types this message can reach, starting with itself.
+  std::vector<const google::protobuf::Descriptor*> ReachableMessageTypes()
+      const;
+  // ReachableMessageTypes() as template arguments.
+  std::string MetadataTypeList();
+  // The InitializeMetadata call that sets up the new buffer at 'pb', a
+  // PayloadBuffer** expression, for this message.
+  std::string InitializeMetadataCall(const std::string& pb);
   void GenerateFieldMetadata(std::ostream& os);
   void GenerateCreators(std::ostream& os, bool decl);
   void GenerateClear(std::ostream& os, bool decl);
+  // The fast path of Clear() for a main message: resetting its buffer.
+  void GenerateClearByReset(std::ostream& os);
+  void GenerateReleaseAt(std::ostream& os, bool decl);
 
   void GeneratePublicFieldDeclarations(std::ostream& os);
   void GenerateRosOneofTypes(std::ostream& os);
@@ -149,9 +183,12 @@ class MessageGenerator {
   void GenerateROSFieldSize(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
       const std::string& value_expression, const std::string& indent);
+  // With 'to_cursor', writes a scalar or string with the direct ROS writers,
+  // at '_phaser_out' in space ending at '_phaser_end'.
   void GenerateROSFieldWrite(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& value_expression, const std::string& indent);
+      const std::string& value_expression, const std::string& indent,
+      bool to_cursor = false);
   void GenerateROSFieldRead(
       std::ostream& os, const google::protobuf::FieldDescriptor* field,
       const std::string& target_expression, const std::string& indent,
@@ -161,9 +198,33 @@ class MessageGenerator {
       const std::shared_ptr<FieldInfo>& field,
       const std::shared_ptr<UnionInfo>& union_field = nullptr,
       int union_index = -1) const;
+  // Generated message type whose PhaserROSFixedSize() gives the ROS size of
+  // one value of this field, if the field holds one.
+  std::optional<std::string> ROSFixedSizeMessageType(
+      const google::protobuf::FieldDescriptor* field);
+  // C++ constant expression for the ROS size of one value of the field, or
+  // nullopt if the size depends on the contents.
+  std::optional<std::string> ROSFixedElementSize(
+      const google::protobuf::FieldDescriptor* field);
+  void GenerateROSFixedSize(std::ostream& os);
+  // ROS serialization of a message in a mutable buffer, read straight from
+  // the payload by static functions, for messages whose fields can all be.
+  bool CanSerializeROSDirectly();
+  void GenerateROSDirectSerialization(std::ostream& os, bool decl);
+  std::string ROSDirectValueExpression(const FieldInfo& field);
+  void GenerateROSDirectFieldSize(std::ostream& os, const FieldInfo& field);
+  void GenerateROSDirectFieldWrite(std::ostream& os, const FieldInfo& field);
+  // The fast path of ROSSerializedSize() and SerializeToROS() for a repeated
+  // message field of a message in a mutable buffer.
+  bool HasROSDirectVector(const google::protobuf::FieldDescriptor* field);
+  // A static ROS parser that writes straight into the payload, for messages
+  // whose fields are all scalars, enums or strings.
+  bool CanDeserializeROSDirectly();
+  void GenerateROSDirectDeserialization(std::ostream& os, bool decl);
+  // The PhaserWriter of a message whose fields are all singular scalars.
+  void GeneratePhaserWriter(std::ostream& os);
 
   void GenerateProtobufSerialization(std::ostream& os);
-  void GenerateIndent(std::ostream& os);
   void GenerateStreamer(std::ostream& os);
   bool IsAny(const google::protobuf::Descriptor* desc);
   bool IsAny(const google::protobuf::FieldDescriptor* field);
@@ -195,6 +256,7 @@ class MessageGenerator {
   std::string SanitizedIdentifier(const std::string& name) const;
   std::string GeneratedClassName() const;
   std::string FieldAccessorName(const std::string& name) const;
+  std::string PresenceAccessorName(const std::string& name) const;
   std::string MemberVariableName(const std::string& proto_name) const;
   std::string OneofVariantTypeName(
       const google::protobuf::OneofDescriptor* oneof) const;
@@ -207,7 +269,7 @@ class MessageGenerator {
   bool IsRosHeader(const google::protobuf::Descriptor* desc) const;
   bool IsRosIntrinsic(const google::protobuf::FieldDescriptor* field) const;
   std::string RosIntrinsicFieldType(
-      const google::protobuf::FieldDescriptor* field);
+      const google::protobuf::FieldDescriptor* field, bool stored_inline);
   std::string RosIntrinsicVectorFieldType(
       const google::protobuf::FieldDescriptor* field);
   std::string RosIntrinsicArrayFieldType(
@@ -232,6 +294,8 @@ class MessageGenerator {
       unions_;
   std::vector<std::shared_ptr<FieldInfo>> fields_in_order_;
   uint32_t binary_size_ = 4;
+  // Where the binary ends, including any inline messages.
+  std::string binary_end_;
   uint32_t presence_mask_size_ = 0;
   std::string added_namespace_;
   std::string package_name_;

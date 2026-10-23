@@ -11,13 +11,13 @@
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
 #include "toolbelt/hexdump.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
-using PayloadBuffer = ::toolbelt::PayloadBuffer;
-using BufferOffset = ::toolbelt::BufferOffset;
+using PayloadBuffer = ::phaser::PayloadBuffer;
+using BufferOffset = ::phaser::BufferOffset;
 using Message = phaser::Message;
-using VectorHeader = toolbelt::VectorHeader;
-using StringHeader = toolbelt::StringHeader;
+using VectorHeader = ::phaser::VectorHeader;
+using StringHeader = ::phaser::StringHeader;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
@@ -60,8 +60,7 @@ struct InnerMessage : public Message {
         uv_(offsetof(InnerMessage, uv_), HeaderSize() + 28, 0, 0,
             absl::MakeConstSpan(kUvFieldNumbers)) {}
 
-  InnerMessage(std::shared_ptr<phaser::MessageRuntime> rt,
-               ::toolbelt::BufferOffset offset)
+  InnerMessage(phaser::RuntimeHandle rt, ::phaser::BufferOffset offset)
       : Message(rt, offset),
         str_(offsetof(InnerMessage, str_), HeaderSize() + 0, 0, 10),
         f_(offsetof(InnerMessage, f_), HeaderSize() + 8, 1, 20),
@@ -151,22 +150,14 @@ struct InnerMessage : public Message {
   }
 
   static InnerMessage CreateMutable(void* addr, size_t size) {
-    ::toolbelt::PayloadBuffer* pb =
-        new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
-    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+    ::phaser::PayloadBuffer* pb =
+        new (addr)::phaser::PayloadBuffer(static_cast<uint32_t>(size));
+    ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    InnerMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
-    auto msg = InnerMessage(runtime, pb->message);
+    phaser::MutableMessageRuntime runtime(pb);
+    auto msg = InnerMessage(&runtime, pb->message);
     msg.InstallMetadata<InnerMessage>();
     return msg;
-  }
-
-  void Indent(int indent) {
-    str_.Indent(indent);
-    f_.Indent(indent);
-    e_.Indent(indent);
-    ev_.Indent(indent);
-    uv_.Indent(indent);
   }
 
   std::string DebugString() const {
@@ -265,6 +256,16 @@ struct InnerMessage : public Message {
   }
 
   absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
+    if constexpr (phaser::kTrustSerializedSize) {
+      if (absl::Status status = buffer.EnsureSpace(SerializedSize());
+          !status.ok()) {
+        return status;
+      }
+    }
+    return PhaserSerialize(phaser::ProtoMessageWriter(buffer));
+  }
+
+  absl::Status PhaserSerialize(phaser::ProtoMessageWriter buffer) const {
     if (str_.IsPresent()) {
       if (absl::Status status = str_.Serialize(buffer); !status.ok()) {
         return status;
@@ -418,19 +419,18 @@ static size_t InnerMessageSerializedSize(const Message& msg) {
   return m->SerializedSize();
 }
 
-static Message* InnerMessageAllocateAtOffset(
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset) {
+static Message* InnerMessageAllocateAtOffset(::phaser::RuntimeHandle runtime,
+                                             ::phaser::BufferOffset offset) {
   auto msg = new InnerMessage(runtime, offset);
   msg->InstallMetadata<InnerMessage>();
   return msg;
 }
 
-static std::pair<Message*, toolbelt::BufferOffset> InnerMessageAllocate(
-    std::shared_ptr<::phaser::MessageRuntime> runtime) {
-  void* addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb,
+static std::pair<Message*, ::phaser::BufferOffset> InnerMessageAllocate(
+    ::phaser::RuntimeHandle runtime) {
+  void* addr = ::phaser::PayloadBuffer::Allocate(&runtime->pb,
                                                  InnerMessage::BinarySize());
-  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
+  ::phaser::BufferOffset offset = runtime->pb->ToOffset(addr);
   auto msg = new InnerMessage(runtime, offset);
   msg->InstallMetadata<InnerMessage>();
   return std::make_pair(msg, offset);
@@ -447,8 +447,8 @@ static absl::Status InnerMessageCopy(const Message& src, Message& dst) {
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message* InnerMessageMakeExisting(
-    std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data) {
+static const Message* InnerMessageMakeExisting(::phaser::RuntimeHandle runtime,
+                                               const void* data) {
   return new InnerMessage(runtime, runtime->pb->ToOffset(data));
 }
 
@@ -555,8 +555,7 @@ struct TestMessage : public Message {
     InitDynamicMutable(initial_size);
   }
 
-  TestMessage(std::shared_ptr<phaser::MessageRuntime> rt,
-              ::toolbelt::BufferOffset offset)
+  TestMessage(phaser::RuntimeHandle rt, ::phaser::BufferOffset offset)
       : Message(rt, offset),
         x_(offsetof(TestMessage, x_), HeaderSize() + 0, 0, 100),
         y_(offsetof(TestMessage, y_), HeaderSize() + 8, 1, 101),
@@ -573,42 +572,40 @@ struct TestMessage : public Message {
             absl::MakeConstSpan(kU3FieldNumbers)) {}
 
   static TestMessage CreateMutable(void* addr, size_t size) {
-    ::toolbelt::PayloadBuffer* pb =
-        new (addr)::toolbelt::PayloadBuffer(static_cast<uint32_t>(size));
-    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+    ::phaser::PayloadBuffer* pb =
+        new (addr)::phaser::PayloadBuffer(static_cast<uint32_t>(size));
+    ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime = std::make_shared<phaser::MutableMessageRuntime>(pb);
-    auto msg = TestMessage(runtime, pb->message);
+    phaser::MutableMessageRuntime runtime(pb);
+    auto msg = TestMessage(&runtime, pb->message);
     msg.InstallMetadata<TestMessage>();
     return msg;
   }
 
   static TestMessage CreateReadonly(void* addr) {
-    ::toolbelt::PayloadBuffer* pb =
-        reinterpret_cast<::toolbelt::PayloadBuffer*>(addr);
-    auto runtime = std::make_shared<phaser::MessageRuntime>(pb);
-    return TestMessage(runtime, pb->message);
+    ::phaser::PayloadBuffer* pb =
+        reinterpret_cast<::phaser::PayloadBuffer*>(addr);
+    phaser::MessageRuntime runtime(pb);
+    return TestMessage(&runtime, pb->message);
   }
 
   static TestMessage CreateDynamicMutable(size_t initial_size = 1024) {
-    ::toolbelt::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
-    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+    ::phaser::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
+    ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto runtime =
-        std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
-    auto msg = TestMessage(runtime, pb->message);
+    TestMessage msg(nullptr, 0);
+    msg.BindNewMutable(new phaser::DynamicMutableMessageRuntime(pb, ::free),
+                       pb->message);
     msg.InstallMetadata<TestMessage>();
     return msg;
   }
 
   void InitDynamicMutable(size_t initial_size = 1024) {
-    ::toolbelt::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
-    ::toolbelt::PayloadBuffer::AllocateMainMessage(&pb,
+    ::phaser::PayloadBuffer* pb = phaser::NewDynamicBuffer(initial_size);
+    ::phaser::PayloadBuffer::AllocateMainMessage(&pb,
                                                    TestMessage::BinarySize());
-    auto rt =
-        std::make_shared<phaser::DynamicMutableMessageRuntime>(pb, ::free);
-    this->runtime = rt;
-    this->absolute_binary_offset = pb->message;
+    BindNewMutable(new phaser::DynamicMutableMessageRuntime(pb, ::free),
+                   pb->message);
     this->InstallMetadata<TestMessage>();
   }
 
@@ -735,6 +732,16 @@ struct TestMessage : public Message {
   }
 
   absl::Status Serialize(phaser::ProtoBuffer& buffer) const {
+    if constexpr (phaser::kTrustSerializedSize) {
+      if (absl::Status status = buffer.EnsureSpace(SerializedSize());
+          !status.ok()) {
+        return status;
+      }
+    }
+    return PhaserSerialize(phaser::ProtoMessageWriter(buffer));
+  }
+
+  absl::Status PhaserSerialize(phaser::ProtoMessageWriter buffer) const {
     if (x_.IsPresent()) {
       if (absl::Status status = x_.Serialize(buffer); !status.ok()) {
         return status;
@@ -901,19 +908,6 @@ struct TestMessage : public Message {
 
   friend std::ostream& operator<<(std::ostream& os, const TestMessage& msg);
 
-  void Indent(int indent) {
-    x_.Indent(indent);
-    y_.Indent(indent);
-    s_.Indent(indent);
-    m_.Indent(indent);
-    vi32_.Indent(indent);
-    vstr_.Indent(indent);
-    vm_.Indent(indent);
-    u1_.Indent(indent);
-    u2_.Indent(indent);
-    u3_.Indent(indent);
-  }
-
   absl::Status CloneFrom(const TestMessage& src) {
     if (src.x_.IsPresent()) {
       x_.Set(src.x_.Get());
@@ -1011,7 +1005,7 @@ struct TestMessage : public Message {
   InnerMessage* mutable_m() { return m_.Mutable(); }
   void clear_m() { m_.Clear(); }
   bool has_m() const { return m_.IsPresent(); }
-  void set_m(toolbelt::BufferOffset offset) { m_.SetOffset(offset); }
+  void set_m(::phaser::BufferOffset offset) { m_.SetOffset(offset); }
   // Repeated accessors.
   size_t vi32_size() const { return vi32_.size(); }
   int32_t vi32(size_t i) const { return vi32_.Get(i); }
@@ -1234,19 +1228,18 @@ static size_t TestMessageSerializedSize(const Message& msg) {
   return m->SerializedSize();
 }
 
-static Message* TestMessageAllocateAtOffset(
-    std::shared_ptr<::phaser::MessageRuntime> runtime,
-    toolbelt::BufferOffset offset) {
+static Message* TestMessageAllocateAtOffset(::phaser::RuntimeHandle runtime,
+                                            ::phaser::BufferOffset offset) {
   auto msg = new TestMessage(runtime, offset);
   msg->InstallMetadata<TestMessage>();
   return msg;
 }
 
-static std::pair<Message*, toolbelt::BufferOffset> TestMessageAllocate(
-    std::shared_ptr<::phaser::MessageRuntime> runtime) {
-  void* addr = toolbelt::PayloadBuffer::Allocate(&runtime->pb,
+static std::pair<Message*, ::phaser::BufferOffset> TestMessageAllocate(
+    ::phaser::RuntimeHandle runtime) {
+  void* addr = ::phaser::PayloadBuffer::Allocate(&runtime->pb,
                                                  TestMessage::BinarySize());
-  toolbelt::BufferOffset offset = runtime->pb->ToOffset(addr);
+  ::phaser::BufferOffset offset = runtime->pb->ToOffset(addr);
   auto msg = new TestMessage(runtime, offset);
   msg->InstallMetadata<TestMessage>();
   return std::make_pair(msg, offset);
@@ -1263,8 +1256,8 @@ static absl::Status TestMessageCopy(const Message& src, Message& dst) {
   return dst_m->CloneFrom(*src_m);
 }
 
-static const Message* TestMessageMakeExisting(
-    std::shared_ptr<::phaser::MessageRuntime> runtime, const void* data) {
+static const Message* TestMessageMakeExisting(::phaser::RuntimeHandle runtime,
+                                              const void* data) {
   return new TestMessage(runtime, runtime->pb->ToOffset(data));
 }
 
@@ -1297,6 +1290,40 @@ static struct TestMessageBankRegister {
                                       kTestMessageBackInfo);
   }
 } TestMessage_bank_register;
+
+// A readonly runtime's buffer size shares a word with a mutable one's reset
+// mark.
+TEST(MessageTest, ReadonlyRuntimeSizeIsNotAResetMark) {
+  if constexpr (sizeof(void*) == 8) {
+    EXPECT_EQ(16u, sizeof(phaser::MessageRuntime));
+    EXPECT_EQ(40u, sizeof(phaser::Message));
+  }
+  char* buffer = static_cast<char*>(calloc(4096, 1));
+  TestMessage msg = TestMessage::CreateMutable(buffer, 4096);
+  EXPECT_EQ(0u, msg.runtime->BufferSize());
+
+  phaser::MessageRuntime readonly(msg.runtime->pb, size_t{4096});
+  readonly.MarkNewBuffer();
+  EXPECT_EQ(4096u, readonly.BufferSize());
+  EXPECT_EQ(4096u, readonly.TrustedSize());
+  EXPECT_EQ(0u, readonly.ResetMark());
+  EXPECT_FALSE(readonly.MayResetFor(msg.absolute_binary_offset));
+  EXPECT_FALSE(
+      readonly.ResetFor(msg.absolute_binary_offset, TestMessage::BinarySize()));
+
+  phaser::MessageRuntime huge(msg.runtime->pb, size_t{1} << 33);
+  EXPECT_EQ(UINT32_MAX, huge.BufferSize());
+
+  // Without a size the buffer's own is trusted; a size of 0 trusts nothing.
+  phaser::MessageRuntime unsized(msg.runtime->pb);
+  EXPECT_EQ(4096u, unsized.TrustedSize());
+  EXPECT_NE(nullptr, unsized.ToAddress<char>(msg.absolute_binary_offset));
+  phaser::MessageRuntime empty(msg.runtime->pb, size_t{0});
+  EXPECT_EQ(nullptr, empty.ToAddress<char>(msg.absolute_binary_offset));
+  EXPECT_EQ(0u, empty.ToOffset(
+                    msg.runtime->ToAddress<char>(msg.absolute_binary_offset)));
+  free(buffer);
+}
 
 TEST(MessageTest, Basic) {
   char* buffer = static_cast<char*>(calloc(4096, 1));

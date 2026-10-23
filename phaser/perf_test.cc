@@ -16,7 +16,7 @@
 #include "phaser/testdata/vision.phaser.h"
 #include "toolbelt/clock.h"
 #include "toolbelt/hexdump.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 // This test builds a camera image in a fixed size buffer.  The protobuf version
 // has to serialize it into the buffer, but with phaser we build it directly in

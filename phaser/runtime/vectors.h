@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <algorithm>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -17,13 +18,15 @@
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "phaser/runtime/iterators.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/wireformat.h"
-#include "toolbelt/payload_buffer.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
@@ -46,19 +49,19 @@ class ProtoBuffer;
   iterator begin() { return iterator(this, BaseOffset()); }                    \
   iterator end() {                                                             \
     return iterator(this,                                                      \
-                    BaseOffset() + static_cast<::toolbelt::BufferOffset>(      \
+                    BaseOffset() + static_cast<::phaser::BufferOffset>(      \
                                        NumElements() * sizeof(value_type)));   \
   }                                                                            \
   const_iterator begin() const { return const_iterator(this, BaseOffset()); }  \
   const_iterator end() const {                                                 \
     return const_iterator(                                                     \
-        this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(            \
+        this, BaseOffset() + static_cast<::phaser::BufferOffset>(            \
                                  NumElements() * sizeof(value_type)));         \
   }                                                                            \
   const_iterator cbegin() const { return const_iterator(this, BaseOffset()); } \
   const_iterator cend() const {                                                \
     return const_iterator(                                                     \
-        this, BaseOffset() + static_cast<::toolbelt::BufferOffset>(            \
+        this, BaseOffset() + static_cast<::phaser::BufferOffset>(            \
                                  NumElements() * sizeof(value_type)));         \
   }                                                                            \
                                                                                \
@@ -107,20 +110,26 @@ class ProtoBuffer;
   const_reverse_iterator crbegin() const { return relay.crbegin(); }     \
   const_reverse_iterator crend() const { return relay.crend(); }
 
+namespace internal {
+// Moves the last of the 'size' values at 'base' to 'index', moving those from
+// 'index' up by one.
+template <typename T>
+void MoveLastTo(T* base, size_t size, size_t index) {
+  const T last = base[size - 1];
+  memmove(base + index + 1, base + index, (size - 1 - index) * sizeof(T));
+  base[index] = last;
+}
+}  // namespace internal
+
 // This is a variable length vector of T.  It looks like a std::vector<T>.
-// The binary message contains a toolbelt::VectorHeader at the binary offset.
+// The binary message contains a ::phaser::VectorHeader at the binary offset.
 // This contains the number of elements and the base offset for the data.
 template <typename T, bool FixedSize = false, bool Signed = false,
-          bool Packed = true>
-class PrimitiveVectorField : public Field {
- public:
+          bool Packed = true, typename Loc = StoredFieldLoc>
+class PrimitiveVectorField : public FieldBase<Loc> {
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
   PrimitiveVectorField() = default;
-  explicit PrimitiveVectorField(uint32_t source_offset,
-                                uint32_t relative_binary_offset, int id,
-                                int number)
-      : Field(id, number),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
+  using FieldBase<Loc>::FieldBase;
   PrimitiveVectorField(const PrimitiveVectorField&) = default;
   PrimitiveVectorField(PrimitiveVectorField&&) = default;
 
@@ -150,13 +159,13 @@ class PrimitiveVectorField : public Field {
 
   T& at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("PrimitiveVectorField::at");
+      PHASER_THROW(std::out_of_range("PrimitiveVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   T at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("PrimitiveVectorField::at");
+      PHASER_THROW(std::out_of_range("PrimitiveVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -194,8 +203,8 @@ class PrimitiveVectorField : public Field {
 #undef CTYPE
 
   void push_back(const T& v) {
-    ::toolbelt::PayloadBuffer::VectorPush<T>(
-        GetBufferAddr(), Header(relative_binary_offset_), v);
+    ::phaser::PayloadBuffer::VectorPush<T>(GetBufferAddr(), Header(Offset()),
+                                           v);
   }
 
   template <typename... Args>
@@ -211,13 +220,13 @@ class PrimitiveVectorField : public Field {
   }
 
   void reserve(size_t n) {
-    ::toolbelt::PayloadBuffer::VectorReserve<T>(
-        GetBufferAddr(), Header(relative_binary_offset_), n);
+    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), Header(Offset()),
+                                              n);
   }
 
   void resize(size_t n) {
-    ::toolbelt::PayloadBuffer::VectorResize<T>(
-        GetBufferAddr(), Header(relative_binary_offset_), n);
+    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(Offset()),
+                                             n);
   }
   void resize(size_t n, const T& value) {
     const T value_copy = value;
@@ -249,9 +258,8 @@ class PrimitiveVectorField : public Field {
   iterator insert(Iterator pos, const T& value) {
     const size_t index = static_cast<size_t>((pos.offset - BaseOffset()) /
                                              static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<T> values = Get();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
-    assign(values.begin(), values.end());
+    push_back(value);
+    internal::MoveLastTo(data(), size(), index);
     return begin() + index;
   }
   template <typename Iterator, typename... Args>
@@ -268,14 +276,22 @@ class PrimitiveVectorField : public Field {
         (first.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
     const size_t last_index = static_cast<size_t>(
         (last.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<T> values = Get();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last_index));
-    assign(values.begin(), values.end());
+    (void)GetBufferAddr();
+    if (first_index != last_index) {
+      const size_t n = size();
+      T* values = data();
+      memmove(values + first_index, values + last_index,
+              (n - last_index) * sizeof(T));
+      resize(n - (last_index - first_index));
+    }
     return begin() + first_index;
   }
   void swap(PrimitiveVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*Header(Offset()), *other.Header(other.Offset()));
       return;
     }
     const std::vector<T> mine = Get();
@@ -285,21 +301,21 @@ class PrimitiveVectorField : public Field {
   }
 
   void Clear() {
-    ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                              Header(relative_binary_offset_));
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
   }
   void clear() { Clear(); }  // STL compatibility.
 
   PrimitiveVectorField& operator=(const PrimitiveVectorField& other) {
-    if (this == &other) {
-      return *this;
+    if (this != &other) {
+      Assign(other);
     }
-    Clear();
-    reserve(other.size());
-    for (size_t i = 0; i < other.size(); i++) {
-      push_back(other[static_cast<int>(i)]);
-    }
-    ResetFieldCache();
+    return *this;
+  }
+  template <typename OtherLoc>
+  PrimitiveVectorField& operator=(
+      const PrimitiveVectorField<T, FixedSize, Signed, Packed, OtherLoc>&
+          other) {
+    Assign(other);
     return *this;
   }
   PrimitiveVectorField& operator=(PrimitiveVectorField&& other) noexcept {
@@ -318,12 +334,16 @@ class PrimitiveVectorField : public Field {
   size_t size() const { return NumElements(); }
   T* data() { return GetRuntime()->template ToAddress<T>(BaseOffset()); }
   const T* data() const {
-    return GetRuntime()->template ToAddress<const T>(BaseOffset());
+    // A default message has no runtime.
+    const RuntimeHandle& runtime = GetRuntime();
+    return runtime == nullptr
+               ? nullptr
+               : runtime->template ToAddress<const T>(BaseOffset());
   }
   size_t Size() const { return NumElements(); }
 
   absl::Span<T> AsMutableSpan() {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     if (hdr == nullptr) {
       return absl::Span<T>();
     }
@@ -337,11 +357,11 @@ class PrimitiveVectorField : public Field {
   }
 
   absl::Span<const T> AsSpan() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return absl::Span<T>();
     }
-    toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return absl::Span<const T>();
     }
@@ -360,14 +380,14 @@ class PrimitiveVectorField : public Field {
     return GetRuntime()->AllocatedCapacity(BaseOffset(), sizeof(value_type));
   }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
+  ::phaser::BufferOffset BinaryEndOffset() const {
+    return Offset() + sizeof(::phaser::VectorHeader);
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
-    return relative_binary_offset_;
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Offset(); }
 
-  bool operator==(const PrimitiveVectorField& other) const {
+  template <typename OtherLoc>
+  bool operator==(const PrimitiveVectorField<T, FixedSize, Signed, Packed,
+                                             OtherLoc>& other) const {
     const size_t n = size();
     if (n != other.size()) {
       return false;
@@ -379,7 +399,9 @@ class PrimitiveVectorField : public Field {
     }
     return true;
   }
-  bool operator!=(const PrimitiveVectorField& other) const {
+  template <typename OtherLoc>
+  bool operator!=(const PrimitiveVectorField<T, FixedSize, Signed, Packed,
+                                             OtherLoc>& other) const {
     return !(*this == other);
   }
   template <typename Allocator>
@@ -444,7 +466,7 @@ class PrimitiveVectorField : public Field {
     return ProtoBuffer::LengthDelimitedSize(Number(), length);
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
@@ -552,19 +574,28 @@ class PrimitiveVectorField : public Field {
   }
 
  private:
-  friend FieldIterator<PrimitiveVectorField, T>;
-  friend FieldIterator<PrimitiveVectorField, const T>;
-  toolbelt::VectorHeader* Header(uint32_t offset) const {
-    return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
-        Message::GetMessageBinaryStart(this, source_offset_) + offset);
+  template <typename Other>
+  void Assign(const Other& other) {
+    Clear();
+    reserve(other.size());
+    for (size_t i = 0; i < other.size(); i++) {
+      push_back(other[static_cast<int>(i)]);
+    }
   }
 
-  ::toolbelt::BufferOffset BaseOffset() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+  friend FieldIterator<PrimitiveVectorField, T>;
+  friend FieldIterator<PrimitiveVectorField, const T>;
+  ::phaser::VectorHeader* Header(uint32_t offset) const {
+    return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
+        GetMessageBinaryStart() + offset);
+  }
+
+  ::phaser::BufferOffset BaseOffset() const {
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return 0;
     }
@@ -572,47 +603,26 @@ class PrimitiveVectorField : public Field {
   }
 
   size_t NumElements() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return 0;
     }
     return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
                                            sizeof(T));
   }
-
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
 };
 
 template <typename Enum = int, typename Stringizer = InternalIntStringizer,
-          typename Parser = InternalIntParser, bool Packed = true>
-class EnumVectorField : public Field {
- public:
+          typename Parser = InternalIntParser, bool Packed = true,
+          typename Loc = StoredFieldLoc>
+class EnumVectorField : public FieldBase<Loc> {
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
   EnumVectorField() = default;
-  explicit EnumVectorField(uint32_t source_offset,
-                           uint32_t relative_binary_offset, int id, int number)
-      : Field(id, number),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
+  using FieldBase<Loc>::FieldBase;
   EnumVectorField(const EnumVectorField&) = default;
   EnumVectorField(EnumVectorField&&) = default;
 
@@ -644,13 +654,13 @@ class EnumVectorField : public Field {
 
   Enum& at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("EnumVectorField::at");
+      PHASER_THROW(std::out_of_range("EnumVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   Enum at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("EnumVectorField::at");
+      PHASER_THROW(std::out_of_range("EnumVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -686,7 +696,7 @@ class EnumVectorField : public Field {
 #undef CTYPE
 
   absl::Span<Enum> AsMutableSpan() {
-    toolbelt::VectorHeader* hdr = Header(relative_binary_offset_);
+    ::phaser::VectorHeader* hdr = Header(Offset());
     if (hdr == nullptr) {
       return absl::Span<Enum>();
     }
@@ -700,11 +710,11 @@ class EnumVectorField : public Field {
   }
 
   absl::Span<const Enum> AsSpan() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return absl::Span<const Enum>();
     }
-    toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return absl::Span<const Enum>();
     }
@@ -718,8 +728,8 @@ class EnumVectorField : public Field {
   }
 
   void push_back(const Enum& v) {
-    ::toolbelt::PayloadBuffer::VectorPush<T>(
-        GetBufferAddr(), Header(relative_binary_offset_), static_cast<T>(v));
+    ::phaser::PayloadBuffer::VectorPush<T>(GetBufferAddr(), Header(Offset()),
+                                           static_cast<T>(v));
   }
 
   template <typename... Args>
@@ -735,13 +745,13 @@ class EnumVectorField : public Field {
   }
 
   void reserve(size_t n) {
-    ::toolbelt::PayloadBuffer::VectorReserve<T>(
-        GetBufferAddr(), Header(relative_binary_offset_), n);
+    ::phaser::PayloadBuffer::VectorReserve<T>(GetBufferAddr(), Header(Offset()),
+                                              n);
   }
 
   void resize(size_t n) {
-    ::toolbelt::PayloadBuffer::VectorResize<T>(
-        GetBufferAddr(), Header(relative_binary_offset_), n);
+    ::phaser::PayloadBuffer::VectorResize<T>(GetBufferAddr(), Header(Offset()),
+                                             n);
   }
   void resize(size_t n, Enum value) {
     const size_t old_size = size();
@@ -773,9 +783,9 @@ class EnumVectorField : public Field {
   iterator insert(Iterator pos, Enum value) {
     const size_t index = static_cast<size_t>((pos.offset - BaseOffset()) /
                                              static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<Enum> values = Get();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
-    assign(values.begin(), values.end());
+    push_back(value);
+    internal::MoveLastTo(GetRuntime()->template ToAddress<T>(BaseOffset()),
+                         size(), index);
     return begin() + index;
   }
   template <typename Iterator, typename... Args>
@@ -792,14 +802,22 @@ class EnumVectorField : public Field {
         (first.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
     const size_t last_index = static_cast<size_t>(
         (last.offset - BaseOffset()) / static_cast<ptrdiff_t>(sizeof(T)));
-    std::vector<Enum> values = Get();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last_index));
-    assign(values.begin(), values.end());
+    (void)GetBufferAddr();
+    if (first_index != last_index) {
+      const size_t n = size();
+      T* values = GetRuntime()->template ToAddress<T>(BaseOffset());
+      memmove(values + first_index, values + last_index,
+              (n - last_index) * sizeof(T));
+      resize(n - (last_index - first_index));
+    }
     return begin() + first_index;
   }
   void swap(EnumVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*Header(Offset()), *other.Header(other.Offset()));
       return;
     }
     const std::vector<Enum> mine = Get();
@@ -809,21 +827,20 @@ class EnumVectorField : public Field {
   }
 
   void Clear() {
-    ::toolbelt::PayloadBuffer::VectorClear<T>(GetBufferAddr(),
-                                              Header(relative_binary_offset_));
+    ::phaser::PayloadBuffer::VectorClear<T>(GetBufferAddr(), Header(Offset()));
   }
   void clear() { Clear(); }  // STL compatibility.
 
   EnumVectorField& operator=(const EnumVectorField& other) {
-    if (this == &other) {
-      return *this;
+    if (this != &other) {
+      Assign(other);
     }
-    Clear();
-    reserve(other.size());
-    for (size_t i = 0; i < other.size(); i++) {
-      push_back(other[static_cast<int>(i)]);
-    }
-    ResetFieldCache();
+    return *this;
+  }
+  template <typename OtherLoc>
+  EnumVectorField& operator=(const EnumVectorField<Enum, Stringizer, Parser,
+                                                   Packed, OtherLoc>& other) {
+    Assign(other);
     return *this;
   }
   EnumVectorField& operator=(EnumVectorField&& other) noexcept {
@@ -842,28 +859,31 @@ class EnumVectorField : public Field {
   size_t size() const { return NumElements(); }
   Enum* data() { return GetRuntime()->template ToAddress<Enum>(BaseOffset()); }
   const Enum* data() const {
-    return GetRuntime()->template ToAddress<const Enum>(BaseOffset());
+    // A default message has no runtime.
+    const RuntimeHandle& runtime = GetRuntime();
+    return runtime == nullptr
+               ? nullptr
+               : runtime->template ToAddress<const Enum>(BaseOffset());
   }
   bool empty() const { return size() == 0; }
   size_t Size() const { return NumElements(); }
 
   size_t capacity() const {
-    toolbelt::VectorHeader* hdr = Header();
+    ::phaser::VectorHeader* hdr = Header();
     if (hdr == nullptr) {
       return 0;
     }
     return GetRuntime()->AllocatedCapacity(hdr->data, sizeof(T));
   }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
+  ::phaser::BufferOffset BinaryEndOffset() const {
+    return Offset() + sizeof(::phaser::VectorHeader);
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
-    return relative_binary_offset_;
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Offset(); }
 
-  bool operator==(
-      const EnumVectorField<Enum, Stringizer, Parser, Packed>& other) const {
+  template <typename OtherLoc>
+  bool operator==(const EnumVectorField<Enum, Stringizer, Parser, Packed,
+                                        OtherLoc>& other) const {
     const size_t n = size();
     if (n != other.size()) {
       return false;
@@ -875,8 +895,9 @@ class EnumVectorField : public Field {
     }
     return true;
   }
-  bool operator!=(
-      const EnumVectorField<Enum, Stringizer, Parser, Packed>& other) const {
+  template <typename OtherLoc>
+  bool operator!=(const EnumVectorField<Enum, Stringizer, Parser, Packed,
+                                        OtherLoc>& other) const {
     return !(*this == other);
   }
   template <typename Allocator>
@@ -931,7 +952,7 @@ class EnumVectorField : public Field {
     return ProtoBuffer::LengthDelimitedSize(Number(), length);
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
@@ -1003,19 +1024,28 @@ class EnumVectorField : public Field {
   }
 
  private:
-  friend EnumFieldIterator<EnumVectorField, Enum>;
-  friend EnumFieldIterator<EnumVectorField, const Enum>;
-  toolbelt::VectorHeader* Header(::toolbelt::BufferOffset offset) const {
-    return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
-        Message::GetMessageBinaryStart(this, source_offset_) + offset);
+  template <typename Other>
+  void Assign(const Other& other) {
+    Clear();
+    reserve(other.size());
+    for (size_t i = 0; i < other.size(); i++) {
+      push_back(other[static_cast<int>(i)]);
+    }
   }
 
-  ::toolbelt::BufferOffset BaseOffset() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+  friend EnumFieldIterator<EnumVectorField, Enum>;
+  friend EnumFieldIterator<EnumVectorField, const Enum>;
+  ::phaser::VectorHeader* Header(::phaser::BufferOffset offset) const {
+    return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
+        GetMessageBinaryStart() + offset);
+  }
+
+  ::phaser::BufferOffset BaseOffset() const {
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return 0;
     }
@@ -1023,70 +1053,443 @@ class EnumVectorField : public Field {
   }
 
   size_t NumElements() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return 0;
     }
     return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
                                            sizeof(T));
   }
-
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
 };
 
-// The vector contains a set of ::toolbelt::BufferOffsets allocated in the
-// buffer, each of which contains the absolute offset of the message.
+namespace internal {
+template <typename T, typename = void>
+struct HasPhaserWriter : std::false_type {};
 template <typename T>
-class MessageVectorField : public Field {
+struct HasPhaserWriter<T, std::void_t<typename T::PhaserWriter>>
+    : std::true_type {};
+}  // namespace internal
+
+namespace internal {
+// What a vector of T does that does not depend on where the vector is.
+template <typename T>
+class MessageVectorOps {
  public:
+  // These work on the vector of T whose VectorHeader is at 'header' in the
+  // mutable buffer of 'runtime', which this process built.
+
+  // AddElement() for the vector at 'header'.
+  static ::phaser::BufferOffset AddElementAt(const RuntimeHandle& runtime,
+                                             ::phaser::BufferOffset header) {
+    return AddElementTo(
+        runtime,
+        runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header));
+  }
+
+  // Appends 'n' elements to the vector at 'header', calling 'f' with the
+  // offset of each after adding it, as AddElementAt() would, and stops at the
+  // first error 'f' returns.  'f' may allocate in the buffer but must not
+  // change this vector.
+  template <typename F>
+  static absl::Status AddElementsAt(const RuntimeHandle& runtime,
+                                    ::phaser::BufferOffset header, uint32_t n,
+                                    F&& f) {
+    return AppendElements<false>(runtime, header, n, f);
+  }
+
+  // AddElementsAt() for an 'f' that neither fails nor allocates, called with
+  // a copy of 'f' with where to write each element and its index among the
+  // 'n'.  That may be a copy of the element, stored once 'f' returns, so 'f'
+  // must write only there.  The size includes the new elements only once all
+  // are added.
+  template <typename F>
+  static void AddElementsInPlaceAt(const RuntimeHandle& runtime,
+                                   ::phaser::BufferOffset header, uint32_t n,
+                                   F&& f) {
+    (void)AppendElements<true>(runtime, header, n, f);
+  }
+
+  // reserve() for the vector at 'header'.
+  static bool ReserveAt(const RuntimeHandle& runtime,
+                        ::phaser::BufferOffset header, size_t n) {
+    if (n == 0) {
+      return true;
+    }
+    return Grow(runtime, header, n, n);
+  }
+
+  template <bool kInPlace, typename F>
+  static absl::Status AppendElements(const RuntimeHandle& runtime,
+                                     ::phaser::BufferOffset header, uint32_t n,
+                                     F& f) {
+    if (n == 0) {
+      return absl::OkStatus();
+    }
+    ::phaser::PayloadBuffer** buffer = &runtime->pb;
+    const uint32_t old_size =
+        (*buffer)
+            ->template AddressOf<::phaser::VectorHeader>(header)
+            ->num_elements;
+    const uint64_t end = uint64_t(old_size) + n;
+    if (end > UINT32_MAX) {
+      runtime->pb->MarkAllocationFailed();
+      return internal::AllocationFailedError();
+    }
+    if (!ReserveAt(runtime, header, static_cast<size_t>(end))) {
+      return internal::AllocationFailedError();
+    }
+    // Only an allocation by 'f' can move the buffer.
+    ::phaser::PayloadBuffer* pb = *buffer;
+    const ::phaser::BufferOffset block_offset =
+        pb->template AddressOf<::phaser::VectorHeader>(header)->data;
+    const ::phaser::MessageVectorBlock block =
+        *pb->template AddressOf<::phaser::MessageVectorBlock>(block_offset);
+    // Chunk 0 holds first_capacity elements.  Chunk k > 0 holds
+    // first_capacity << (k - 1) of them, from element first_capacity << (k -
+    // 1).
+    uint32_t k = 0;
+    uint32_t chunk_begin = 0;
+    uint32_t capacity = block.first_capacity;
+    ::phaser::BufferOffset chunk = static_cast<::phaser::BufferOffset>(
+        block_offset + sizeof(::phaser::MessageVectorBlock));
+    // In place, a local copy of 'f' keeps its state in registers across the
+    // element stores, which could otherwise alias it.
+    [[maybe_unused]] F local_f = f;
+    uint32_t index = old_size;
+    while (index < end) {
+      if constexpr (!kInPlace) {
+        pb = *buffer;
+      }
+      while (index - chunk_begin >= capacity) {
+        chunk_begin += capacity;
+        capacity = block.first_capacity << k;
+        ++k;
+        chunk = *pb->template AddressOf<::phaser::BufferOffset>(
+            static_cast<::phaser::BufferOffset>(
+                block.directory + k * sizeof(::phaser::BufferOffset)));
+      }
+      const uint32_t chunk_end = static_cast<uint32_t>(
+          std::min<uint64_t>(end, uint64_t(chunk_begin) + capacity));
+      if constexpr (kInPlace) {
+        char* binary = pb->template AddressOf<char>(chunk) +
+                       size_t{index - chunk_begin} * Stride();
+        for (; index < chunk_end; ++index, binary += Stride()) {
+          if constexpr (Stride() <= kMaxStagedStride) {
+            // Made in a local copy, which can stay in registers, so that only
+            // the finished element is stored.
+            char staged[Stride()];
+            StartElement(staged, block.metadata);
+            local_f(staged, index - old_size);
+            // Copying the metadata and the presence word as one lets them be
+            // stored together.
+            uint64_t head;
+            memcpy(&head, staged, sizeof(head));
+            memcpy(binary, &head, sizeof(head));
+            memcpy(binary + sizeof(head), staged + sizeof(head),
+                   Stride() - sizeof(head));
+          } else {
+            StartElement(binary, block.metadata);
+            local_f(binary, index - old_size);
+          }
+        }
+      } else {
+        for (; index < chunk_end; ++index) {
+          pb = *buffer;
+          const ::phaser::BufferOffset element =
+              static_cast<::phaser::BufferOffset>(
+                  chunk + (index - chunk_begin) * Stride());
+          StartElement(pb->template AddressOf<char>(element), block.metadata);
+          pb->template AddressOf<::phaser::VectorHeader>(header)->num_elements =
+              index + 1;
+          if (absl::Status status = f(element); !status.ok()) {
+            return status;
+          }
+        }
+      }
+    }
+    if constexpr (kInPlace) {
+      pb->template AddressOf<::phaser::VectorHeader>(header)->num_elements =
+          static_cast<uint32_t>(end);
+    }
+    return absl::OkStatus();
+  }
+
+  static constexpr uint32_t Stride() {
+    return static_cast<uint32_t>((T::BinarySize() + 7) & ~size_t(7));
+  }
+
+  // AddElementsInPlaceAt() makes elements up to this size in a local copy.
+  static constexpr uint32_t kMaxStagedStride = 64;
+
+  // Makes the empty element at 'binary'.
+  static void StartElement(char* binary, ::phaser::BufferOffset metadata) {
+    memset(binary, 0, Stride());
+    memcpy(binary, &metadata, sizeof(metadata));
+  }
+
+  // The elements of the mutable vector whose VectorHeader is at 'header'.
+  // Chunk k holds the elements from Begin(k) to End(k).
+  struct Chunks {
+    Chunks(const MessageRuntime& runtime, ::phaser::BufferOffset header)
+        : base(reinterpret_cast<char*>(runtime.pb)),
+          hdr(reinterpret_cast<::phaser::VectorHeader*>(base + header)),
+          layout(LoadMessageVectorLayout(runtime, hdr->data)) {}
+
+    uint32_t Begin(uint32_t k) const {
+      return k == 0 ? 0 : layout.first_capacity << (k - 1);
+    }
+    uint32_t End(uint32_t k) const { return layout.first_capacity << k; }
+    // The chunk that holds element 'index'.
+    uint32_t Of(uint32_t index) const {
+      uint32_t k = 0;
+      while (End(k) <= index) {
+        ++k;
+      }
+      return k;
+    }
+    // Element 'index', which is in chunk k.
+    char* Element(uint32_t k, uint32_t index) const {
+      char* chunk;
+      if (k == 0) {
+        chunk = base + layout.block + sizeof(::phaser::MessageVectorBlock);
+      } else {
+        ::phaser::BufferOffset offset;
+        memcpy(&offset, base + layout.directory + k * sizeof(offset),
+               sizeof(offset));
+        chunk = base + offset;
+      }
+      return chunk + size_t{index - Begin(k)} * Stride();
+    }
+
+    char* base;
+    ::phaser::VectorHeader* hdr;
+    MessageVectorLayout layout;
+  };
+
+  // Moves the elements from 'index' of the vector whose VectorHeader is at
+  // 'header' up by one, over its last element, which must be empty, and
+  // returns the offset of element 'index', made empty.  An element holds only
+  // values and buffer offsets, so its bytes can move.
+  static ::phaser::BufferOffset OpenElementAt(const MessageRuntime& runtime,
+                                              ::phaser::BufferOffset header,
+                                              uint32_t index) {
+    const Chunks chunks(runtime, header);
+    // Element 'end' is free.  Each pass moves the elements of chunk k from
+    // 'index' up to 'end', then the last of chunk k - 1 to the start of k.
+    uint32_t end = chunks.hdr->num_elements - 1;
+    for (uint32_t k = chunks.Of(end);; --k) {
+      const uint32_t low = std::max(chunks.Begin(k), index);
+      char* const from = chunks.Element(k, low);
+      memmove(from + Stride(), from, size_t{end - low} * Stride());
+      if (low == index) {
+        StartElement(from,
+                     reinterpret_cast<const ::phaser::MessageVectorBlock*>(
+                         chunks.base + chunks.layout.block)
+                         ->metadata);
+        return static_cast<::phaser::BufferOffset>(from - chunks.base);
+      }
+      end = low - 1;
+      memcpy(from, chunks.Element(k - 1, end), Stride());
+    }
+  }
+
+  // Moves the elements after the 'count' from 'index' of the vector whose
+  // VectorHeader is at 'header' down over them, and removes the last 'count'.
+  // The elements removed must hold nothing.
+  static void CloseElementsAt(const MessageRuntime& runtime,
+                              ::phaser::BufferOffset header, uint32_t index,
+                              uint32_t count) {
+    const Chunks chunks(runtime, header);
+    const uint32_t size = chunks.hdr->num_elements;
+    for (uint32_t to = index; to + count < size;) {
+      const uint32_t from = to + count;
+      const uint32_t to_chunk = chunks.Of(to);
+      const uint32_t from_chunk = chunks.Of(from);
+      const uint32_t run = std::min({size - from, chunks.End(to_chunk) - to,
+                                     chunks.End(from_chunk) - from});
+      memmove(chunks.Element(to_chunk, to), chunks.Element(from_chunk, from),
+              size_t{run} * Stride());
+      to += run;
+    }
+    chunks.hdr->num_elements = size - count;
+  }
+
+  // The first chunk of a vector that was not reserved holds about this many
+  // bytes of elements, and at most kMaxDefaultFirstCapacity elements.
+  static constexpr uint32_t kDefaultFirstChunkBytes = 64;
+  static constexpr uint32_t kMaxDefaultFirstCapacity = 16;
+
+  static uint32_t DefaultFirstCapacity() {
+    return std::clamp<uint32_t>(kDefaultFirstChunkBytes / Stride(), 1,
+                                kMaxDefaultFirstCapacity);
+  }
+
+  // Appends an empty element to the vector whose VectorHeader is 'hdr' in the
+  // mutable buffer of 'runtime' and returns its offset.
+  static ::phaser::BufferOffset AddElementTo(const RuntimeHandle& runtime,
+                                             ::phaser::VectorHeader* hdr) {
+    ::phaser::PayloadBuffer** buffer = &runtime->pb;
+    const uint32_t index = hdr->num_elements;
+    const ::phaser::MessageVectorBlock* block =
+        (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
+            hdr->data);
+    ::phaser::BufferOffset element;
+    if (ABSL_PREDICT_TRUE(block != nullptr && index < block->first_capacity)) {
+      element = static_cast<::phaser::BufferOffset>(
+          hdr->data + sizeof(::phaser::MessageVectorBlock) + index * Stride());
+    } else {
+      const ::phaser::BufferOffset header = (*buffer)->UncheckedOffset(hdr);
+      element = GrowForAdd(runtime, header, index);
+      if (element == 0) {
+        return 0;
+      }
+      hdr =
+          (*buffer)->template UncheckedAddress<::phaser::VectorHeader>(header);
+      block =
+          (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
+              hdr->data);
+    }
+    if (element == 0 || block == nullptr) {
+      return 0;
+    }
+    // This process wrote the block, so its stride is T's.
+    StartElement((*buffer)->template UncheckedAddress<char>(element),
+                 block->metadata);
+    hdr->num_elements = index + 1;
+    return element;
+  }
+
+  // AddElement() for when the element is not in the first chunk.  It takes
+  // the runtime, not the handle, so that the handle need not be in memory.
+  ABSL_ATTRIBUTE_NOINLINE static ::phaser::BufferOffset AddElementSlow(
+      MessageRuntime* runtime, ::phaser::BufferOffset header) {
+    return AddElementAt(runtime, header);
+  }
+
+  // Makes room for element 'index', which Add() is about to append to the
+  // vector whose VectorHeader is at 'header', and returns its offset.
+  ABSL_ATTRIBUTE_NOINLINE static ::phaser::BufferOffset GrowForAdd(
+      const RuntimeHandle& runtime, ::phaser::BufferOffset header,
+      uint32_t index) {
+    if (!Grow(runtime, header, size_t(index) + 1, DefaultFirstCapacity())) {
+      return 0;
+    }
+    const ::phaser::BufferOffset block =
+        runtime->pb->template UncheckedAddress<::phaser::VectorHeader>(header)
+            ->data;
+    if (block == 0) {
+      return 0;
+    }
+    return internal::MessageVectorElement(
+        *runtime, internal::LoadMessageVectorLayout(*runtime, block), index);
+  }
+
+  // Grows the storage of the vector whose VectorHeader is at 'header' to
+  // hold at least 'n' elements.  If there is no storage yet, its first chunk
+  // holds 'first_capacity' elements.
+  // False, leaving the vector unchanged, if the buffer has no space.
+  static bool Grow(const RuntimeHandle& runtime, ::phaser::BufferOffset header,
+                   size_t n, size_t first_capacity) {
+    ::phaser::PayloadBuffer** buffer = &runtime->pb;
+    if ((*buffer)
+            ->template UncheckedAddress<::phaser::VectorHeader>(header)
+            ->data == 0) {
+      const ::phaser::BufferOffset metadata = Message::MetadataFor<T>(runtime);
+      const uint64_t bytes = sizeof(::phaser::MessageVectorBlock) +
+                             uint64_t(first_capacity) * Stride();
+      void* memory = bytes > UINT32_MAX ? nullptr
+                                        : ::phaser::PayloadBuffer::Allocate(
+                                              buffer, uint32_t(bytes), false);
+      if (memory == nullptr) {
+        return false;
+      }
+      *static_cast<::phaser::MessageVectorBlock*>(memory) = {
+          Stride(), static_cast<uint32_t>(first_capacity), metadata, 0};
+      (*buffer)
+          ->template UncheckedAddress<::phaser::VectorHeader>(header)
+          ->data = (*buffer)->UncheckedOffset(memory);
+      if (first_capacity >= n) {
+        return true;
+      }
+    }
+    const ::phaser::BufferOffset block_offset =
+        (*buffer)
+            ->template UncheckedAddress<::phaser::VectorHeader>(header)
+            ->data;
+    for (;;) {
+      const auto* block =
+          (*buffer)->template UncheckedAddress<::phaser::MessageVectorBlock>(
+              block_offset);
+      const uint32_t num_chunks =
+          block->directory == 0
+              ? 0
+              : *(*buffer)->template UncheckedAddress<uint32_t>(
+                    block->directory);
+      // The next chunk doubles the capacity.
+      const uint64_t capacity = uint64_t(block->first_capacity) << num_chunks;
+      if (capacity >= n) {
+        return true;
+      }
+      const uint64_t bytes = capacity * block->stride;
+      void* chunk =
+          num_chunks == internal::kMaxMessageVectorChunks || bytes > UINT32_MAX
+              ? nullptr
+              : ::phaser::PayloadBuffer::Allocate(buffer, uint32_t(bytes),
+                                                  false);
+      if (chunk == nullptr) {
+        return false;
+      }
+      const ::phaser::BufferOffset chunk_offset =
+          (*buffer)->UncheckedOffset(chunk);
+      const ::phaser::BufferOffset old_directory =
+          (*buffer)
+              ->template UncheckedAddress<::phaser::MessageVectorBlock>(
+                  block_offset)
+              ->directory;
+      auto* directory =
+          static_cast<::phaser::BufferOffset*>(::phaser::PayloadBuffer::Realloc(
+              buffer, (*buffer)->UncheckedAddress(old_directory),
+              (num_chunks + 2) * sizeof(::phaser::BufferOffset), false));
+      if (directory == nullptr) {
+        (*buffer)->FreeAt(chunk_offset);
+        return false;
+      }
+      directory[0] = num_chunks + 1;
+      directory[num_chunks + 1] = chunk_offset;
+      (*buffer)
+          ->template UncheckedAddress<::phaser::MessageVectorBlock>(
+              block_offset)
+          ->directory = (*buffer)->UncheckedOffset(directory);
+    }
+  }
+};
+}  // namespace internal
+
+// The vector's data is a ::phaser::MessageVectorBlock holding the messages
+// inline, in chunks that never move as the vector grows.
+template <typename T, typename Loc = StoredFieldLoc>
+class MessageVectorField : public FieldBase<Loc> {
+  using Ops = internal::MessageVectorOps<T>;
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
   MessageVectorField() = default;
-  explicit MessageVectorField(uint32_t source_offset,
-                              uint32_t relative_binary_offset, int id,
-                              int number)
-      : Field(id, number),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
+  using FieldBase<Loc>::FieldBase;
   MessageVectorField(const MessageVectorField&) = default;
   MessageVectorField(MessageVectorField&&) = default;
 
   T operator[](int index) const {
-    if (index < 0 || static_cast<size_t>(index) >= NumElements()) {
+    if (index < 0) {
       return T(InternalDefault{});
     }
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset == -1) {
+    const ::phaser::BufferOffset element =
+        ElementOffset(static_cast<size_t>(index));
+    if (element == 0) {
       return T(InternalDefault{});
     }
-    auto hdr = Header(static_cast<uint32_t>(offset));
-    if (hdr == nullptr) {
-      return T(InternalDefault{});
-    }
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    if (data == nullptr || data[index] == 0) {
-      return T(InternalDefault{});
-    }
-    return T(GetRuntime(), data[index]);
+    return T(BorrowedRuntime(GetRuntime()), element);
   }
 
   T operator[](int index) {
@@ -1098,13 +1501,13 @@ class MessageVectorField : public Field {
 
   T at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("MessageVectorField::at");
+      PHASER_THROW(std::out_of_range("MessageVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   T at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("MessageVectorField::at");
+      PHASER_THROW(std::out_of_range("MessageVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
@@ -1190,61 +1593,110 @@ class MessageVectorField : public Field {
 
   T emplace_back() { return Add(); }
 
-  T Add() {
-    // Allocate a new message.
-    void* binary =
-        ::toolbelt::PayloadBuffer::Allocate(GetBufferAddr(), T::BinarySize());
-    ::toolbelt::BufferOffset absolute_binary_offset =
-        GetRuntime()->ToOffset(binary);
-    ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), absolute_binary_offset);
-    T result(GetRuntime(), absolute_binary_offset);
-    result.template InstallMetadata<T>();
-    return result;
+  // The handle borrows the runtime of the message this vector is in, so it is
+  // valid only while the handle it was made from exists.
+  ABSL_ATTRIBUTE_ALWAYS_INLINE T Add() {
+    if constexpr (std::is_constructible_v<T, MutablePart, const RuntimeHandle&,
+                                          ::phaser::BufferOffset>) {
+      // Read before the element is stored, which the compiler must assume
+      // could change this handle.
+      const RuntimeHandle runtime = BorrowedRuntime(GetRuntime());
+      const ::phaser::BufferOffset element = AddElement();
+      if (element == 0) {
+        // Made like the element's handle: one made through its address would
+        // keep both in memory, and every field store would reload them.
+        const internal::AllocationFailureSink sink =
+            internal::AllocationFailureSinkFor<T>();
+        return T(MutablePart{}, sink.runtime, sink.message);
+      }
+      return T(MutablePart{}, runtime, element);
+    } else {
+      const ::phaser::BufferOffset element = AddElement();
+      if (element == 0) {
+        return DetachedMessage();
+      }
+      return T(BorrowedRuntime(GetRuntime()), element);
+    }
+  }
+
+  ABSL_ATTRIBUTE_NOINLINE static T DetachedMessage() {
+    T msg(InternalDefault{});
+    internal::BindToAllocationFailureSink(msg);
+    return msg;
+  }
+
+  // Appends 'n' elements, calling 'f(writer, i)' to set the fields of the
+  // i'th through 'writer', a T::PhaserWriter that is valid only during the
+  // call.  T has one when its fields are all singular scalars.  'f' must not
+  // change the message: 'writer' may write to a copy of the element, stored
+  // once 'f' returns, and the size includes the new elements only once all
+  // are added.
+  template <typename F>
+  void Add(size_t n, F&& f) {
+    static_assert(internal::HasPhaserWriter<T>::value,
+                  "Add(n, f) needs a message whose fields are all singular "
+                  "scalars");
+    const Message* message = Parent();
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
+      Field::ThrowReadonlyMessage();
+    }
+    if (n > UINT32_MAX) {
+      message->runtime->pb->MarkAllocationFailed();
+      return;
+    }
+    // A mutable message has its compiled layout.
+    Ops::AddElementsInPlaceAt(
+        message->runtime, message->absolute_binary_offset + Offset(),
+        static_cast<uint32_t>(n), [&f](char* binary, uint32_t index) {
+          f(typename T::PhaserWriter(binary), size_t{index});
+        });
+  }
+
+  // Add() without the handle: appends an empty element and returns its offset.
+  ::phaser::BufferOffset AddElement() {
+    const Message* message = Parent();
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
+      Field::ThrowReadonlyMessage();
+    }
+    // A mutable message has its compiled layout.
+    MessageRuntime* runtime = message->runtime;
+    ::phaser::PayloadBuffer* pb = runtime->pb;
+    const ::phaser::BufferOffset header =
+        message->absolute_binary_offset + Offset();
+    auto* hdr = pb->template AddressOf<::phaser::VectorHeader>(header);
+    const uint32_t index = hdr->num_elements;
+    if (ABSL_PREDICT_TRUE(hdr->data != 0)) {
+      const auto* block =
+          pb->template AddressOf<::phaser::MessageVectorBlock>(hdr->data);
+      if (ABSL_PREDICT_TRUE(index < block->first_capacity)) {
+        const auto element = static_cast<::phaser::BufferOffset>(
+            hdr->data + sizeof(::phaser::MessageVectorBlock) +
+            index * Ops::Stride());
+        Ops::StartElement(pb->template AddressOf<char>(element),
+                          block->metadata);
+        hdr->num_elements = index + 1;
+        return element;
+      }
+    }
+    return Ops::AddElementSlow(runtime, header);
+  }
+
+  // The offset of the VectorHeader in a mutable message.
+  ::phaser::BufferOffset VectorHeaderOffset() const {
+    return (*GetBufferAddr())->UncheckedOffset(ResolvedVectorHeader());
   }
 
   T Get(size_t index) const { return (*this)[static_cast<int>(index)]; }
 
   T Mutable(size_t index) {
     if (index >= size()) {
-      ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), index + 1);
+      resize(index + 1);
     }
-
-    auto hdr = ResolvedVectorHeader();
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    if (data[index] == 0) {
-      void* binary =
-          ::toolbelt::PayloadBuffer::Allocate(GetBufferAddr(), T::BinarySize());
-      ::toolbelt::BufferOffset absolute_binary_offset =
-          GetRuntime()->ToOffset(binary);
-
-      hdr = ResolvedVectorHeader();
-      data =
-          GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-      data[index] = absolute_binary_offset;
-      T result(GetRuntime(), absolute_binary_offset);
-      result.template InstallMetadata<T>();
-      return result;
+    const ::phaser::BufferOffset element = ElementOffset(index);
+    if (element == 0) {
+      return DetachedMessage();
     }
-    return T(GetRuntime(), data[index]);
-  }
-
-  void SetOffset(int index, toolbelt::BufferOffset offset) {
-    if (static_cast<size_t>(index) >= size()) {
-      ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), static_cast<size_t>(index) + 1);
-    }
-    auto hdr = ResolvedVectorHeader();
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    if (data[index] != 0) {
-      // Already set, free the current value.
-      T(GetRuntime(), data[index]).Clear();
-      GetBuffer()->Free(GetRuntime()->ToAddress(data[index]));
-    }
-    data[index] = offset;
+    return T(BorrowedRuntime(GetRuntime()), element);
   }
 
   // Allocate a bunch of empty messages.
@@ -1252,54 +1704,56 @@ class MessageVectorField : public Field {
     std::vector<T> result;
     result.reserve(n);
     Clear();
-    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
-    // Allocate memory for n messages in the payload buffer.
-    std::vector<void*> addrs = ::toolbelt::PayloadBuffer::AllocateMany(
-        GetBufferAddr(), T::BinarySize(), static_cast<uint32_t>(n), true);
-
-    toolbelt::VectorHeader* hdr = ResolvedVectorHeader();
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-
+    reserve(n);
     for (size_t i = 0; i < n; i++) {
-      toolbelt::BufferOffset offset = GetRuntime()->ToOffset(addrs[i]);
-      T msg(GetRuntime(), offset);
-      msg.template InstallMetadata<T>();
-      result.push_back(std::move(msg));
-      data[i] = offset;
+      result.push_back(Add());
     }
     return result;
   }
 
   size_t capacity() const {
-    return GetRuntime()->AllocatedCapacity(BaseOffset(),
-                                           sizeof(::toolbelt::BufferOffset));
+    const int32_t offset = FindFieldOffset();
+    if (offset < 0) {
+      return 0;
+    }
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr || hdr->data == 0) {
+      return 0;
+    }
+    return internal::LoadMessageVectorLayout(*GetRuntime(), hdr->data)
+        .Capacity();
   }
 
   void reserve(size_t n) {
-    ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
+    const Message* message = Parent();
+    // Throws for a readonly message even when there is room.
+    if (ABSL_PREDICT_FALSE(!message->IsMutable())) {
+      Field::ThrowReadonlyMessage();
+    }
+    // A mutable message has its compiled layout.
+    Ops::ReserveAt(message->runtime, message->absolute_binary_offset + Offset(),
+                   n);
   }
 
   void resize(size_t n) {
     const size_t old_size = size();
     if (n < old_size) {
-      for (size_t i = n; i < old_size; ++i) {
-        auto hdr = ResolvedVectorHeader();
-        auto data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
-            hdr->data);
-        const ::toolbelt::BufferOffset offset = data[i];
-        if (offset != 0) {
-          T(GetRuntime(), offset).Clear();
-          GetBuffer()->Free(GetRuntime()->ToAddress(offset));
+      (void)GetBufferAddr();
+      if constexpr (!internal::ClearReleasesNothing<T>::value) {
+        for (size_t i = n; i < old_size; ++i) {
+          internal::ReleaseMessageContents<T>(GetRuntime(), ElementOffset(i));
         }
       }
+      ResolvedVectorHeader()->num_elements = static_cast<uint32_t>(n);
+      return;
     }
-    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), n);
-    for (size_t i = old_size; i < n; ++i) {
-      (void)Mutable(i);
+    reserve(n);
+    while (size() < n) {
+      const size_t before = size();
+      (void)Add();
+      if (size() == before) {
+        break;
+      }
     }
   }
   void resize(size_t n, const T& value) {
@@ -1333,34 +1787,65 @@ class MessageVectorField : public Field {
     assign(values.begin(), values.end());
   }
 
+  // A handle to an element from 'pos' on refers to the one before it
+  // afterwards, so it must not be in use across the insertion.
   iterator insert(const_iterator pos, const T& value) {
+    const MessageRuntime* runtime = GetRuntime();
+    if (value.runtime != nullptr && runtime != nullptr &&
+        value.runtime->pb == runtime->pb) {
+      // Copying from this buffer while adding to it could read memory that
+      // the buffer has moved from.  A value cached in 'value' is stored first,
+      // where 'value' is now, as it can be an element that moves.
+      if constexpr (internal::HasSyncToPayloadWork<T>::value) {
+        value.SyncToPayload();
+      }
+      T copy;
+      (void)copy.CloneFrom(value);
+      return insert(pos, copy);
+    }
     const size_t index = pos.Index();
-    std::vector<T> values = CopyValues();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index), value);
-    assign(values.begin(), values.end());
+    (void)T(BorrowedRuntime(GetRuntime()), InsertElement(index))
+        .CloneFrom(value);
     return iterator(this, index);
   }
   template <typename... Args>
   iterator emplace(const_iterator pos, Args&&... args) {
-    return insert(pos, T(std::forward<Args>(args)...));
+    if constexpr (sizeof...(Args) == 0) {
+      const size_t index = pos.Index();
+      (void)InsertElement(index);
+      return iterator(this, index);
+    } else {
+      return insert(pos, T(std::forward<Args>(args)...));
+    }
   }
+  // As for insert(), a handle to an element after those erased must not be
+  // in use across the erasure.
   iterator erase(const_iterator pos) {
-    const size_t index = pos.Index();
-    std::vector<T> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(index));
-    assign(values.begin(), values.end());
-    return iterator(this, index);
+    return erase(pos, const_iterator(this, pos.Index() + 1));
   }
   iterator erase(const_iterator first, const_iterator last) {
-    const size_t first_index = first.Index();
-    std::vector<T> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last.Index()));
-    assign(values.begin(), values.end());
-    return iterator(this, first_index);
+    const size_t index = first.Index();
+    const size_t count = last.Index() - index;
+    (void)GetBufferAddr();
+    if (count != 0) {
+      if constexpr (!internal::ClearReleasesNothing<T>::value) {
+        for (size_t i = index; i < index + count; ++i) {
+          internal::ReleaseMessageContents<T>(GetRuntime(), ElementOffset(i));
+        }
+      }
+      Ops::CloseElementsAt(*GetRuntime(), HeaderOffset(),
+                           static_cast<uint32_t>(index),
+                           static_cast<uint32_t>(count));
+    }
+    return iterator(this, index);
   }
+  // Neither vector may be in an element of the other.
   void swap(MessageVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*ResolvedVectorHeader(), *other.ResolvedVectorHeader());
       return;
     }
     const std::vector<T> mine = CopyValues();
@@ -1370,18 +1855,13 @@ class MessageVectorField : public Field {
   }
 
   void Clear() {
-    auto hdr = ResolvedVectorHeader();
-    auto data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
-    for (uint32_t i = 0; i < hdr->num_elements; i++) {
-      if (data[i] == 0) {
-        continue;
-      }
-      T(GetRuntime(), data[i]).Clear();
-      GetBuffer()->Free(GetRuntime()->ToAddress(data[i]));
+    ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+    if (hdr == nullptr) {
+      return;
     }
-    ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader());
+    (void)GetBufferAddr();
+    internal::ReleaseMessageVector<T>(GetRuntime(),
+                                      GetRuntime()->ToOffset(hdr));
   }
   void clear() { Clear(); }
 
@@ -1390,18 +1870,14 @@ class MessageVectorField : public Field {
   size_t Size() const { return NumElements(); }
 
   MessageVectorField& operator=(const MessageVectorField& other) {
-    if (this == &other) {
-      return *this;
+    if (this != &other) {
+      Assign(other);
     }
-    Clear();
-    reserve(other.size());
-    for (size_t i = 0; i < other.size(); i++) {
-      T m = Add();
-      if (absl::Status s = m.CloneFrom(other.Get(i)); !s.ok()) {
-        return *this;
-      }
-    }
-    ResetFieldCache();
+    return *this;
+  }
+  template <typename OtherLoc>
+  MessageVectorField& operator=(const MessageVectorField<T, OtherLoc>& other) {
+    Assign(other);
     return *this;
   }
   MessageVectorField& operator=(MessageVectorField&& other) noexcept {
@@ -1417,14 +1893,13 @@ class MessageVectorField : public Field {
     return *this;
   }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
+  ::phaser::BufferOffset BinaryEndOffset() const {
+    return Offset() + sizeof(::phaser::VectorHeader);
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
-    return relative_binary_offset_;
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Offset(); }
 
-  bool operator==(const MessageVectorField<T>& other) const {
+  template <typename OtherLoc>
+  bool operator==(const MessageVectorField<T, OtherLoc>& other) const {
     if (size() != other.size()) {
       return false;
     }
@@ -1435,7 +1910,8 @@ class MessageVectorField : public Field {
     }
     return true;
   }
-  bool operator!=(const MessageVectorField<T>& other) const {
+  template <typename OtherLoc>
+  bool operator!=(const MessageVectorField<T, OtherLoc>& other) const {
     return !operator==(other);
   }
   template <typename Allocator>
@@ -1486,7 +1962,7 @@ class MessageVectorField : public Field {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
@@ -1499,7 +1975,7 @@ class MessageVectorField : public Field {
           !status.ok()) {
         return status;
       }
-      if (absl::Status status = msg.Serialize(buffer); !status.ok()) {
+      if (absl::Status status = msg.PhaserSerialize(buffer); !status.ok()) {
         return status;
       }
     }
@@ -1519,13 +1995,23 @@ class MessageVectorField : public Field {
     return absl::OkStatus();
   }
 
-  void SyncToPayload() const {
-    for (size_t i = 0; i < size(); ++i) {
-      Get(i).SyncToPayload();
+  // Every element handle is a temporary that writes its cached values to the
+  // payload when it is destroyed, so no element has anything left to sync.
+  void SyncToPayload() const {}
+
+ private:
+  template <typename Other>
+  void Assign(const Other& other) {
+    Clear();
+    reserve(other.size());
+    for (size_t i = 0; i < other.size(); i++) {
+      T m = Add();
+      if (absl::Status s = m.CloneFrom(other.Get(i)); !s.ok()) {
+        return;
+      }
     }
   }
 
- private:
   std::vector<T> CopyValues() const {
     std::vector<T> result;
     result.reserve(size());
@@ -1537,74 +2023,82 @@ class MessageVectorField : public Field {
     return result;
   }
 
+  // Inserts an empty element at 'index' and returns its offset.
+  ::phaser::BufferOffset InsertElement(size_t index) {
+    (void)AddElement();
+    return Ops::OpenElementAt(*GetRuntime(), HeaderOffset(),
+                              static_cast<uint32_t>(index));
+  }
+
+  // The offset of the VectorHeader of a mutable message, which has its
+  // compiled layout.
+  ::phaser::BufferOffset HeaderOffset() const {
+    return Parent()->absolute_binary_offset + Offset();
+  }
+
+  // The offset of element 'index', or 0 if there is no such element.
+  ::phaser::BufferOffset ElementOffset(size_t index) const {
+    const int32_t offset = FindFieldOffset();
+    if (offset < 0) {
+      return 0;
+    }
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr || hdr->data == 0 || index >= hdr->num_elements) {
+      return 0;
+    }
+    const MessageRuntime& runtime = *GetRuntime();
+    const internal::MessageVectorLayout layout =
+        internal::LoadMessageVectorLayout(runtime, hdr->data);
+    if (index >= layout.Capacity()) {
+      return 0;
+    }
+    return internal::MessageVectorElement(runtime, layout,
+                                          static_cast<uint32_t>(index));
+  }
+
   friend FieldIterator<MessageVectorField, T>;
   friend FieldIterator<MessageVectorField, const T>;
-  toolbelt::VectorHeader* Header(
-      ::toolbelt::BufferOffset relative_offset = 0) const {
+  ::phaser::VectorHeader* Header(
+      ::phaser::BufferOffset relative_offset = 0) const {
     if (relative_offset == 0) {
-      relative_offset = relative_binary_offset_;
+      relative_offset = Offset();
     }
-    return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
+    return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
         GetMessageBinaryStart() + relative_offset);
   }
 
-  toolbelt::VectorHeader* ResolvedVectorHeader() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+  ::phaser::VectorHeader* ResolvedVectorHeader() const {
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
-      offset = static_cast<int32_t>(relative_binary_offset_);
+      offset = static_cast<int32_t>(Offset());
     }
     return Header(static_cast<uint32_t>(offset));
   }
 
-  ::toolbelt::BufferOffset BaseOffset() const {
-    int32_t offset = FindFieldOffset(source_offset_);
-    if (offset < 0) {
-      return 0;
-    }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
-    if (hdr == nullptr) {
-      return 0;
-    }
-    return hdr->data;
-  }
-
   size_t NumElements() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
-    if (hdr == nullptr) {
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    if (hdr == nullptr || hdr->data == 0) {
       return 0;
     }
-    return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
-                                           sizeof(::toolbelt::BufferOffset));
+    const MessageRuntime& runtime = *GetRuntime();
+    if (runtime.IsMutable()) {
+      return hdr->num_elements;
+    }
+    // A hostile count is limited to as many elements as the buffer could
+    // hold.  Reading an element checks that it is inside the buffer.
+    return std::min<size_t>(hdr->num_elements,
+                            runtime.TrustedSize() / sizeof(uint64_t));
   }
-
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-
- protected:
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
 };
 
 // This is a little more complex.  The binary vector contains a set of
-// ::toolbelt::BufferOffsets each of which contains the offset into the
-// ::toolbelt::PayloadBuffer of a toolbelt::StringHeader.  Each
-// toolbelt::StringHeader contains the offset of the string data which is a
+// ::phaser::BufferOffsets each of which contains the offset into the
+// ::phaser::PayloadBuffer of a ::phaser::StringHeader.  Each
+// ::phaser::StringHeader contains the offset of the string data which is a
 // length followed by the string contents.
 //
 // +-----------+
@@ -1616,26 +2110,19 @@ class MessageVectorField : public Field {
 // +-----------+                             |  "string"   |
 // |           |                             |   "data"    |
 // +-----------+                             +-------------+
-class StringVectorField : public Field {
- public:
-  StringVectorField() = default;
-  explicit StringVectorField(uint32_t source_offset,
-                             uint32_t relative_binary_offset, int id,
-                             int number)
-      : Field(id, number),
-        source_offset_(source_offset),
-        relative_binary_offset_(relative_binary_offset) {}
-  StringVectorField(const StringVectorField&) = default;
-  StringVectorField(StringVectorField&& other) noexcept
-      : Field(std::move(other)),
-        source_offset_(other.source_offset_),
-        relative_binary_offset_(other.relative_binary_offset_) {}
+template <typename Loc>
+class BasicStringVectorField : public FieldBase<Loc> {
+  PHASER_FIELD_BASE_MEMBERS(FieldBase<Loc>)
+  using FieldBase<Loc>::FieldBase;
+  BasicStringVectorField() = default;
+  BasicStringVectorField(const BasicStringVectorField&) = default;
+  BasicStringVectorField(BasicStringVectorField&&) = default;
 
   std::string_view operator[](int index) const {
     if (index < 0 || static_cast<size_t>(index) >= NumElements()) {
       return {};
     }
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset == -1) {
       return {};
     }
@@ -1643,19 +2130,21 @@ class StringVectorField : public Field {
     if (hdr == nullptr) {
       return {};
     }
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     if (data == nullptr || data[index] == 0) {
       return {};
     }
     return GetRuntime()->GetStringView(data[index]);
   }
 
+  // An element that has never held a string is made here, which can move
+  // the buffer, so a string from the buffer is given to it with Set().
   NonEmbeddedStringField operator[](int index) {
     if (index < 0 || static_cast<size_t>(index) >= NumElements()) {
       return {};
     }
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset == -1) {
       return {};
     }
@@ -1663,43 +2152,42 @@ class StringVectorField : public Field {
     if (hdr == nullptr) {
       return {};
     }
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     if (data == nullptr) {
       return {};
     }
     if (data[index] == 0) {
-      void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
-          GetBufferAddr(), sizeof(toolbelt::StringHeader));
+      void* str_hdr = ::phaser::PayloadBuffer::Allocate(
+          GetBufferAddr(), sizeof(::phaser::StringHeader));
       if (str_hdr == nullptr) {
         return {};
       }
-      const ::toolbelt::BufferOffset string_offset =
+      const ::phaser::BufferOffset string_offset =
           GetRuntime()->ToOffset(str_hdr);
       hdr = ResolvedVectorHeader();
       if (hdr == nullptr) {
         return {};
       }
       data =
-          GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+          GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
       if (data == nullptr) {
         return {};
       }
       data[index] = string_offset;
     }
-    return NonEmbeddedStringField(Message::GetMessage(this, source_offset_),
-                                  data[index]);
+    return NonEmbeddedStringField(Parent(), data[index]);
   }
 
   NonEmbeddedStringField at(size_t index) {
     if (index >= size()) {
-      throw std::out_of_range("StringVectorField::at");
+      PHASER_THROW(std::out_of_range("StringVectorField::at"));
     }
     return (*this)[static_cast<int>(index)];
   }
   std::string_view at(size_t index) const {
     if (index >= size()) {
-      throw std::out_of_range("StringVectorField::at");
+      PHASER_THROW(std::out_of_range("StringVectorField::at"));
     }
     return Get(index);
   }
@@ -1720,7 +2208,7 @@ class StringVectorField : public Field {
     using reference = std::string_view;
 
     const_iterator() = default;
-    const_iterator(const StringVectorField* field, size_t index)
+    const_iterator(const BasicStringVectorField* field, size_t index)
         : field_(field), index_(index) {}
     std::string_view operator*() const { return field_->Get(index_); }
     const_iterator& operator++() {
@@ -1750,7 +2238,7 @@ class StringVectorField : public Field {
     size_t Index() const { return index_; }
 
    private:
-    const StringVectorField* field_ = nullptr;
+    const BasicStringVectorField* field_ = nullptr;
     size_t index_ = 0;
   };
   using iterator = const_iterator;
@@ -1787,34 +2275,45 @@ class StringVectorField : public Field {
   }
   std::string_view back() const { return Get(size() - 1); }
 
-  StringVectorField& operator=(const StringVectorField& other) {
-    if (this == &other) {
-      return *this;
+  BasicStringVectorField& operator=(const BasicStringVectorField& other) {
+    if (this != &other) {
+      Assign(other);
     }
-    Clear();
-    reserve(other.size());
-    for (size_t i = 0; i < other.size(); i++) {
-      push_back(other.Get(i));
-    }
-    ResetFieldCache();
+    return *this;
+  }
+  template <typename OtherLoc>
+  BasicStringVectorField& operator=(
+      const BasicStringVectorField<OtherLoc>& other) {
+    Assign(other);
     return *this;
   }
 
-  StringVectorField& operator=(StringVectorField&& other) noexcept {
-    return operator=(static_cast<const StringVectorField&>(other));
+  BasicStringVectorField& operator=(BasicStringVectorField&& other) noexcept {
+    return operator=(static_cast<const BasicStringVectorField&>(other));
   }
 
   template <typename Str>
   void push_back(Str s) {
+    const ::phaser::StringSource source(*GetBufferAddr(), std::string_view(s));
     // Allocate string header in buffer.
-    void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
-        GetBufferAddr(), sizeof(toolbelt::StringHeader));
-    ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
-    ::toolbelt::PayloadBuffer::SetString(GetBufferAddr(), s, hdr_offset);
+    void* str_hdr = ::phaser::PayloadBuffer::Allocate(
+        GetBufferAddr(), sizeof(::phaser::StringHeader));
+    if (str_hdr == nullptr) {
+      return;
+    }
+    ::phaser::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
+    if (::phaser::PayloadBuffer::SetString(
+            GetBufferAddr(), source.In(*GetBufferAddr()), hdr_offset) ==
+        nullptr) {
+      GetBuffer()->FreeAt(hdr_offset);
+      return;
+    }
 
     // Add an offset for the new string to the binary.
-    ::toolbelt::PayloadBuffer::VectorPush<::toolbelt::BufferOffset>(
-        GetBufferAddr(), ResolvedVectorHeader(), hdr_offset);
+    if (!::phaser::PayloadBuffer::VectorPush<::phaser::BufferOffset>(
+            GetBufferAddr(), ResolvedVectorHeader(), hdr_offset)) {
+      GetBuffer()->FreeAt(hdr_offset);
+    }
   }
 
   template <typename Str>
@@ -1839,37 +2338,54 @@ class StringVectorField : public Field {
 
   template <typename Str>
   void Set(size_t index, Str s) {
+    const ::phaser::StringSource source(*GetBufferAddr(), std::string_view(s));
     if (index >= size()) {
-      ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
-          GetBufferAddr(), ResolvedVectorHeader(), index + 1);
+      if (!::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
+              GetBufferAddr(), ResolvedVectorHeader(), index + 1)) {
+        return;
+      }
     }
 
     auto hdr = ResolvedVectorHeader();
-    ::toolbelt::BufferOffset* data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+    if (hdr == nullptr) {
+      return;
+    }
+    ::phaser::BufferOffset* data =
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+    if (data == nullptr) {
+      return;
+    }
     if (data[index] == 0) {
       // Allocate string header in buffer.
-      void* str_hdr = ::toolbelt::PayloadBuffer::Allocate(
-          GetBufferAddr(), sizeof(toolbelt::StringHeader));
-      ::toolbelt::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
+      void* str_hdr = ::phaser::PayloadBuffer::Allocate(
+          GetBufferAddr(), sizeof(::phaser::StringHeader));
+      if (str_hdr == nullptr) {
+        return;
+      }
+      ::phaser::BufferOffset hdr_offset = GetRuntime()->ToOffset(str_hdr);
 
       hdr = ResolvedVectorHeader();
+      if (hdr == nullptr) {
+        return;
+      }
       data =
-          GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+          GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+      if (data == nullptr) {
+        return;
+      }
       data[index] = hdr_offset;
     }
-    NonEmbeddedStringField(Message::GetMessage(this, source_offset_),
-                           data[index])
-        .Set(s);
+    NonEmbeddedStringField(Parent(), data[index])
+        .Set(source.In(*GetBufferAddr()));
   }
 
   size_t capacity() const {
     return GetRuntime()->AllocatedCapacity(BaseOffset(),
-                                           sizeof(::toolbelt::BufferOffset));
+                                           sizeof(::phaser::BufferOffset));
   }
 
   void reserve(size_t n) {
-    ::toolbelt::PayloadBuffer::VectorReserve<::toolbelt::BufferOffset>(
+    ::phaser::PayloadBuffer::VectorReserve<::phaser::BufferOffset>(
         GetBufferAddr(), ResolvedVectorHeader(), n);
   }
 
@@ -1878,17 +2394,15 @@ class StringVectorField : public Field {
     if (n < old_size) {
       for (size_t i = n; i < old_size; ++i) {
         auto hdr = ResolvedVectorHeader();
-        auto data = GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(
+        auto data = GetRuntime()->template ToAddress<::phaser::BufferOffset>(
             hdr->data);
-        const ::toolbelt::BufferOffset offset = data[i];
+        const ::phaser::BufferOffset offset = data[i];
         if (offset != 0) {
-          NonEmbeddedStringField(Message::GetMessage(this, source_offset_),
-                                 offset)
-              .Clear();
+          NonEmbeddedStringField(Parent(), offset).Clear();
         }
       }
     }
-    ::toolbelt::PayloadBuffer::VectorResize<::toolbelt::BufferOffset>(
+    ::phaser::PayloadBuffer::VectorResize<::phaser::BufferOffset>(
         GetBufferAddr(), ResolvedVectorHeader(), n);
   }
   void resize(size_t n, std::string_view value) {
@@ -1927,33 +2441,49 @@ class StringVectorField : public Field {
 
   iterator insert(const_iterator pos, std::string_view value) {
     const size_t index = pos.Index();
-    std::vector<std::string> values = CopyValues();
-    values.insert(values.begin() + static_cast<ptrdiff_t>(index),
-                  std::string(value));
-    assign(values.begin(), values.end());
+    push_back(value);
+    ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+    internal::MoveLastTo(
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data),
+        hdr->num_elements, index);
     return iterator(this, index);
   }
   template <typename... Args>
   iterator emplace(const_iterator pos, Args&&... args) {
-    return insert(pos, std::string(std::forward<Args>(args)...));
+    if constexpr (std::is_constructible_v<std::string_view, Args&&...>) {
+      return insert(pos, std::string_view(std::forward<Args>(args)...));
+    } else {
+      return insert(pos, std::string(std::forward<Args>(args)...));
+    }
   }
   iterator erase(const_iterator pos) {
-    const size_t index = pos.Index();
-    std::vector<std::string> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(index));
-    assign(values.begin(), values.end());
-    return iterator(this, index);
+    return erase(pos, const_iterator(this, pos.Index() + 1));
   }
   iterator erase(const_iterator first, const_iterator last) {
-    const size_t first_index = first.Index();
-    std::vector<std::string> values = CopyValues();
-    values.erase(values.begin() + static_cast<ptrdiff_t>(first_index),
-                 values.begin() + static_cast<ptrdiff_t>(last.Index()));
-    assign(values.begin(), values.end());
-    return iterator(this, first_index);
+    const size_t index = first.Index();
+    const size_t count = last.Index() - index;
+    (void)GetBufferAddr();
+    if (count != 0) {
+      ::phaser::VectorHeader* hdr = ResolvedVectorHeader();
+      ::phaser::BufferOffset* data =
+          GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
+      for (size_t i = index; i < index + count; ++i) {
+        if (data[i] != 0) {
+          NonEmbeddedStringField(Parent(), data[i]).Clear();
+        }
+      }
+      memmove(data + index, data + index + count,
+              (hdr->num_elements - index - count) * sizeof(*data));
+      hdr->num_elements -= static_cast<uint32_t>(count);
+    }
+    return iterator(this, index);
   }
-  void swap(StringVectorField& other) {
+  void swap(BasicStringVectorField& other) {
     if (this == &other) {
+      return;
+    }
+    if (*GetBufferAddr() == *other.GetBufferAddr()) {
+      std::swap(*ResolvedVectorHeader(), *other.ResolvedVectorHeader());
       return;
     }
     const std::vector<std::string> mine = CopyValues();
@@ -1965,39 +2495,39 @@ class StringVectorField : public Field {
   void Clear() {
     auto hdr = ResolvedVectorHeader();
     auto data =
-        GetRuntime()->template ToAddress<::toolbelt::BufferOffset>(hdr->data);
+        GetRuntime()->template ToAddress<::phaser::BufferOffset>(hdr->data);
     for (size_t i = 0; i < hdr->num_elements; ++i) {
-      const ::toolbelt::BufferOffset offset = data[i];
+      const ::phaser::BufferOffset offset = data[i];
       if (offset == 0) {
         continue;
       }
-      NonEmbeddedStringField(Message::GetMessage(this, source_offset_), offset)
-          .Clear();
+      NonEmbeddedStringField(Parent(), offset).Clear();
     }
-    ::toolbelt::PayloadBuffer::VectorClear<::toolbelt::BufferOffset>(
+    ::phaser::PayloadBuffer::VectorClear<::phaser::BufferOffset>(
         GetBufferAddr(), ResolvedVectorHeader());
   }
 
   void clear() { Clear(); }  // STL compatibility.
 
-  StringVectorField& operator=(std::initializer_list<std::string_view> values) {
+  BasicStringVectorField& operator=(
+      std::initializer_list<std::string_view> values) {
     assign(values);
     return *this;
   }
   template <typename String, typename Allocator>
-  StringVectorField& operator=(const std::vector<String, Allocator>& values) {
+  BasicStringVectorField& operator=(
+      const std::vector<String, Allocator>& values) {
     assign(values.begin(), values.end());
     return *this;
   }
 
-  ::toolbelt::BufferOffset BinaryEndOffset() const {
-    return relative_binary_offset_ + sizeof(toolbelt::VectorHeader);
+  ::phaser::BufferOffset BinaryEndOffset() const {
+    return Offset() + sizeof(::phaser::VectorHeader);
   }
-  ::toolbelt::BufferOffset BinaryOffset() const {
-    return relative_binary_offset_;
-  }
+  ::phaser::BufferOffset BinaryOffset() const { return Offset(); }
 
-  bool operator==(const StringVectorField& other) const {
+  template <typename OtherLoc>
+  bool operator==(const BasicStringVectorField<OtherLoc>& other) const {
     if (size() != other.size()) {
       return false;
     }
@@ -2008,7 +2538,8 @@ class StringVectorField : public Field {
     }
     return true;
   }
-  bool operator!=(const StringVectorField& other) const {
+  template <typename OtherLoc>
+  bool operator!=(const BasicStringVectorField<OtherLoc>& other) const {
     return !(*this == other);
   }
   template <typename String, typename Allocator>
@@ -2029,12 +2560,12 @@ class StringVectorField : public Field {
   }
   template <typename String, typename Allocator>
   friend bool operator==(const std::vector<String, Allocator>& lhs,
-                         const StringVectorField& rhs) {
+                         const BasicStringVectorField& rhs) {
     return rhs == lhs;
   }
   template <typename String, typename Allocator>
   friend bool operator!=(const std::vector<String, Allocator>& lhs,
-                         const StringVectorField& rhs) {
+                         const BasicStringVectorField& rhs) {
     return !(rhs == lhs);
   }
 
@@ -2058,7 +2589,7 @@ class StringVectorField : public Field {
     return length;
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     size_t sz = size();
     if (sz == 0) {
       return absl::OkStatus();
@@ -2085,6 +2616,14 @@ class StringVectorField : public Field {
   }
 
  private:
+  template <typename Other>
+  void Assign(const Other& other) {
+    Clear();
+    reserve(other.size());
+    for (size_t i = 0; i < other.size(); i++) {
+      push_back(other.Get(i));
+    }
+  }
   std::vector<std::string> CopyValues() const {
     std::vector<std::string> result;
     result.reserve(size());
@@ -2094,33 +2633,29 @@ class StringVectorField : public Field {
     return result;
   }
 
-  toolbelt::VectorHeader* Header(
-      ::toolbelt::BufferOffset relative_offset = 0) const {
+  ::phaser::VectorHeader* Header(
+      ::phaser::BufferOffset relative_offset = 0) const {
     if (relative_offset == 0) {
-      relative_offset = relative_binary_offset_;
+      relative_offset = Offset();
     }
-    return GetRuntime()->template ToAddress<toolbelt::VectorHeader>(
+    return GetRuntime()->template ToAddress<::phaser::VectorHeader>(
         GetMessageBinaryStart() + relative_offset);
   }
 
-  toolbelt::VectorHeader* ResolvedVectorHeader() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+  ::phaser::VectorHeader* ResolvedVectorHeader() const {
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
-      offset = static_cast<int32_t>(relative_binary_offset_);
+      offset = static_cast<int32_t>(Offset());
     }
     return Header(static_cast<uint32_t>(offset));
   }
 
-  const std::shared_ptr<MessageRuntime>& GetRuntime() const {
-    return Message::GetRuntime(this, source_offset_);
-  }
-
-  ::toolbelt::BufferOffset BaseOffset() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+  ::phaser::BufferOffset BaseOffset() const {
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return 0;
     }
@@ -2128,33 +2663,74 @@ class StringVectorField : public Field {
   }
 
   size_t NumElements() const {
-    int32_t offset = FindFieldOffset(source_offset_);
+    int32_t offset = FindFieldOffset();
     if (offset < 0) {
       return 0;
     }
-    const toolbelt::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
+    const ::phaser::VectorHeader* hdr = Header(static_cast<uint32_t>(offset));
     if (hdr == nullptr) {
       return 0;
     }
     return GetRuntime()->ClampElementCount(hdr->data, hdr->num_elements,
-                                           sizeof(::toolbelt::BufferOffset));
+                                           sizeof(::phaser::BufferOffset));
   }
-
-  ::toolbelt::PayloadBuffer* GetBuffer() const {
-    return Message::GetBuffer(this, source_offset_);
-  }
-
-  ::toolbelt::PayloadBuffer** GetBufferAddr() const {
-    return Message::GetBufferAddr(this, source_offset_);
-  }
-  ::toolbelt::BufferOffset GetMessageBinaryStart() const {
-    return Message::GetMessageBinaryStart(this, source_offset_);
-  }
-  uint32_t source_offset_;
-  ::toolbelt::BufferOffset relative_binary_offset_;
 };
+
+using StringVectorField = BasicStringVectorField<StoredFieldLoc>;
 
 #undef DECLARE_ZERO_COPY_VECTOR_BITS
 #undef DECLARE_RELAY_VECTOR_BITS
+
+namespace internal {
+template <typename T, bool FixedSize, bool Signed, bool Packed, typename L>
+struct FieldRelease<PrimitiveVectorField<T, FixedSize, Signed, Packed, L>>
+    : VectorDataRelease {};
+
+template <typename Enum, typename Stringizer, typename Parser, bool Packed,
+          typename L>
+struct FieldRelease<EnumVectorField<Enum, Stringizer, Parser, Packed, L>>
+    : VectorDataRelease {};
+
+template <typename T, typename L>
+struct FieldRelease<MessageVectorField<T, L>> : MessageVectorRelease<T> {};
+
+template <typename T, bool FixedSize, bool Signed, bool Packed, typename L>
+struct FieldResetClear<PrimitiveVectorField<T, FixedSize, Signed, Packed, L>>
+    : NoResetClear {};
+
+template <typename Enum, typename Stringizer, typename Parser, bool Packed,
+          typename L>
+struct FieldResetClear<EnumVectorField<Enum, Stringizer, Parser, Packed, L>>
+    : NoResetClear {};
+
+template <typename T, typename L>
+struct FieldResetClear<MessageVectorField<T, L>> : NoResetClear {};
+
+template <typename L>
+struct FieldResetClear<BasicStringVectorField<L>> : NoResetClear {};
+
+template <typename L>
+struct FieldRelease<BasicStringVectorField<L>> : std::true_type {
+  static void Release(const RuntimeHandle& runtime,
+                      ::phaser::BufferOffset field) {
+    ::phaser::PayloadBuffer* pb = runtime->pb;
+    const ::phaser::VectorHeader* hdr =
+        PayloadAt<::phaser::VectorHeader>(pb, field);
+    if (hdr == nullptr) {
+      return;
+    }
+    const ::phaser::BufferOffset* data =
+        PayloadAt<::phaser::BufferOffset>(pb, hdr->data, hdr->num_elements);
+    if (data != nullptr) {
+      for (uint32_t i = 0; i < hdr->num_elements; ++i) {
+        if (data[i] != 0) {
+          pb->FreeAt(OffsetAt(pb, data[i]));
+        }
+      }
+    }
+    pb->FreeAt(hdr->data);
+  }
+};
+}  // namespace internal
 
 }  // namespace phaser

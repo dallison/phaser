@@ -108,6 +108,57 @@ TEST(RosIntrinsicsTest, CopyAndMovePreserveDeferredValues) {
   EXPECT_EQ(ReadFrame(moved.header), "map");
 }
 
+template <typename T, typename Loc>
+::phaser::BufferOffset InlineMessageStart(
+    const ::phaser::InlineMessageField<T, Loc>& field) {
+  return field.Get().absolute_binary_offset;
+}
+
+TEST(RosIntrinsicsTest, NestedMessagesAreInsideTheMessage) {
+  RosIntrinsicMessage message;
+  MutateTime(message.stamp);
+  MutateHeader(message.header);
+  message.SyncToPayload();
+
+  const ::phaser::BufferOffset start = message.absolute_binary_offset;
+  const ::phaser::BufferOffset end = static_cast<::phaser::BufferOffset>(
+      start + RosIntrinsicMessage::BinarySize());
+  const ::phaser::BufferOffset stamp = InlineMessageStart(message.stamp);
+  const ::phaser::BufferOffset header = InlineMessageStart(message.header);
+  EXPECT_GT(stamp, start);
+  EXPECT_LT(stamp, end);
+  EXPECT_GT(header, start);
+  EXPECT_LT(header, end);
+  EXPECT_EQ(message.stamp->sec, 12u);
+  EXPECT_EQ(message.header->stamp.sec, 21u);
+}
+
+TEST(RosIntrinsicsTest, MessageSizeCountsTheHeaderOnce) {
+  // The metadata offset, the presence mask, then int64 seconds and int32 nanos.
+  EXPECT_EQ(::google::protobuf::phaser::Timestamp::BinarySize(),
+            4u + 4u + 8u + 4u);
+}
+
+TEST(RosIntrinsicsTest, ClearingAnInlineMessageRemovesIt) {
+  RosIntrinsicMessage message;
+  const RosIntrinsicMessage& view = message;
+  MutateHeader(message.header);
+  ASSERT_TRUE(message.header.IsPresent());
+
+  message.header.Clear();
+  EXPECT_FALSE(message.header.IsPresent());
+  EXPECT_EQ(view.header->seq, 0u);
+  EXPECT_EQ(ReadFrame(view.header), "");
+
+  MutateHeader(message.header);
+  EXPECT_EQ(view.header->seq, 9u);
+  EXPECT_EQ(ReadFrame(view.header), "map");
+
+  message.Clear();
+  EXPECT_FALSE(message.header.IsPresent());
+  EXPECT_FALSE(message.stamp.IsPresent());
+}
+
 void FillRepeated(RosIntrinsicMessage& message) {
   message.stamps.Add(::ros::Time(1, 2));
   message.stamps.Add(::ros::Time(3, 4));
@@ -194,6 +245,44 @@ TEST(RosIntrinsicsTest, RepeatedIntrinsicsUseEightRosBytesPerElement) {
   // A fixed extent is always serialized in full, so only the unbounded fields
   // move: sec and nsec, four bytes each, with the sequence length unchanged.
   EXPECT_EQ(populated.ROSSerializedSize(), empty.ROSSerializedSize() + 3 * 8);
+}
+
+TEST(RosIntrinsicsTest, IntrinsicsChangedThroughElementHandlesReachThePayload) {
+  StampedChildren message;
+  for (uint32_t i = 0; i < 3; i++) {
+    auto child = message.children.Add();
+    child.stamp = ::ros::Time(10 + i, 20 + i);
+    MutateHeader(child.header);
+  }
+  message.children[1].stamp = ::ros::Time(40, 50);
+  MutateTime(message.children[2].stamp);
+  {
+    auto child = message.children.Add();
+    child.stamp->sec = 70;
+    child.stamp->nsec = 80;
+  }
+
+  auto expect = [](const StampedChildren& m) {
+    ASSERT_EQ(m.children.size(), 4u);
+    EXPECT_EQ(m.children.Get(0).stamp.Get(), ::ros::Time(10, 20));
+    EXPECT_EQ(m.children.Get(1).stamp.Get(), ::ros::Time(40, 50));
+    EXPECT_EQ(m.children.Get(2).stamp.Get(), ::ros::Time(12, 345));
+    EXPECT_EQ(m.children.Get(3).stamp.Get(), ::ros::Time(70, 80));
+    for (size_t i = 0; i < 3; i++) {
+      EXPECT_EQ(m.children.Get(i).header->seq, 9u);
+      EXPECT_EQ(m.children.Get(i).header->stamp, ::ros::Time(21, 654));
+    }
+  };
+  expect(message);
+
+  std::string ros_wire;
+  ASSERT_TRUE(message.SerializeToROSString(&ros_wire).ok());
+  StampedChildren parsed;
+  ASSERT_TRUE(parsed
+                  .ParseFromROS(absl::Span<const char>(ros_wire.data(),
+                                                       ros_wire.size()))
+                  .ok());
+  expect(parsed);
 }
 
 TEST(RosIntrinsicsTest, RepeatedIntrinsicsClone) {

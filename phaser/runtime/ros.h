@@ -22,6 +22,8 @@
 
 #include "phaser/runtime/arrays.h"
 #include "phaser/runtime/fields.h"
+#include "phaser/runtime/ros_direct.h"
+#include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/vectors.h"
 
 namespace phaser {
@@ -59,6 +61,13 @@ struct RosTimeTraits {
     backend.set_nanos(static_cast<int32_t>(value.nsec));
   }
 
+  // Writes the ROS encoding of 'value', which is kROSSize bytes.
+  static constexpr size_t kROSSize = 2 * sizeof(uint32_t);
+  static void EncodeROS(const RosType& value, char* out) {
+    ROSBuffer::Encode<uint32_t>(out, value.sec);
+    ROSBuffer::Encode<uint32_t>(out + sizeof(uint32_t), value.nsec);
+  }
+
   static void Print(std::ostream& os, const RosType& value) {
     os << "sec: " << value.sec << " nsec: " << value.nsec;
   }
@@ -79,10 +88,26 @@ struct RosDurationTraits {
     backend.set_nanos(static_cast<int32_t>(value.nsec));
   }
 
+  // Writes the ROS encoding of 'value', which is kROSSize bytes.
+  static constexpr size_t kROSSize = 2 * sizeof(int32_t);
+  static void EncodeROS(const RosType& value, char* out) {
+    ROSBuffer::Encode<int32_t>(out, value.sec);
+    ROSBuffer::Encode<int32_t>(out + sizeof(int32_t), value.nsec);
+  }
+
   static void Print(std::ostream& os, const RosType& value) {
     os << "sec: " << value.sec << " nsec: " << value.nsec;
   }
 };
+
+// Traits whose values a backend of a fixed ROS size can parse straight into
+// the payload.
+template <typename Traits, typename = void>
+struct HasROSEncoding : std::false_type {};
+
+template <typename Traits>
+struct HasROSEncoding<Traits, std::void_t<decltype(&Traits::EncodeROS)>>
+    : std::true_type {};
 
 struct RosHeaderTraits {
   using RosType = ::std_msgs::Header;
@@ -126,21 +151,54 @@ struct RosHeaderTraits {
 
 }  // namespace internal
 
-template <typename Backend, typename Traits>
-class RosMessageField : public IndirectMessageField<Backend> {
+// A changed value is cached until SyncToPayload() or the handle's destruction,
+// so it also reaches the payload through a temporary handle such as a repeated
+// element.  ROS serialization reads the cache and needs no payload copy.
+template <typename Backend, typename Traits, bool kInline = false,
+          typename Loc = StoredFieldLoc>
+class RosMessageField : public IndirectMessageField<Backend, kInline, Loc> {
  public:
-  using Base = IndirectMessageField<Backend>;
+  using Base = IndirectMessageField<Backend, kInline, Loc>;
   using RosType = typename Traits::RosType;
-  using Base::Base;
 
   RosMessageField() = default;
-  RosMessageField(const RosMessageField&) = default;
-  RosMessageField(RosMessageField&&) = default;
+  explicit RosMessageField(SourceOffset source)
+      : Base(source), in_message_(true) {}
+  explicit RosMessageField(uint32_t source_offset,
+                           uint32_t relative_binary_offset, int id, int number)
+      : Base(source_offset, relative_binary_offset, id, number),
+        in_message_(true) {}
+  // Generated messages never copy their fields, so a copy is not inside a
+  // message and has no payload to write to.
+  RosMessageField(const RosMessageField& other)
+      : Base(other),
+        cache_(other.cache_),
+        cache_loaded_(other.cache_loaded_),
+        dirty_(other.dirty_) {}
+  RosMessageField(RosMessageField&& other) noexcept
+      : Base(std::move(other)),
+        cache_(other.cache_),
+        cache_loaded_(other.cache_loaded_),
+        dirty_(other.dirty_),
+        in_message_(other.in_message_) {
+    other.dirty_ = false;
+  }
+  ~RosMessageField() {
+    if (dirty_ && CanWriteToPayload()) {
+      SyncToPayload();
+    }
+  }
 
   RosMessageField& operator=(const RosMessageField& other) {
     if (this != &other) {
       Set(other.Get());
     }
+    return *this;
+  }
+  template <typename OtherLoc>
+  RosMessageField& operator=(
+      const RosMessageField<Backend, Traits, kInline, OtherLoc>& other) {
+    Set(other.Get());
     return *this;
   }
 
@@ -185,30 +243,35 @@ class RosMessageField : public IndirectMessageField<Backend> {
 
   void Clear() {
     Base::Clear();
+    ClearHandle();
+  }
+
+  void ClearHandle() {
+    if constexpr (internal::FieldResetClear<Base>::value ==
+                  internal::ResetClear::kHandle) {
+      Base::ClearHandle();
+    }
     cache_ = RosType();
     cache_loaded_ = false;
     dirty_ = false;
   }
 
   void SyncToPayload() const {
-    if (!dirty_) {
-      if (Base::IsPresent()) {
-        Base::Get().SyncToPayload();
-      }
+    if (dirty_) {
+      StoreCache();
       return;
     }
-    Backend* backend = const_cast<RosMessageField*>(this)->Base::Mutable();
-    Traits::Store(cache_, *backend);
-    dirty_ = false;
-    cache_loaded_ = true;
+    Base::SyncToPayload();
   }
+
+  bool SyncPending() const { return dirty_ || Base::SyncPending(); }
 
   size_t SerializedSize() const {
     SyncToPayload();
     return Base::SerializedSize();
   }
 
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     SyncToPayload();
     return Base::Serialize(buffer);
   }
@@ -229,6 +292,28 @@ class RosMessageField : public IndirectMessageField<Backend> {
   }
 
  private:
+  // Writes the cached value, which has changed, to the payload.  Not inlined,
+  // so that syncing an unchanged field is only a test.
+  ABSL_ATTRIBUTE_NOINLINE void StoreCache() const {
+    auto* self = const_cast<RosMessageField*>(this);
+    if constexpr (kInline && internal::HasROSEncoding<Traits>::value &&
+                  internal::HasROSUncheckedParseAt<Backend>::value) {
+      static_assert(Backend::PhaserROSMinSize() == Traits::kROSSize);
+      if (self->InMutableMessage()) {
+        char encoded[Traits::kROSSize];
+        Traits::EncodeROS(cache_, encoded);
+        self->StoreFromROSUnchecked(encoded);
+        dirty_ = false;
+        cache_loaded_ = true;
+        return;
+      }
+    }
+    Backend* backend = self->Base::Mutable();
+    Traits::Store(cache_, *backend);
+    dirty_ = false;
+    cache_loaded_ = true;
+  }
+
   void LoadCache() const {
     if (cache_loaded_ || dirty_) {
       return;
@@ -240,17 +325,27 @@ class RosMessageField : public IndirectMessageField<Backend> {
     cache_loaded_ = true;
   }
 
+  bool CanWriteToPayload() const {
+    if (!in_message_) {
+      return false;
+    }
+    const RuntimeHandle& runtime = Base::GetRuntime();
+    return runtime != nullptr && runtime->IsMutable();
+  }
+
   mutable RosType cache_;
   mutable bool cache_loaded_ = false;
   mutable bool dirty_ = false;
+  bool in_message_ = false;
 };
 
-template <typename Backend>
-using RosTimeField = RosMessageField<Backend, internal::RosTimeTraits>;
+template <typename Backend, bool kInline = false, typename Loc = StoredFieldLoc>
+using RosTimeField =
+    RosMessageField<Backend, internal::RosTimeTraits, kInline, Loc>;
 
-template <typename Backend>
+template <typename Backend, bool kInline = false, typename Loc = StoredFieldLoc>
 using RosDurationField =
-    RosMessageField<Backend, internal::RosDurationTraits>;
+    RosMessageField<Backend, internal::RosDurationTraits, kInline, Loc>;
 
 // Presents a repeated Phaser message field as a sequence of ROS values, so a
 // ROS `time[]` or `duration[]` reads and writes as `::ros::Time` rather than as
@@ -436,24 +531,24 @@ class RosRepeatedMessageField : public Sequence {
   }
 };
 
-template <typename Backend>
+template <typename Backend, typename Loc = StoredFieldLoc>
 using RosTimeVectorField =
-    RosRepeatedMessageField<MessageVectorField<Backend>,
+    RosRepeatedMessageField<MessageVectorField<Backend, Loc>,
                             internal::RosTimeTraits>;
 
-template <typename Backend>
+template <typename Backend, typename Loc = StoredFieldLoc>
 using RosDurationVectorField =
-    RosRepeatedMessageField<MessageVectorField<Backend>,
+    RosRepeatedMessageField<MessageVectorField<Backend, Loc>,
                             internal::RosDurationTraits>;
 
-template <typename Backend, size_t N>
+template <typename Backend, size_t N, typename Loc = StoredFieldLoc>
 using RosTimeArrayField =
-    RosRepeatedMessageField<MessageArrayField<Backend, N>,
+    RosRepeatedMessageField<MessageArrayField<Backend, N, Loc>,
                             internal::RosTimeTraits>;
 
-template <typename Backend, size_t N>
+template <typename Backend, size_t N, typename Loc = StoredFieldLoc>
 using RosDurationArrayField =
-    RosRepeatedMessageField<MessageArrayField<Backend, N>,
+    RosRepeatedMessageField<MessageArrayField<Backend, N, Loc>,
                             internal::RosDurationTraits>;
 
 template <typename Owner>
@@ -521,11 +616,11 @@ class RosHeaderMutableView {
   FrameIdProxy frame_id;
 };
 
-template <typename Backend>
-class RosHeaderField : public IndirectMessageField<Backend> {
+template <typename Backend, bool kInline = false, typename Loc = StoredFieldLoc>
+class RosHeaderField : public IndirectMessageField<Backend, kInline, Loc> {
  public:
-  using Base = IndirectMessageField<Backend>;
-  using MutableView = RosHeaderMutableView<RosHeaderField<Backend>>;
+  using Base = IndirectMessageField<Backend, kInline, Loc>;
+  using MutableView = RosHeaderMutableView<RosHeaderField>;
   using Base::Base;
 
   struct ConstArrow {
@@ -545,6 +640,12 @@ class RosHeaderField : public IndirectMessageField<Backend> {
     if (this != &other) {
       Set(other.Get());
     }
+    return *this;
+  }
+  template <typename OtherLoc>
+  RosHeaderField& operator=(
+      const RosHeaderField<Backend, kInline, OtherLoc>& other) {
+    Set(other.Get());
     return *this;
   }
   RosHeaderField& operator=(RosHeaderField&& other) {
@@ -608,17 +709,13 @@ class RosHeaderField : public IndirectMessageField<Backend> {
 
   void Clear() { Base::Clear(); }
 
-  void SyncToPayload() const {
-    if (Base::IsPresent()) {
-      Base::Get().SyncToPayload();
-    }
-  }
+  void SyncToPayload() const { Base::SyncToPayload(); }
 
   size_t SerializedSize() const {
     SyncToPayload();
     return Base::SerializedSize();
   }
-  absl::Status Serialize(ProtoBuffer& buffer) const {
+  absl::Status Serialize(ProtoMessageWriter buffer) const {
     SyncToPayload();
     return Base::Serialize(buffer);
   }
@@ -632,5 +729,38 @@ class RosHeaderField : public IndirectMessageField<Backend> {
     return os;
   }
 };
+
+namespace internal {
+template <typename Backend, typename Traits, bool kInline, typename L>
+struct FieldRelease<RosMessageField<Backend, Traits, kInline, L>>
+    : FieldRelease<IndirectMessageField<Backend, kInline, L>> {};
+
+template <typename Backend, bool kInline, typename L>
+struct FieldRelease<RosHeaderField<Backend, kInline, L>>
+    : FieldRelease<IndirectMessageField<Backend, kInline, L>> {};
+
+template <typename Sequence, typename Traits>
+struct FieldRelease<RosRepeatedMessageField<Sequence, Traits>>
+    : FieldRelease<Sequence> {};
+
+// Clear() resets the cached ROS value, which needs nothing from the payload
+// unless clearing the backend does.
+template <typename Backend, typename Traits, bool kInline, typename L>
+struct FieldResetClear<RosMessageField<Backend, Traits, kInline, L>>
+    : std::integral_constant<
+          ResetClear,
+          FieldResetClear<IndirectMessageField<Backend, kInline, L>>::value ==
+                  ResetClear::kBefore
+              ? ResetClear::kBefore
+              : ResetClear::kHandle> {};
+
+template <typename Backend, bool kInline, typename L>
+struct FieldResetClear<RosHeaderField<Backend, kInline, L>>
+    : FieldResetClear<IndirectMessageField<Backend, kInline, L>> {};
+
+template <typename Sequence, typename Traits>
+struct FieldResetClear<RosRepeatedMessageField<Sequence, Traits>>
+    : FieldResetClear<Sequence> {};
+}  // namespace internal
 
 }  // namespace phaser
