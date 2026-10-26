@@ -755,6 +755,114 @@ void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
        << name << ">* out) {\n";
     os << "    return ::phaser::arrow::MessagesFromArrow(schema, array, out);\n";
     os << "  }\n";
+    os << "  static absl::Status ToAvro(absl::Span<const " << name
+       << "> messages, std::string* out) {\n";
+    os << "    return ::phaser::avro::WriteMessages(messages, out);\n";
+    os << "  }\n";
+    os << "  absl::Status ToAvro(std::string* out) const {\n";
+    os << "    const " << name << "* _phaser_self = this;\n";
+    os << "    return ToAvro(absl::MakeConstSpan(_phaser_self, 1), out);\n";
+    os << "  }\n";
+    os << "  static absl::Status ProtobufToAvro(std::string_view bytes, "
+          "std::string* out) {\n";
+    os << "    " << name << " message;\n";
+    os << "    if (!message.ParseFromArray(bytes.data(), bytes.size())) {\n";
+    os << "      return absl::InvalidArgumentError("
+          "\"Protobuf wire bytes are not a valid message\");\n";
+    os << "    }\n";
+    os << "    return message.ToAvro(out);\n";
+    os << "  }\n";
+    os << "  static absl::Status ProtobufToAvro("
+          "absl::Span<const std::string_view> bytes, std::string* out) {\n";
+    os << "    std::vector<" << name << "> messages;\n";
+    os << "    messages.reserve(bytes.size());\n";
+    os << "    for (std::string_view item : bytes) {\n";
+    os << "      " << name << " message;\n";
+    os << "      if (!message.ParseFromArray(item.data(), item.size())) {\n";
+    os << "        return absl::InvalidArgumentError("
+          "\"Protobuf wire bytes are not a valid message\");\n";
+    os << "      }\n";
+    os << "      messages.push_back(std::move(message));\n";
+    os << "    }\n";
+    os << "    return ToAvro(messages, out);\n";
+    os << "  }\n";
+    os << "  static absl::Status PhaserToAvro(absl::Span<const char> bytes, "
+          "std::string* out) {\n";
+    os << "    if (bytes.empty()) {\n";
+    os << "      return absl::InvalidArgumentError("
+          "\"Native Phaser payload is empty\");\n";
+    os << "    }\n";
+    os << "    " << name
+       << " message = CreateReadonly(bytes.data(), bytes.size());\n";
+    os << "    return message.ToAvro(out);\n";
+    os << "  }\n";
+    os << "  static absl::Status PhaserToAvro("
+          "absl::Span<const absl::Span<const char>> bytes, std::string* out) {\n";
+    os << "    std::vector<" << name << "> messages;\n";
+    os << "    messages.reserve(bytes.size());\n";
+    os << "    for (absl::Span<const char> item : bytes) {\n";
+    os << "      if (item.empty()) {\n";
+    os << "        return absl::InvalidArgumentError("
+          "\"Native Phaser payload is empty\");\n";
+    os << "      }\n";
+    os << "      messages.push_back(CreateReadonly(item.data(), item.size()));\n";
+    os << "    }\n";
+    os << "    return ToAvro(messages, out);\n";
+    os << "  }\n";
+    os << "  static absl::Status ToParquet(absl::Span<const " << name
+       << "> messages, std::string* out) {\n";
+    os << "    return ::phaser::parquet::WriteMessages(messages, out);\n";
+    os << "  }\n";
+    os << "  absl::Status ToParquet(std::string* out) const {\n";
+    os << "    const " << name << "* _phaser_self = this;\n";
+    os << "    return ToParquet(absl::MakeConstSpan(_phaser_self, 1), out);\n";
+    os << "  }\n";
+    os << "  static absl::Status ProtobufToParquet(std::string_view bytes, "
+          "std::string* out) {\n";
+    os << "    " << name << " message;\n";
+    os << "    if (!message.ParseFromArray(bytes.data(), bytes.size())) {\n";
+    os << "      return absl::InvalidArgumentError("
+          "\"Protobuf wire bytes are not a valid message\");\n";
+    os << "    }\n";
+    os << "    return message.ToParquet(out);\n";
+    os << "  }\n";
+    os << "  static absl::Status ProtobufToParquet("
+          "absl::Span<const std::string_view> bytes, std::string* out) {\n";
+    os << "    std::vector<" << name << "> messages;\n";
+    os << "    messages.reserve(bytes.size());\n";
+    os << "    for (std::string_view item : bytes) {\n";
+    os << "      " << name << " message;\n";
+    os << "      if (!message.ParseFromArray(item.data(), item.size())) {\n";
+    os << "        return absl::InvalidArgumentError("
+          "\"Protobuf wire bytes are not a valid message\");\n";
+    os << "      }\n";
+    os << "      messages.push_back(std::move(message));\n";
+    os << "    }\n";
+    os << "    return ToParquet(messages, out);\n";
+    os << "  }\n";
+    os << "  static absl::Status PhaserToParquet(absl::Span<const char> bytes, "
+          "std::string* out) {\n";
+    os << "    if (bytes.empty()) {\n";
+    os << "      return absl::InvalidArgumentError("
+          "\"Native Phaser payload is empty\");\n";
+    os << "    }\n";
+    os << "    " << name
+       << " message = CreateReadonly(bytes.data(), bytes.size());\n";
+    os << "    return message.ToParquet(out);\n";
+    os << "  }\n";
+    os << "  static absl::Status PhaserToParquet("
+          "absl::Span<const absl::Span<const char>> bytes, std::string* out) {\n";
+    os << "    std::vector<" << name << "> messages;\n";
+    os << "    messages.reserve(bytes.size());\n";
+    os << "    for (absl::Span<const char> item : bytes) {\n";
+    os << "      if (item.empty()) {\n";
+    os << "        return absl::InvalidArgumentError("
+          "\"Native Phaser payload is empty\");\n";
+    os << "      }\n";
+    os << "      messages.push_back(CreateReadonly(item.data(), item.size()));\n";
+    os << "    }\n";
+    os << "    return ToParquet(messages, out);\n";
+    os << "  }\n";
     return;
   }
 
@@ -880,6 +988,23 @@ void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
   os << "  if (!message.InstallMetadata<" << name
      << ">()) return ::phaser::internal::AllocationFailedError();\n";
   os << "  return message.ReadArrow(*reader);\n";
+  os << "}\n\n";
+
+  os << "static absl::Status " << name
+     << "ProtobufToAvro(std::string_view bytes, std::string* out) {\n";
+  os << "  return " << name << "::ProtobufToAvro(bytes, out);\n";
+  os << "}\n\n";
+  os << "static absl::Status " << name
+     << "PhaserToAvro(absl::Span<const char> bytes, std::string* out) {\n";
+  os << "  return " << name << "::PhaserToAvro(bytes, out);\n";
+  os << "}\n\n";
+  os << "static absl::Status " << name
+     << "ProtobufToParquet(std::string_view bytes, std::string* out) {\n";
+  os << "  return " << name << "::ProtobufToParquet(bytes, out);\n";
+  os << "}\n\n";
+  os << "static absl::Status " << name
+     << "PhaserToParquet(absl::Span<const char> bytes, std::string* out) {\n";
+  os << "  return " << name << "::PhaserToParquet(bytes, out);\n";
   os << "}\n\n";
 }
 

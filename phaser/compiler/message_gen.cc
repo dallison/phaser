@@ -6134,6 +6134,13 @@ void MessageGenerator::GeneratePhaserBank(std::ostream& os) {
      << "WriteArrowAtOffset,\n";
   os << "  .read_arrow_at_offset = " << MessageName(message_)
      << "ReadArrowAtOffset,\n";
+  os << "  .protobuf_to_avro = " << MessageName(message_)
+     << "ProtobufToAvro,\n";
+  os << "  .phaser_to_avro = " << MessageName(message_) << "PhaserToAvro,\n";
+  os << "  .protobuf_to_parquet = " << MessageName(message_)
+     << "ProtobufToParquet,\n";
+  os << "  .phaser_to_parquet = " << MessageName(message_)
+     << "PhaserToParquet,\n";
   os << "};\n\n";
 
   os << "static struct " << MessageName(message_) << "BankInitializer {\n";

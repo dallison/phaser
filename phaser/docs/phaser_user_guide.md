@@ -27,7 +27,7 @@ Other features include:
 7. Full zero-copy support for `google.protobuf.Any`
 8. ROS fixed arrays, variant-like oneofs, and ROS1 intrinsic types
 9. Hybrid field metadata, reflection, enums, and presence masks
-10. Generated conversion to and from the Arrow C Data Interface
+10. Generated conversion to and from Arrow, and from Phaser or protobuf wire format to Avro and Parquet
 11. Bazel integration and modern C++17 with Google Abseil
 
 ## How Phaser works
@@ -1416,7 +1416,116 @@ The Phaser bank can build and read an `Any` payload whose type is known only by
 name. Those entry points are `PhaserBankAppendArrowSchema`,
 `PhaserBankCollectArrowTypesAtOffset`, `PhaserBankWriteArrowAtOffset`, and
 `PhaserBankReadArrowAtOffset`. Generated messages call them. Application code
-normally uses `ToArrow` and `FromArrow`.
+normally uses `ToArrow` and `FromArrow`. The same column layout is what
+[Avro and Parquet](#avro-and-parquet) write.
+
+## Avro and Parquet
+
+A generated message can be written as an [Avro](https://avro.apache.org/docs/1.11.1/specification/)
+object container or an uncompressed [Parquet](https://parquet.apache.org/docs/file-format/)
+file. Phaser does not link libavro or libparquet. Both writers copy through the
+Arrow batch above, so an unset proto3 field is null and a field set to zero
+stays present. There is no conversion back from Avro or Parquet.
+
+### From a Phaser message
+
+`ToAvro` and `ToParquet` write one file. The instance methods write the one
+message they are called on. The static methods write every message in the span
+as one record each. An empty span writes a header and no records.
+
+```c++
+std::string avro;
+absl::Status status = message.ToAvro(&avro);
+status = foo::bar::phaser::TestMessage::ToAvro(batch, &avro);
+
+std::string parquet;
+status = message.ToParquet(&parquet);
+status = foo::bar::phaser::TestMessage::ToParquet(batch, &parquet);
+```
+
+A null output string is an error, and a failed write clears the string. A
+message that contains itself fails with the same unimplemented error as
+`ToArrow`.
+
+### From protobuf or a native payload
+
+`ProtobufToAvro` and `ProtobufToParquet` parse protobuf wire bytes, then write
+the file. `PhaserToAvro` and `PhaserToParquet` read a native payload, the same
+bytes `Data()` and `Size()` describe. Each has a one-message form and a span
+form. The span form writes one multi-record file. Parsing stops at the first
+input that is not a valid message of this type.
+
+```c++
+status = foo::bar::phaser::TestMessage::ProtobufToAvro(protobuf_bytes, &avro);
+status = foo::bar::phaser::TestMessage::PhaserToAvro(phaser_bytes, &avro);
+
+std::vector<std::string_view> protobuf_batch = {one, two};
+status = foo::bar::phaser::TestMessage::ProtobufToParquet(protobuf_batch, &parquet);
+
+std::vector<absl::Span<const char>> payloads = {first, second};
+status = foo::bar::phaser::TestMessage::PhaserToParquet(payloads, &parquet);
+```
+
+An empty protobuf message is a valid empty record. An empty native Phaser
+payload is an error, including one empty span inside a batch. Pass
+`absl::Span<const char>()` when the one-message native overload would otherwise
+be ambiguous with the batch overload.
+
+The same four conversions are available through the bank when the caller has
+the protobuf full name and not the C++ type. Each bank function takes one
+message. `PhaserBankConvert` selects the pair with `BankInputType` and
+`BankOutputType`:
+
+```c++
+status = ::phaser::PhaserBankProtobufToAvro(
+    "foo.bar.TestMessage", protobuf_bytes, &avro);
+status = ::phaser::PhaserBankPhaserToParquet(
+    "foo.bar.TestMessage", phaser_bytes, &parquet);
+status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", ::phaser::BankInputType::kProtobuf, protobuf_bytes,
+    ::phaser::BankOutputType::kAvro, &avro);
+status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", ::phaser::BankInputType::kPhaser, phaser_bytes,
+    ::phaser::BankOutputType::kParquet, &parquet);
+```
+
+`kProtobuf` and `kPhaser` are the inputs. `kAvro` and `kParquet` are the
+outputs. ROS bytes are not an input for either format.
+
+If you already have an Arrow batch, `::phaser::avro::WriteFile` and
+`::phaser::parquet::WriteFile` write that schema and array.
+`::phaser::avro::WriteMessages` and `::phaser::parquet::WriteMessages` build
+the batch from a span of messages and then write it. The generated methods
+call `WriteMessages`.
+
+### File layout
+
+Avro output is an object container: the `Obj\x01` magic, metadata containing
+`avro.schema` and `avro.codec` set to `null`, a 16-byte sync marker, and one
+data block. The schema is a record whose name comes from the protobuf full
+name. Nullable fields are a union of `null` and the value, with `null` first
+and `null` as the default.
+
+Parquet output starts and ends with `PAR1`. It has one uncompressed row group,
+PLAIN values, and data page v1. Definition and repetition levels use the
+RLE/bit-pack hybrid. The file metadata's `created_by` is `phaser`. Lists use
+the LIST logical type and maps use the MAP logical type.
+
+The Arrow columns map as follows:
+
+| Arrow column | Avro | Parquet |
+| --- | --- | --- |
+| int32, including enums | int | INT32 |
+| uint32 | long | INT32 with UINT_32 |
+| int64 | long | INT64 |
+| uint64 | 8-byte little-endian fixed | INT64 with UINT_64 |
+| float, double, bool | float, double, boolean | FLOAT, DOUBLE, BOOLEAN |
+| utf8, binary | string, bytes | BYTE_ARRAY, utf8 marked UTF8 |
+| list and fixed-size list | array | LIST |
+| map with a string key | map | MAP |
+| map with another key | array of key/value records | MAP |
+| struct and oneof | record | group of fields |
+| `Any` value union | union, null arm first | required `type_id` plus optional arms |
 
 ## The Phaser Bank
 A significant feature that is missing from protobuf implementations (that I
@@ -1424,7 +1533,8 @@ am aware of anyway) is the ability to do things with messages given only their
 message type name.  Most people end up creating a database of type name versus
 message descriptor and use reflection to handle this. The bank also converts
 protobuf wire bytes, ROS1 bytes, and native Phaser payloads by message name,
-and looks up an `Any` payload's generated Arrow functions.
+and looks up an `Any` payload's generated Arrow functions. It also writes one
+protobuf or Phaser payload as Avro or Parquet.
 
 Phaser has a built-in feature called the `Phaser Bank`, which, as its name suggest
 is a bank of Phaser messages, indexed by message name.  This allows you to manipulate
@@ -1534,6 +1644,23 @@ absl::Status PhaserBankWriteArrowAtOffset(
 absl::Status PhaserBankReadArrowAtOffset(
     std::string_view full_name, ::phaser::RuntimeHandle runtime,
     ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader *reader);
+absl::Status PhaserBankProtobufToAvro(std::string_view full_name,
+                                      std::string_view bytes, std::string *out);
+absl::Status PhaserBankPhaserToAvro(std::string_view full_name,
+                                    absl::Span<const char> bytes,
+                                    std::string *out);
+absl::Status PhaserBankProtobufToParquet(std::string_view full_name,
+                                         std::string_view bytes,
+                                         std::string *out);
+absl::Status PhaserBankPhaserToParquet(std::string_view full_name,
+                                       absl::Span<const char> bytes,
+                                       std::string *out);
+
+enum class BankInputType { kPhaser, kProtobuf, kRos };
+enum class BankOutputType { kProtobuf, kRos, kAvro, kParquet };
+absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
+                               absl::Span<const char> bytes,
+                               BankOutputType output, std::string *out);
 ```
 
 All the functions take the message type name and return an Abseil Status or
@@ -1628,6 +1755,15 @@ pool. The function is declared in `phaser/runtime/phaser_bank_protobuf.h`.
 generated Arrow functions for a message identified by its protobuf full name.
 `ToArrow` uses them to convert the concrete payload inside an `Any`. See the
 [Arrow](#arrow) section for the schema and the `ToArrow` / `FromArrow` API.
+`PhaserBankProtobufToAvro`, `PhaserBankPhaserToAvro`,
+`PhaserBankProtobufToParquet`, and `PhaserBankPhaserToParquet` write one
+protobuf or Phaser payload. See [Avro and Parquet](#avro-and-parquet).
+
+`PhaserBankConvert` takes a `BankInputType` and a `BankOutputType` and calls
+the matching function. The input is `kPhaser`, `kProtobuf`, or `kRos`. The
+output is `kProtobuf`, `kRos`, `kAvro`, or `kParquet`. The result is a
+`std::string`. A pair with no conversion, such as ROS to Avro, returns an
+error.
 
 ### Streaming and DebugString
 You can stream a message to `std::ostream` using the `PhaserStreamTo` function.  If you want this

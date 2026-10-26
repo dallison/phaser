@@ -67,7 +67,7 @@ costs nothing until you actually touch a field.
 9. ROS1 `Time`, `Duration`, and `Header` intrinsic mappings
 10. Hybrid dense/sparse field metadata and protobuf version compatibility
 11. Reflection, enum conversion, field presence, and user metadata
-12. Generated conversion to and from the Arrow C Data Interface
+12. Generated conversion to and from Arrow, and from Phaser or protobuf wire format to Avro and Parquet
 13. Bazel integration and modern C++17 with [Abseil](https://abseil.io)
 
 ## How it works
@@ -463,6 +463,51 @@ an Arrow schema. `ToArrow` calls it. See the user guide's
 [Arrow](phaser/docs/phaser_user_guide.md#arrow) section for the column layout,
 `Any`, and ownership of the schema and array.
 
+## Avro and Parquet
+
+The Arrow column layout can be written one way as an
+[Avro](https://avro.apache.org/docs/1.11.1/specification/) object container or
+an uncompressed [Parquet](https://parquet.apache.org/docs/file-format/) file.
+Phaser does not link libavro or libparquet, and there is no reader. The source
+is a Phaser message, protobuf wire bytes, or a native Phaser payload.
+
+```c++
+std::string avro;
+absl::Status status =
+    foo::bar::phaser::TestMessage::ToAvro(batch, &avro);
+status = message.ToAvro(&avro);
+status = foo::bar::phaser::TestMessage::ProtobufToAvro(protobuf_bytes, &avro);
+status = foo::bar::phaser::TestMessage::PhaserToAvro(phaser_bytes, &avro);
+
+std::string parquet;
+status = foo::bar::phaser::TestMessage::ToParquet(batch, &parquet);
+status = foo::bar::phaser::TestMessage::ProtobufToParquet(protobuf_bytes, &parquet);
+status = foo::bar::phaser::TestMessage::PhaserToParquet(phaser_bytes, &parquet);
+```
+
+Each of `ProtobufToAvro`, `PhaserToAvro`, `ProtobufToParquet`, and
+`PhaserToParquet` also accepts a span of messages and writes one multi-record
+file. An empty protobuf message is a valid empty record. An empty native
+Phaser payload is an error.
+
+When the caller has the protobuf full name and not the C++ type, the bank
+writes one payload:
+
+```c++
+status = ::phaser::PhaserBankProtobufToAvro(
+    "foo.bar.TestMessage", protobuf_bytes, &avro);
+status = ::phaser::PhaserBankPhaserToParquet(
+    "foo.bar.TestMessage", phaser_bytes, &parquet);
+status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", ::phaser::BankInputType::kProtobuf, protobuf_bytes,
+    ::phaser::BankOutputType::kAvro, &avro);
+```
+
+`PhaserBankConvert` also accepts `BankOutputType::kParquet`, and
+`BankInputType::kPhaser` for a native payload. See the user guide's
+[Avro and Parquet](phaser/docs/phaser_user_guide.md#avro-and-parquet) section
+for the type mapping and file layout.
+
 ## The Phaser Bank (type-erased operations & reflection)
 
 The **Phaser Bank** lets you operate on messages given only their type *name* — stream,
@@ -491,6 +536,11 @@ status = ::phaser::PhaserBankPhaserToROS(
     "foo.bar.TestMessage", phaser_bytes, ros_output);
 status = ::phaser::PhaserBankPhaserToProtobuf(
     "foo.bar.TestMessage", phaser_bytes, protobuf_output);
+
+std::string converted;
+status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", ::phaser::BankInputType::kProtobuf, protobuf_bytes,
+    ::phaser::BankOutputType::kRos, &converted);
 ```
 
 `PhaserBankRosDataType`, `PhaserBankRosMd5`, and `PhaserBankRosDefinition`

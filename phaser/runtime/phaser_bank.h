@@ -69,6 +69,13 @@ struct BankInfo {
   absl::Status (*read_arrow_at_offset)(::phaser::RuntimeHandle runtime,
                                        ::phaser::BufferOffset offset,
                                        const ::phaser::arrow::FieldReader* reader);
+  // One message, phaser or protobuf wire, written as Avro or Parquet.
+  // Null when the message was registered without these conversions.
+  absl::Status (*protobuf_to_avro)(std::string_view bytes, std::string* out);
+  absl::Status (*phaser_to_avro)(absl::Span<const char> bytes, std::string* out);
+  absl::Status (*protobuf_to_parquet)(std::string_view bytes, std::string* out);
+  absl::Status (*phaser_to_parquet)(absl::Span<const char> bytes,
+                                    std::string* out);
 };
 
 extern std::unique_ptr<absl::flat_hash_map<std::string, BankInfo>>
@@ -207,6 +214,43 @@ absl::Status PhaserBankWriteArrowAtOffset(
 absl::Status PhaserBankReadArrowAtOffset(
     std::string_view full_name, ::phaser::RuntimeHandle runtime,
     ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader* reader);
+
+// Write one protobuf message, or one native Phaser payload, as an Avro object
+// container or an uncompressed Parquet file. `full_name` is the protobuf full
+// name. There is no conversion back from Avro or Parquet.
+absl::Status PhaserBankProtobufToAvro(std::string_view full_name,
+                                      std::string_view bytes, std::string* out);
+absl::Status PhaserBankPhaserToAvro(std::string_view full_name,
+                                    absl::Span<const char> bytes,
+                                    std::string* out);
+absl::Status PhaserBankProtobufToParquet(std::string_view full_name,
+                                         std::string_view bytes,
+                                         std::string* out);
+absl::Status PhaserBankPhaserToParquet(std::string_view full_name,
+                                       absl::Span<const char> bytes,
+                                       std::string* out);
+
+// Formats accepted by PhaserBankConvert. Each value is an input or output of
+// at least one bank conversion.
+enum class BankInputType {
+  kPhaser,
+  kProtobuf,
+  kRos,
+};
+
+enum class BankOutputType {
+  kProtobuf,
+  kRos,
+  kAvro,
+  kParquet,
+};
+
+// Dispatches to the bank conversion for this input and output. `bytes` is one
+// message in `input`. `out` receives one message in `output`. A pair with no
+// bank conversion returns an error.
+absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
+                               absl::Span<const char> bytes,
+                               BankOutputType output, std::string* out);
 
 template <typename Field>
 absl::StatusOr<Field*> inline PhaserBankGetFieldByName(
