@@ -352,4 +352,170 @@ absl::Status PhaserBankReadArrowAtOffset(
   }
   return (*bank_info)->read_arrow_at_offset(runtime, offset, reader);
 }
+
+absl::Status PhaserBankProtobufToAvro(std::string_view full_name,
+                                      std::string_view bytes, std::string* out) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->protobuf_to_avro == nullptr) {
+    return MissingBankFunction(full_name, "protobuf to Avro conversion");
+  }
+  return (*bank_info)->protobuf_to_avro(bytes, out);
+}
+
+absl::Status PhaserBankPhaserToAvro(std::string_view full_name,
+                                    absl::Span<const char> bytes,
+                                    std::string* out) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->phaser_to_avro == nullptr) {
+    return MissingBankFunction(full_name, "Phaser to Avro conversion");
+  }
+  return (*bank_info)->phaser_to_avro(bytes, out);
+}
+
+absl::Status PhaserBankProtobufToParquet(std::string_view full_name,
+                                         std::string_view bytes,
+                                         std::string* out) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->protobuf_to_parquet == nullptr) {
+    return MissingBankFunction(full_name, "protobuf to Parquet conversion");
+  }
+  return (*bank_info)->protobuf_to_parquet(bytes, out);
+}
+
+absl::Status PhaserBankPhaserToParquet(std::string_view full_name,
+                                       absl::Span<const char> bytes,
+                                       std::string* out) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  if ((*bank_info)->phaser_to_parquet == nullptr) {
+    return MissingBankFunction(full_name, "Phaser to Parquet conversion");
+  }
+  return (*bank_info)->phaser_to_parquet(bytes, out);
+}
+
+namespace {
+
+std::string_view InputBytes(absl::Span<const char> bytes) {
+  return std::string_view(bytes.data(), bytes.size());
+}
+
+const char* InputName(BankInputType input) {
+  switch (input) {
+    case BankInputType::kPhaser:
+      return "Phaser";
+    case BankInputType::kProtobuf:
+      return "protobuf";
+    case BankInputType::kRos:
+      return "ROS";
+  }
+  return "an unknown input";
+}
+
+const char* OutputName(BankOutputType output) {
+  switch (output) {
+    case BankOutputType::kProtobuf:
+      return "protobuf";
+    case BankOutputType::kRos:
+      return "ROS";
+    case BankOutputType::kAvro:
+      return "Avro";
+    case BankOutputType::kParquet:
+      return "Parquet";
+  }
+  return "an unknown output";
+}
+
+absl::Status UnsupportedConversion(BankInputType input, BankOutputType output) {
+  return absl::InvalidArgumentError(absl::StrFormat(
+      "Phaser bank cannot convert %s to %s", InputName(input),
+      OutputName(output)));
+}
+
+absl::Status FinishProto(const ProtoBuffer& buffer, std::string* out) {
+  *out = buffer.AsString();
+  return absl::OkStatus();
+}
+
+absl::Status FinishRos(const ROSBuffer& buffer, std::string* out) {
+  *out = buffer.AsString();
+  return absl::OkStatus();
+}
+
+}  // namespace
+
+absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
+                               absl::Span<const char> bytes,
+                               BankOutputType output, std::string* out) {
+  if (out == nullptr) {
+    return absl::InvalidArgumentError("conversion output string is null");
+  }
+  out->clear();
+  switch (input) {
+    case BankInputType::kProtobuf:
+      switch (output) {
+        case BankOutputType::kRos: {
+          ROSBuffer buffer;
+          absl::Status status =
+              PhaserBankProtobufToROS(full_name, InputBytes(bytes), buffer);
+          if (!status.ok()) return status;
+          return FinishRos(buffer, out);
+        }
+        case BankOutputType::kAvro:
+          return PhaserBankProtobufToAvro(full_name, InputBytes(bytes), out);
+        case BankOutputType::kParquet:
+          return PhaserBankProtobufToParquet(full_name, InputBytes(bytes), out);
+        case BankOutputType::kProtobuf:
+          return UnsupportedConversion(input, output);
+      }
+      break;
+    case BankInputType::kPhaser:
+      switch (output) {
+        case BankOutputType::kProtobuf: {
+          ProtoBuffer buffer;
+          absl::Status status =
+              PhaserBankPhaserToProtobuf(full_name, bytes, buffer);
+          if (!status.ok()) return status;
+          return FinishProto(buffer, out);
+        }
+        case BankOutputType::kRos: {
+          ROSBuffer buffer;
+          absl::Status status = PhaserBankPhaserToROS(full_name, bytes, buffer);
+          if (!status.ok()) return status;
+          return FinishRos(buffer, out);
+        }
+        case BankOutputType::kAvro:
+          return PhaserBankPhaserToAvro(full_name, bytes, out);
+        case BankOutputType::kParquet:
+          return PhaserBankPhaserToParquet(full_name, bytes, out);
+      }
+      break;
+    case BankInputType::kRos:
+      switch (output) {
+        case BankOutputType::kProtobuf: {
+          ProtoBuffer buffer;
+          absl::Status status =
+              PhaserBankRosToProtobuf(full_name, bytes, buffer);
+          if (!status.ok()) return status;
+          return FinishProto(buffer, out);
+        }
+        case BankOutputType::kRos:
+        case BankOutputType::kAvro:
+        case BankOutputType::kParquet:
+          return UnsupportedConversion(input, output);
+      }
+      break;
+  }
+  return absl::InvalidArgumentError("unknown Phaser bank conversion");
+}
 }  // namespace phaser

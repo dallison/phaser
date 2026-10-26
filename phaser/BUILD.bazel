@@ -38,6 +38,18 @@ cc_library(
 )
 
 cc_test(
+    name = "columnar_test",
+    srcs = ["columnar_test.cc"],
+    copts = PHASER_COPTS + PHASER_PROTOBUF_GENERATED_COPTS,
+    data = ["valgrind.supp"],
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/testdata:test_message_phaser",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "arrow_test",
     srcs = ["arrow_test.cc"],
     copts = PHASER_COPTS + PHASER_PROTOBUF_GENERATED_COPTS,

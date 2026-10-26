@@ -1762,6 +1762,45 @@ TEST(ROSWireConversionTest, PhaserBankProtobufConversionAndMetadata) {
 
   EXPECT_FALSE(::phaser::PhaserBankProtobufFullName("missing.Message").ok());
   EXPECT_FALSE(::phaser::PhaserBankProtobufDescriptor("missing.Message").ok());
+
+  std::string converted;
+  ASSERT_TRUE(::phaser::PhaserBankConvert(
+                  RosCompileMessage::FullName(), ::phaser::BankInputType::kPhaser,
+                  native_bytes, ::phaser::BankOutputType::kProtobuf, &converted)
+                  .ok());
+  EXPECT_EQ(converted, std::string(native_storage.data(), from_native.Size()));
+  ASSERT_TRUE(::phaser::PhaserBankConvert(
+                  RosCompileMessage::FullName(), ::phaser::BankInputType::kRos,
+                  absl::MakeConstSpan(ros_bytes.data(), ros_bytes.size()),
+                  ::phaser::BankOutputType::kProtobuf, &converted)
+                  .ok());
+  EXPECT_EQ(converted, std::string(ros_storage.data(), from_ros.Size()));
+
+  ::phaser::ROSBuffer ros_output;
+  ASSERT_TRUE(::phaser::PhaserBankProtobufToROS(RosCompileMessage::FullName(),
+                                               protobuf_wire, ros_output)
+                  .ok());
+  ASSERT_TRUE(::phaser::PhaserBankConvert(
+                  RosCompileMessage::FullName(),
+                  ::phaser::BankInputType::kProtobuf,
+                  absl::MakeConstSpan(protobuf_wire.data(), protobuf_wire.size()),
+                  ::phaser::BankOutputType::kRos, &converted)
+                  .ok());
+  EXPECT_EQ(converted, ros_output.AsString());
+  ::phaser::ROSBuffer ros_from_phaser;
+  ASSERT_TRUE(::phaser::PhaserBankPhaserToROS(RosCompileMessage::FullName(),
+                                             native_bytes, ros_from_phaser)
+                  .ok());
+  ASSERT_TRUE(::phaser::PhaserBankConvert(
+                  RosCompileMessage::FullName(), ::phaser::BankInputType::kPhaser,
+                  native_bytes, ::phaser::BankOutputType::kRos, &converted)
+                  .ok());
+  EXPECT_EQ(converted, ros_from_phaser.AsString());
+  EXPECT_FALSE(::phaser::PhaserBankConvert(
+                   RosCompileMessage::FullName(), ::phaser::BankInputType::kProtobuf,
+                   absl::MakeConstSpan(protobuf_wire.data(), protobuf_wire.size()),
+                   ::phaser::BankOutputType::kProtobuf, &converted)
+                   .ok());
 }
 
 }  // namespace
