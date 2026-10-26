@@ -10,6 +10,7 @@
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "phaser/runtime/arrow.h"
+#include "phaser/runtime/ros_avro_record.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/wireformat.h"
@@ -243,6 +244,8 @@ enum class BankOutputType {
   kRos,
   kAvro,
   kParquet,
+  // Avro record bytes: stamp (secs, nsecs) + length-prefixed ROS wire bytes.
+  kStampedRosBytesAvroRecord,
 };
 
 // Dispatches to the bank conversion for this input and output. `bytes` is one
@@ -251,6 +254,10 @@ enum class BankOutputType {
 absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
                                absl::Span<const char> bytes,
                                BankOutputType output, std::string* out);
+
+absl::Status PhaserBankConvertToStampedRosBytesAvroRecord(
+    std::string_view full_name, BankInputType input, absl::Span<const char> bytes,
+    int32_t stamp_secs, int32_t stamp_nsecs, std::string* out);
 
 template <typename Field>
 absl::StatusOr<Field*> inline PhaserBankGetFieldByName(

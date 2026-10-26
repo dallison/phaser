@@ -23,6 +23,15 @@ namespace avro {
 absl::Status WriteFile(const struct ArrowSchema* schema,
                        const struct ArrowArray* array, std::string* out);
 
+// Binary Avro encoding for one row of an Arrow batch (no object-container
+// header). Concatenated row encodings match the block body inside WriteFile.
+absl::Status WriteRecordBytes(const struct ArrowSchema* schema,
+                              const struct ArrowArray* array, int64_t row,
+                              std::string* out);
+absl::Status WriteAllRecordBytes(const struct ArrowSchema* schema,
+                                 const struct ArrowArray* array,
+                                 std::string* out);
+
 template <typename Message>
 absl::Status WriteMessages(absl::Span<const Message> messages,
                            std::string* out) {

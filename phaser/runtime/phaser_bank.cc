@@ -2,6 +2,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
+#include "phaser/runtime/ros_avro_record.h"
 #include "phaser/runtime/phaser_bank.h"
 
 #include <memory>
@@ -432,6 +433,8 @@ const char* OutputName(BankOutputType output) {
       return "Avro";
     case BankOutputType::kParquet:
       return "Parquet";
+    case BankOutputType::kStampedRosBytesAvroRecord:
+      return "stamped ROS bytes Avro record";
   }
   return "an unknown output";
 }
@@ -476,6 +479,7 @@ absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
         case BankOutputType::kParquet:
           return PhaserBankProtobufToParquet(full_name, InputBytes(bytes), out);
         case BankOutputType::kProtobuf:
+        case BankOutputType::kStampedRosBytesAvroRecord:
           return UnsupportedConversion(input, output);
       }
       break;
@@ -498,6 +502,8 @@ absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
           return PhaserBankPhaserToAvro(full_name, bytes, out);
         case BankOutputType::kParquet:
           return PhaserBankPhaserToParquet(full_name, bytes, out);
+        case BankOutputType::kStampedRosBytesAvroRecord:
+          return UnsupportedConversion(input, output);
       }
       break;
     case BankInputType::kRos:
@@ -512,10 +518,32 @@ absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
         case BankOutputType::kRos:
         case BankOutputType::kAvro:
         case BankOutputType::kParquet:
+        case BankOutputType::kStampedRosBytesAvroRecord:
           return UnsupportedConversion(input, output);
       }
       break;
   }
   return absl::InvalidArgumentError("unknown Phaser bank conversion");
+}
+
+absl::Status PhaserBankConvertToStampedRosBytesAvroRecord(
+    std::string_view full_name, BankInputType input, absl::Span<const char> bytes,
+    int32_t stamp_secs, int32_t stamp_nsecs, std::string* out) {
+  if (out == nullptr) {
+    return absl::InvalidArgumentError("conversion output string is null");
+  }
+  out->clear();
+  switch (input) {
+    case BankInputType::kProtobuf:
+      return ros_avro_record::PhaserBankProtobufToStampedRosBytesAvroRecord(
+          full_name, InputBytes(bytes), stamp_secs, stamp_nsecs, out);
+    case BankInputType::kPhaser:
+      return ros_avro_record::PhaserBankPhaserToStampedRosBytesAvroRecord(
+          full_name, bytes, stamp_secs, stamp_nsecs, out);
+    case BankInputType::kRos:
+      return ros_avro_record::WriteStampedRosBytesAvroRecord(stamp_secs, stamp_nsecs,
+                                                             bytes, out);
+  }
+  return absl::InvalidArgumentError("unknown Phaser bank input type");
 }
 }  // namespace phaser

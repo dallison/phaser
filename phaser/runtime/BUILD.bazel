@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load(
     "//phaser:copts.bzl",
@@ -7,6 +8,8 @@ load(
 )
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files(["phaser_bank_pybind.cc"])
 
 # Serializing a message writes without checking for room, trusting the
 # caller to have made enough (see kTrustSerializedSize in wireformat.h).
@@ -48,6 +51,7 @@ cc_library(
     srcs = [
         "arrow.cc",
         "avro.cc",
+        "ros_avro_record.cc",
         "parquet.cc",
         "md5.cc",
         "message.cc",
@@ -64,6 +68,7 @@ cc_library(
         "arrow.h",
         "arrow_abi.h",
         "avro.h",
+        "ros_avro_record.h",
         "parquet.h",
         "arrays.h",
         "fields.h",
@@ -84,6 +89,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -91,6 +97,24 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@cpp_toolbelt//toolbelt",
+    ],
+)
+
+pybind_extension(
+    name = "phaser_bank_py",
+    srcs = ["phaser_bank_pybind.cc"],
+    deps = [":phaser_runtime"],
+)
+
+cc_test(
+    name = "ros_avro_record_test",
+    srcs = ["ros_avro_record_test.cc"],
+    copts = PHASER_COPTS,
+    data = ["//phaser:valgrind.supp"],
+    deps = [
+        ":phaser_runtime",
+        "//phaser/testdata:ros_metadata_protobuf_phaser",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
