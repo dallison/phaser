@@ -73,7 +73,13 @@ py_test(
     name = "phaser_python_test",
     srcs = ["python_test.py"],
     main = "python_test.py",
-    data = [":test_message_phaser_py"],
+    # See test:asan in .bazelrc. Valgrind's --suppressions path is relative to
+    # the test runfiles directory, so the file has to be a data dependency.
+    tags = ["no-asan"],
+    data = [
+        ":test_message_phaser_py",
+        "//phaser:valgrind.supp",
+    ],
     deps = ["@rules_python//python/runfiles"],
 )
 
