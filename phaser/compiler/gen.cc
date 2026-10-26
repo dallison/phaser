@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -122,6 +123,20 @@ static void WriteToZeroCopyStream(
   }
 }
 
+static bool WriteOutput(
+    google::protobuf::compiler::GeneratorContext* generator_context,
+    const std::filesystem::path& path, const std::string& contents,
+    std::string* error) {
+  std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> output(
+      generator_context->Open(path.string()));
+  if (output == nullptr) {
+    *error = absl::StrFormat("Failed to open %s for writing", path.string());
+    return false;
+  }
+  WriteToZeroCopyStream(contents, output.get());
+  return true;
+}
+
 static std::string GeneratedFilename(const std::filesystem::path& package_name,
                                      const std::filesystem::path& target_name,
                                      std::string filename) {
@@ -146,7 +161,7 @@ static std::string GeneratedFilename(const std::filesystem::path& package_name,
   return package_name / target_name / filename;
 }
 
-static std::string GeneratedIncludeFilename(
+std::string GeneratedIncludeFilename(
     const std::filesystem::path& package_name,
     const std::filesystem::path& target_name, const std::string& filename) {
   std::string result = GeneratedFilename(package_name, target_name, filename);
@@ -182,18 +197,27 @@ bool CodeGenerator::Generate(
     } else if (option.first == "ros_metadata") {
       generate_ros_metadata_ = option.second.empty() ||
                                option.second == "true" || option.second == "1";
+    } else if (option.first == "rust") {
+      generate_rust_ = option.second.empty() || option.second == "true" ||
+                       option.second == "1";
     } else if (option.first == "frontend") {
       if (option.second == "protobuf" || option.second.empty()) {
         frontend_style_ = FrontendStyle::kProtobuf;
       } else if (option.second == "ros") {
         frontend_style_ = FrontendStyle::kRos;
+      } else if (option.second == "c") {
+        frontend_style_ = FrontendStyle::kC;
       } else {
         *error = absl::StrFormat(
-            "Unknown frontend value: %s (expected protobuf or ros)",
+            "Unknown frontend value: %s (expected protobuf, ros, or c)",
             option.second);
         return false;
       }
     }
+  }
+  if (generate_rust_ && frontend_style_ != FrontendStyle::kC) {
+    *error = "rust=true requires frontend=c";
+    return false;
   }
 
   const FrontendStyle effective_frontend =
@@ -229,6 +253,26 @@ bool CodeGenerator::Generate(
                           header_output.get());
     WriteToZeroCopyStream("// No Phaser definitions in this schema.\n",
                           source_output.get());
+    const bool skip_language_bindings =
+        file->name() == std::string("google/protobuf/descriptor.proto") ||
+        file->name() == std::string("phaser/options.proto");
+    if (!skip_language_bindings &&
+        frontend_style_ == FrontendStyle::kC) {
+      std::filesystem::path c_header(filename);
+      c_header.replace_extension(".phaser.c.h");
+      if (!WriteOutput(generator_context, c_header,
+                       "// No Phaser C API in this schema.\n", error)) {
+        return false;
+      }
+    }
+    if (!skip_language_bindings && generate_rust_) {
+      std::filesystem::path rust_path(filename);
+      rust_path.replace_extension(".rs");
+      if (!WriteOutput(generator_context, rust_path,
+                       "// No Phaser Rust API in this schema.\n", error)) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -276,6 +320,26 @@ bool CodeGenerator::Generate(
   }
   std::stringstream source_stream;
   gen.GenerateSources(source_stream);
+
+  if (effective_frontend == FrontendStyle::kC) {
+    std::stringstream c_header;
+    std::stringstream rust_stream;
+    gen.GenerateBindings(c_header, source_stream,
+                         generate_rust_ ? &rust_stream : nullptr);
+    std::filesystem::path c_path(filename);
+    c_path.replace_extension(".phaser.c.h");
+    if (!WriteOutput(generator_context, c_path, c_header.str(), error)) {
+      return false;
+    }
+    if (generate_rust_) {
+      std::filesystem::path rust_path(filename);
+      rust_path.replace_extension(".rs");
+      if (!WriteOutput(generator_context, rust_path, rust_stream.str(),
+                       error)) {
+        return false;
+      }
+    }
+  }
 
   // Write to the streams that protobuf wants
   WriteToZeroCopyStream(header_stream.str(), header_output.get());

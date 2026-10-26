@@ -1,6 +1,7 @@
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_rust//rust:defs.bzl", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//phaser:phaser_library.bzl", "phaser_library")
 
@@ -65,6 +66,28 @@ phaser_library(
     add_namespace = "phaser",
     runtime = "//phaser/runtime:phaser_runtime",
     deps = [":test_message_proto"],
+)
+
+phaser_library(
+    name = "test_message_c_phaser",
+    add_namespace = "c_api",
+    rust = True,
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":test_message_proto"],
+)
+
+cc_test(
+    name = "phaser_c_api_test",
+    srcs = ["c_api_test.c"],
+    deps = [":test_message_c_phaser"],
+)
+
+rust_test(
+    name = "phaser_rust_test",
+    srcs = ["rust_test.rs"],
+    crate_name = "phaser_rust_test",
+    edition = "2021",
+    deps = [":test_message_c_phaser_rs"],
 )
 
 phaser_library(

@@ -8,9 +8,9 @@ wire-format, instead of in a tree of heap-allocated objects. Once a message is b
 it can be written to disk, placed in shared memory, or sent over an IPC system **without
 a serialization step** — the bytes in the buffer *are* the message.
 
-Choose a familiar protobuf-style C++ API or a ROS-style public-field API. Both
-frontends use the same native payload and expose the same protobuf and ROS wire
-conversion backends.
+Choose a protobuf-style C++ API, a ROS-style public-field API, or a C API.
+Python and Rust clients use the protobuf-style accessors. All of them share
+the same native payload and the same protobuf and ROS wire conversion backends.
 
 > 📖 For the full reference, see the **[Phaser User Guide](phaser/docs/phaser_user_guide.md)**.
 
@@ -48,7 +48,7 @@ costs nothing until you actually touch a field.
   interoperate via per-message field metadata.
 - **Protobuf wire-format transcoding** is available when you *do* need it (e.g. storing in
   systems like BigQuery that expect protobuf bytes).
-- **Two C++ frontends** — protobuf-style accessors or ROS-style public field proxies.
+- **Three frontends** — protobuf-style C++ accessors, ROS-style public field proxies, or a C API. Python wraps the protobuf accessors. Rust wraps the C API.
 - **Direct wire-to-wire conversion** between protobuf and ROS1 without constructing
   an intermediate user-facing message.
 - **Allocation-free receive paths** when native payloads and wire conversions use
@@ -57,7 +57,7 @@ costs nothing until you actually touch a field.
 ## Features
 
 1. proto3 (primary) and proto2 IDL support
-2. Protobuf and ROS-style generated C++ frontends
+2. Protobuf, ROS, and C frontends, plus Python and Rust clients
 3. Native Phaser, protobuf, and ROS1 wire input/output
 4. Direct protobuf-to-ROS and ROS-to-protobuf backend conversion
 5. Fixed, caller-owned, and dynamically growing buffers
@@ -127,7 +127,7 @@ proto_library(
 phaser_library(
     name = "foo_phaser",
     add_namespace = "phaser",  # optional: avoids clashing with protobuf classes
-    frontend = "protobuf",     # default; use "ros" for public field proxies
+    frontend = "protobuf",     # default; "ros" or "c" select the other frontends
     enable_active_message = False,  # optionally add an active_message
     deps = [":foo_proto"],
 )
@@ -141,8 +141,7 @@ any protobuf header:
 #include "foo/bar/Foo.phaser.h"
 ```
 
-Phaser can generate either the default protobuf-style accessors or a ROS-style
-struct interface:
+The C++ library can use protobuf-style accessors or a ROS-style struct:
 
 ```python
 phaser_library(
@@ -153,7 +152,42 @@ phaser_library(
 )
 ```
 
-The frontend changes only the C++ access syntax:
+### Python, C, and Rust
+
+`python = True` builds a pybind11 module named `<name>_py` over the protobuf accessors. `frontend = "c"` emits `Foo.phaser.c.h`. `rust = True` builds a crate named `<name>_rs` and selects the C frontend when `frontend` is omitted. The ROS frontend is C++ only. Field mapping, ownership, and examples are in the user guide's [Python, C, and Rust](phaser/docs/phaser_user_guide.md#python-c-and-rust) section.
+
+```python
+phaser_library(
+    name = "foo_py",
+    python = True,
+    deps = [":foo_proto"],
+)
+
+phaser_library(
+    name = "foo_c",
+    rust = True,  # C API, plus a Rust crate foo_c_rs
+    deps = [":foo_proto"],
+)
+```
+
+```c
+phaser_foo_bar_Foo* msg = phaser_foo_bar_Foo_new(8192);
+phaser_foo_bar_Foo_set_name(msg, (const uint8_t*)"sensor", 6);
+PhaserBytes name = phaser_foo_bar_Foo_name(msg);
+phaser_free(name.data);          /* PhaserBytes.data */
+phaser_foo_bar_Foo_free(msg);    /* free nested handles first */
+```
+
+```rust
+let mut msg = foo_c::Foo::new(8192);
+msg.set_name("sensor");
+{
+    let mut child = msg.mutable_child();
+    child.set_label("cam");
+}
+```
+
+The frontend changes source-level access, not the payload layout:
 
 ```c++
 // frontend = "protobuf"
@@ -538,8 +572,8 @@ accessor, so that presence accessor is named `_phaser_has_<name>()` instead.
 
 | Path | Description |
 | --- | --- |
-| `phaser/compiler/` | The `protoc` plugin that generates C++ code (`gen`, `enum_gen`, `message_gen`, `main`). |
-| `phaser/runtime/` | The runtime library: `Message`, fields, vectors, unions, wire-format, the Phaser Bank, and `PayloadBuffer` glue. |
+| `phaser/compiler/` | The `protoc` plugin (`gen`, `enum_gen`, `message_gen`, and the C frontend emitter). |
+| `phaser/runtime/` | The runtime library: `Message`, fields, vectors, unions, wire-format, the Phaser Bank, the C API, and `PayloadBuffer` glue. |
 | `phaser/phaser_library.bzl` | The `phaser_library` Bazel rule and supporting aspect. |
 | `phaser/testdata/` | Example `.proto` files used by the tests. |
 | `phaser/docs/` | Reference documentation (the user guide). |
@@ -548,6 +582,7 @@ accessor, so that presence accessor is named `_phaser_has_<name>()` instead.
 
 The complete reference — message layout, buffer internals, the allocator, reflection, the
 Phaser Bank, Arrow conversion, and more — is in the **[Phaser User Guide](phaser/docs/phaser_user_guide.md)**.
+Python, C, and Rust are in [Python, C, and Rust](phaser/docs/phaser_user_guide.md#python-c-and-rust).
 Arrow usage is in the guide's [Arrow](phaser/docs/phaser_user_guide.md#arrow) section.
 Protobuf and ROS conversion through the bank is in
 [Protobuf and ROS conversion](phaser/docs/phaser_user_guide.md#protobuf-and-ros-conversion).

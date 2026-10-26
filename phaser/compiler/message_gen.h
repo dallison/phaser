@@ -19,7 +19,7 @@
 
 namespace phaser {
 
-enum class FrontendStyle { kProtobuf, kRos };
+enum class FrontendStyle { kProtobuf, kRos, kC };
 
 struct FieldInfo {
   // Constructor.
@@ -86,6 +86,12 @@ class MessageGenerator {
 
   absl::Status GenerateHeader(std::ostream& os);
   void GenerateSource(std::ostream& os);
+  // C frontend declarations and definitions. `rust` receives the safe Rust
+  // wrapper when non-null. `declared_types` records opaque struct names
+  // already emitted into the C header.
+  void GenerateBindings(std::ostream& decl, std::ostream& def,
+                        std::ostream* rust,
+                        std::vector<std::string>* declared_types);
 
   void GenerateFieldDeclarations(std::ostream& os);
 
@@ -301,6 +307,16 @@ class MessageGenerator {
   bool IsRosFrontend() const {
     return frontend_style_ == FrontendStyle::kRos;
   }
+  bool IsCFrontend() const { return frontend_style_ == FrontendStyle::kC; }
+  void EmitCField(const google::protobuf::FieldDescriptor* field,
+                  std::ostream& decl, std::ostream& def,
+                  std::ostream* rust_extern, std::ostream* rust_body,
+                  std::vector<std::string>* declared_types,
+                  const std::string& self_prefix, const std::string& self_cxx,
+                  const std::string& self_raw);
+  std::string CppMessageType(const google::protobuf::Descriptor* desc) const;
+  std::string CppEnumType(const google::protobuf::EnumDescriptor* desc) const;
+  std::string RustMessageType(const google::protobuf::Descriptor* desc) const;
 
   const google::protobuf::Descriptor* message_;
   std::vector<std::unique_ptr<MessageGenerator>> nested_message_gens_;

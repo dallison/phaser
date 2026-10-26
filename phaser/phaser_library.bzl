@@ -5,6 +5,7 @@ This module provides a rule to generate phaser message files from proto_library 
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@com_google_protobuf//bazel/common:proto_info.bzl", "ProtoInfo")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_library")
 
 MessageInfo = provider(fields = [
     "direct_sources",
@@ -12,6 +13,8 @@ MessageInfo = provider(fields = [
     "cpp_outputs",
     "symlink_headers",
 ])
+
+PhaserGenInfo = provider(fields = ["rust_files"])
 
 def _phaser_action(
         ctx,
@@ -24,7 +27,8 @@ def _phaser_action(
         target_name,
         frontend,
         enable_active_message,
-        ros_metadata):
+        ros_metadata,
+        rust):
     # The protobuf compiler allow plugins to get arguments specified in the --plugin_out
     # argument.  The args are passed as a comma separated list of key=value pairs followed
     # by a colon and the output directory.
@@ -38,6 +42,8 @@ def _phaser_action(
         options.append("active_message=true")
     if ros_metadata:
         options.append("ros_metadata=true")
+    if rust:
+        options.append("rust=true")
     options_and_out_dir = "--phaser_out={}:{}".format(",".join(options), out_dir)
 
     inputs = depset(direct = direct_sources, transitive = transitive_sources)
@@ -153,14 +159,18 @@ phaser_aspect = aspect(
 # The deps for the rule are proto_libraries that contain the protobuf files.
 def _phaser_impl(ctx):
     frontend = ctx.attr.frontend
-    if frontend not in ("protobuf", "ros"):
-        fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
+    if frontend not in ("protobuf", "ros", "c"):
+        fail("phaser_library frontend must be 'protobuf', 'ros', or 'c', got: {}".format(frontend))
+    if ctx.attr.rust and frontend != "c":
+        fail("phaser_library rust=True requires frontend = \"c\"")
 
     outputs = []
 
     direct_sources = []
     transitive_sources = []
     cpp_outputs = []
+    rust_files = []
+    seen_extra = {}
     package_name = ctx.attr.package_name
     for dep in ctx.attr.deps:
         dep_outs = []
@@ -193,6 +203,35 @@ def _phaser_impl(ctx):
                     ctx.actions.symlink(output = symlink, target_file = out_file)
                     dep_outs.append(symlink)
             cpp_outputs.append(out_file)
+            if out.endswith(".phaser.h"):
+                stem = out[:-len(".phaser.h")]
+                if frontend == "c":
+                    c_rel = stem + ".phaser.c.h"
+                    if c_rel not in seen_extra:
+                        seen_extra[c_rel] = True
+                        c_file = ctx.actions.declare_file(ctx.attr.target_name + "/" + c_rel)
+                        dep_outs.append(c_file)
+                        cpp_outputs.append(c_file)
+                        if (
+                            ctx.attr.direct_header_symlinks and
+                            out in dep[MessageInfo].symlink_headers
+                        ):
+                            package_prefix = ctx.label.package + "/"
+                            symlink_name = c_rel
+                            if not ctx.label.package or symlink_name.startswith(package_prefix):
+                                if package_prefix:
+                                    symlink_name = symlink_name[len(package_prefix):]
+                                symlink = ctx.actions.declare_file(symlink_name)
+                                ctx.actions.symlink(output = symlink, target_file = c_file)
+                                dep_outs.append(symlink)
+                if ctx.attr.rust:
+                    rs_rel = stem + ".rs"
+                    if rs_rel not in seen_extra:
+                        seen_extra[rs_rel] = True
+                        rs_file = ctx.actions.declare_file(ctx.attr.target_name + "/" + rs_rel)
+                        dep_outs.append(rs_file)
+                        cpp_outputs.append(rs_file)
+                        rust_files.append(rs_file)
 
         direct_sources += dep[MessageInfo].direct_sources
         transitive_sources.append(dep[MessageInfo].transitive_sources)
@@ -210,9 +249,13 @@ def _phaser_impl(ctx):
         frontend,
         ctx.attr.enable_active_message,
         ctx.attr.ros_metadata,
+        ctx.attr.rust,
     )
 
-    return [DefaultInfo(files = depset(outputs))]
+    return [
+        DefaultInfo(files = depset(outputs)),
+        PhaserGenInfo(rust_files = rust_files),
+    ]
 
 _phaser_gen = rule(
     attrs = {
@@ -236,9 +279,48 @@ _phaser_gen = rule(
         "frontend": attr.string(default = "protobuf"),
         "enable_active_message": attr.bool(default = False),
         "ros_metadata": attr.bool(default = False),
+        "rust": attr.bool(default = False),
     },
     implementation = _phaser_impl,
 )
+
+def _phaser_rust_crate_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".rs")
+    parts = [ctx.file.support] + ctx.attr.generated[PhaserGenInfo].rust_files
+    quoted = []
+    for part in parts:
+        quoted.append("\"%s\"" % part.path)
+    ctx.actions.run_shell(
+        inputs = parts,
+        outputs = [out],
+        command = "cat %s > \"%s\"" % (" ".join(quoted), out.path),
+        mnemonic = "PhaserRustCrate",
+        progress_message = "Assembling Rust crate %s" % ctx.label,
+    )
+    return [DefaultInfo(files = depset([out]))]
+
+_phaser_rust_crate = rule(
+    attrs = {
+        "generated": attr.label(mandatory = True, providers = [PhaserGenInfo]),
+        "support": attr.label(
+            default = Label("//phaser/runtime:rust_support.rs"),
+            allow_single_file = True,
+        ),
+    },
+    implementation = _phaser_rust_crate_impl,
+)
+
+def _rust_crate_name(name):
+    ident = ""
+    for i in range(len(name)):
+        c = name[i]
+        if c.isalnum() or c == "_":
+            ident += c
+        else:
+            ident += "_"
+    if not ident or ident[0].isdigit():
+        ident = "_" + ident
+    return ident
 
 def _split_files_impl(ctx):
     files = []
@@ -262,11 +344,12 @@ def phaser_library(
         runtime = "@phaser//phaser/runtime:phaser_runtime",
         add_namespace = "",
         enable_active_message = False,
-        frontend = "protobuf",
+        frontend = None,
         cc_deps = [],
         copts = [],
         direct_header_symlinks = True,
-        ros_metadata = False):
+        ros_metadata = False,
+        rust = False):
     """
     Generate a cc_libary for protobuf files specified in deps.
 
@@ -280,16 +363,23 @@ def phaser_library(
             `phaser::ActiveMessage active_message` field, which holds a
             `std::any` (also enableable via the
             `active_message=true` plugin command-line option).
-        frontend: generated C++ API style, either "protobuf" (default) or "ros".
+        frontend: generated API style: "protobuf", "ros", or "c".
+            Omitted means "c" when rust is True, and "protobuf" otherwise.
         cc_deps: additional C++ dependencies required by generated headers,
             such as ROS1 message/runtime libraries for intrinsic ROS fields.
         copts: additional C++ compiler options for generated sources.
         direct_header_symlinks: create short direct-source header aliases.
             Disable this when generating multiple frontends from one proto target.
         ros_metadata: generate ROS datatype, definition, and MD5 functions.
+        rust: build a Rust crate named "<name>_rs" over the C API. Selects
+            frontend "c" when frontend is omitted.
     """
-    if frontend not in ("protobuf", "ros"):
-        fail("phaser_library frontend must be 'protobuf' or 'ros', got: {}".format(frontend))
+    if frontend == None:
+        frontend = "c" if rust else "protobuf"
+    if frontend not in ("protobuf", "ros", "c"):
+        fail("phaser_library frontend must be 'protobuf', 'ros', or 'c', got: {}".format(frontend))
+    if rust and frontend != "c":
+        fail("phaser_library rust=True requires frontend = \"c\"")
 
     output_package_name = native.package_name()
     repository_name = native.repository_name()
@@ -311,6 +401,7 @@ def phaser_library(
         enable_active_message = enable_active_message,
         frontend = frontend,
         ros_metadata = ros_metadata,
+        rust = rust,
     )
 
     srcs = name + "_srcs"
@@ -337,6 +428,8 @@ def phaser_library(
     # Generated sources register embedded FileDescriptorProtos with this
     # library. The descriptor is then available without linking the .pb.cc.
     libdeps.append(Label("//phaser/runtime:phaser_bank_protobuf"))
+    if frontend == "c":
+        libdeps.append(Label("//phaser/runtime:phaser_c"))
     libdeps = libdeps + cc_deps
 
     # PhaserBank entries are registered by static initializers in the generated
@@ -350,3 +443,17 @@ def phaser_library(
         hdrs = [hdrs],
         deps = libdeps,
     )
+
+    if rust:
+        crate = name + "_rust_crate"
+        _phaser_rust_crate(
+            name = crate,
+            generated = phaser,
+        )
+        rust_library(
+            name = name + "_rs",
+            srcs = [":" + crate],
+            crate_name = _rust_crate_name(name),
+            edition = "2021",
+            deps = [":" + name],
+        )

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -38,8 +39,13 @@ class CodeGenerator : public google::protobuf::compiler::CodeGenerator {
   // phaser_library(enable_active_message = True)).
   mutable bool generate_active_message_ = false;
   mutable bool generate_ros_metadata_ = false;
+  mutable bool generate_rust_ = false;
   mutable FrontendStyle frontend_style_ = FrontendStyle::kProtobuf;
 };
+
+std::string GeneratedIncludeFilename(const std::filesystem::path& package_name,
+                                     const std::filesystem::path& target_name,
+                                     const std::string& filename);
 
 class Generator {
  public:
@@ -52,6 +58,8 @@ class Generator {
   void GenerateHeaders(std::ostream& os, std::string* error);
   void GenerateSources(std::ostream& os);
   void GenerateProtobufDescriptorRegistrations(std::ostream& os);
+  void GenerateBindings(std::ostream& c_header, std::ostream& c_source,
+                        std::ostream* rust);
 
  private:
   void OpenNamespace(std::ostream& os);
