@@ -1,6 +1,7 @@
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:defs.bzl", "py_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//phaser:phaser_library.bzl", "phaser_library")
 
@@ -63,8 +64,17 @@ cc_proto_library(
 phaser_library(
     name = "test_message_phaser",
     add_namespace = "phaser",
+    python = True,
     runtime = "//phaser/runtime:phaser_runtime",
     deps = [":test_message_proto"],
+)
+
+py_test(
+    name = "phaser_python_test",
+    srcs = ["python_test.py"],
+    main = "python_test.py",
+    data = [":test_message_phaser_py"],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 phaser_library(
