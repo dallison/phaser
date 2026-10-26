@@ -19,7 +19,7 @@ protobuf without constructing an intermediate user-facing message.
 Other features include:
 
 1. Target IDL is proto3, but proto2 is also supported
-2. Protobuf-style and ROS-style generated C++ frontends
+2. Protobuf, ROS, and C frontends, plus Python and Rust clients
 3. Native Phaser, protobuf, and ROS1 wire input/output
 4. Direct protobuf-to-ROS and ROS-to-protobuf conversion
 5. Fixed, caller-owned, and dynamically growing buffers
@@ -32,8 +32,9 @@ Other features include:
 
 ## How Phaser works
 Phaser works as a plugin for the Protocol Buffers compiler (protoc).  This means that protoc
-does the parsing of the `.proto` files and hands off to Phaser to generate code.  Only
-C++ output is supported.
+does the parsing of the `.proto` files and hands off to Phaser to generate code.
+The C++ classes are the implementation. Python, C, and Rust are generated views
+of the protobuf-style accessors. The ROS public-field frontend stays C++ only.
 
 The default generated frontend looks like the regular C++ protobuf backend,
 with a few enhancements and minor incompatibilities. The optional ROS frontend
@@ -140,7 +141,7 @@ proto_library(
 phaser_library(
     name = "foo_phaser",
     add_namespace = "phaser",
-    frontend = "protobuf",  # Default; use "ros" for public field proxies.
+    frontend = "protobuf",  # Default. "ros" and "c" select the other frontends.
     enable_active_message = False,
     deps = [":foo_proto"],
 )
@@ -225,13 +226,20 @@ The actual command used by Bazel to build the Phaser files is:
 
 I haven't done this with `cmake` or any other build system but I guess it will be reasonably easy.
 
-## Protobuf and ROS frontends
-`phaser_library` supports two generated C++ interfaces over the same Phaser
+## Protobuf, ROS, and C frontends
+`phaser_library` supports three generated interfaces over the same Phaser
 payload layout:
 
 - `frontend = "protobuf"` (the default) generates protobuf-style getters and
   setters.
 - `frontend = "ros"` generates a struct with public field proxies.
+- `frontend = "c"` generates a C API of opaque handles. `rust = True` builds a
+  Rust crate on that API and selects this frontend when `frontend` is omitted.
+- `python = True` builds a pybind11 module over the protobuf frontend.
+
+Python, C, and Rust are described in [Python, C, and Rust](#python-c-and-rust).
+The ROS frontend has no Python, C, or Rust API. `rust = True` cannot be
+combined with an explicit protobuf or ROS frontend.
 
 ```python
 phaser_library(
@@ -249,7 +257,9 @@ phaser_library(
 )
 ```
 
-When invoking the plugin directly, pass `frontend=ros` in `--phaser_out`.
+When invoking the plugin directly, pass `frontend=ros` or `frontend=c` in
+`--phaser_out`. `rust=true` is accepted only with `frontend=c`.
+`phaser_library` fills that in when `rust = True` and `frontend` is omitted.
 Unknown frontend values are rejected.
 
 The frontend controls source-level syntax, not wire compatibility:
@@ -284,6 +294,185 @@ int count = ros_view.count;
 Both frontends also generate the complete protobuf and ROS1 serialization and
 wire-to-wire conversion APIs. You do not need the ROS frontend to produce or
 consume ROS1 wire bytes.
+
+## Python, C, and Rust
+Python, C, and Rust expose the protobuf getter and setter API. They do not
+expose the ROS public-field frontend, and they do not change the native
+payload. A library that wants more than one of these clients declares a
+separate `phaser_library` for each.
+
+The mapping follows the generated C++ accessors:
+
+- Singular scalars, strings, bytes, and enums: `name()`, `set_name()`,
+  `has_name()`, and `clear_name()`. A field named `has_<name>` next to
+  `<name>` uses `_phaser_has_<name>` for presence, same as C++.
+- Repeated fields: `name(index)`, `set_name(index, value)`, `add_name(value)`,
+  `name_size()`, `clear_name()`, `reserve_name()`, and `resize_name()`.
+- Singular messages: `name()` and `mutable_name()`. Repeated messages return
+  the element from `name(index)`, `mutable_name(index)`, and `add_name()`.
+- Oneofs: `name_case()` is the selected field number, or `0` when unset.
+  Setting one arm clears the other.
+- Maps are repeated entry messages. A `map<string, int32> values` field is
+  `add_values()`, then `set_key()` and `set_value()` on the entry.
+- `google.protobuf.Any` fields are the shared `AnyMessage` type, with
+  `type_url` and `value`. That is the runtime any, not a separate generated
+  class you construct yourself.
+- Strings are text. Bytes keep interior zero bytes.
+- `ByteSizeLong` (`byte_size_long` in C and Rust) is the native buffer
+  capacity, not the protobuf wire size. Do not compare it across messages as
+  if it were a serialized length.
+
+### Python
+`python = True` builds a pybind11 module named `<name>_py` over the protobuf
+frontend. The default frontend is already protobuf, so this is enough:
+
+```python
+phaser_library(
+    name = "foo_phaser",
+    python = True,
+    deps = [":foo_proto"],
+)
+```
+
+A `py_binary` or `py_test` that depends on `:foo_phaser_py` imports that
+module. Classes use the generated C++ names (`Foo`, and `Foo_ValuesEntry` for
+a nested map entry). Enums are pybind11 enums. The constructor takes
+`initial_size` and defaults to 8192.
+
+```python
+import foo_phaser_py as phaser
+
+msg = phaser.Foo()
+msg.set_count(3)
+msg.set_name("sensor")
+assert msg.has_count()
+msg.add_samples(1.5)
+
+child = msg.mutable_child()
+child.set_label("cam")
+assert msg.child().label() == "cam"
+
+msg.set_kind(phaser.Kind.CAMERA)
+blob = msg.SerializeAsString()  # bytes
+copy = phaser.Foo(1024)
+assert copy.ParseFromString(blob)
+print(copy.DebugString())
+copy.Clear()
+```
+
+String fields are `str`. Bytes fields and serialized buffers are `bytes`.
+Nested message objects keep the parent alive. `AnyMessage` has `type_url()`,
+`set_type_url()`, `value()`, and `set_value()`; `value` is `bytes`. Enum
+aliases that share a number register only the first declared name.
+`python = True` with `frontend = "ros"` fails.
+
+### C
+`frontend = "c"` emits `Foo.phaser.c.h` next to the C++ header. Include the C
+header. The C++ classes are still in the library; the C functions are the
+supported surface.
+
+```python
+phaser_library(
+    name = "foo_c",
+    frontend = "c",
+    deps = [":foo_proto"],
+)
+```
+
+Symbols are `phaser_<package>_<Type>_<method>`. Dots in the package become
+underscores. An empty package omits that piece. The added C++ namespace from
+`add_namespace` is not part of the C name. For package `foo.bar`, `Foo` is
+`phaser_foo_bar_Foo`. Enum constants are `phaser_foo_bar_Kind_CAMERA`. Nested
+types use one level of containing name, matching the C++ class:
+`phaser_foo_bar_Foo_ValuesEntry`.
+
+```c
+#include "foo/bar/Foo.phaser.c.h"
+
+phaser_foo_bar_Foo* msg = phaser_foo_bar_Foo_new(8192);
+phaser_foo_bar_Foo_set_count(msg, 3);
+phaser_foo_bar_Foo_set_name(msg, (const uint8_t*)"sensor", 6);
+
+PhaserBytes name = phaser_foo_bar_Foo_name(msg);
+/* name.data has name.size bytes; free it with phaser_free. */
+phaser_free(name.data);
+
+phaser_foo_bar_Child* child = phaser_foo_bar_Foo_mutable_child(msg);
+phaser_foo_bar_Child_set_label(child, (const uint8_t*)"cam", 3);
+phaser_foo_bar_Child_free(child);
+
+phaser_foo_bar_Foo_free(msg);
+```
+
+Each returned pointer owns a small heap handle. `_free` deletes that handle.
+Freeing a handle from a field accessor does not free the parent. Free those
+handles before the pointer from `_new`. `PhaserBytes` owns its `data`; free it
+with `phaser_free`. A null `data` pointer is empty. Bool crosses the ABI as
+`uint8_t`. Strings and bytes are a pointer plus a length, so interior zeros
+survive. Enum arguments and results are `int32_t`.
+
+`phaser_AnyMessage` is declared in `phaser/runtime/phaser_c.h`. Any fields
+return that type. It has no `_new`; take it from `mutable_any` or `any`, then
+`phaser_AnyMessage_free` the handle. The generated `google.protobuf.Any`
+message, if your library includes that proto, is a separate C type named like
+any other message.
+
+### Rust
+`rust = True` builds a crate named `<name>_rs` whose crate name is the target
+name with non-alphanumeric characters replaced by `_`. When `frontend` is
+omitted, this selects the C frontend:
+
+```python
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+phaser_library(
+    name = "foo_phaser",
+    rust = True,
+    deps = [":foo_proto"],
+)
+
+rust_binary(
+    name = "demo",
+    srcs = ["demo.rs"],
+    edition = "2021",
+    deps = [":foo_phaser_rs"],
+)
+```
+
+```rust
+use foo_phaser::{Foo, Kind};
+
+let mut msg = Foo::new(8192);
+msg.set_count(3);
+msg.set_name("sensor");
+assert!(msg.has_count());
+msg.add_samples(1.5);
+
+{
+    let mut child = msg.mutable_child();
+    child.set_label("cam");
+}
+assert_eq!(msg.child().label(), "cam");
+
+msg.set_kind(Kind::CAMERA);
+let blob = msg.serialize_as_string();
+let mut copy = Foo::new(1024);
+assert!(copy.parse_from_string(&blob));
+assert!(copy.debug_string().contains("cam"));
+copy.clear();
+```
+
+`new` returns a `'static` message. Accessors that return a message tie that
+handle's lifetime to the borrow of the parent, and `Drop` frees the handle.
+End the child borrow before using the parent again. Strings are `String` on
+the way out and `&str` on the way in. Bytes are `Vec<u8>` and `&[u8]`. Enums
+are `struct Kind(pub i32)` with associated constants, so aliases and unknown
+values both work. Rust keywords in method names get a trailing `_`.
+`AnyMessage` is in the same crate: `set_type_url`, `type_url`, `set_value`,
+and `value`.
+
+Phaser's module registers `rules_rust` for this crate. A downstream Bazel
+module that depends on Phaser picks that up through the module graph.
 
 Set `enable_active_message = True` on `phaser_library`, or pass
 `active_message=true` to the plugin, to add a public `active_message` member to

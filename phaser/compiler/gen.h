@@ -40,8 +40,13 @@ class CodeGenerator : public google::protobuf::compiler::CodeGenerator {
   // phaser_library(enable_active_message = True)).
   mutable bool generate_active_message_ = false;
   mutable bool generate_ros_metadata_ = false;
+  mutable bool generate_rust_ = false;
   mutable FrontendStyle frontend_style_ = FrontendStyle::kProtobuf;
 };
+
+std::string GeneratedIncludeFilename(const std::filesystem::path& package_name,
+                                     const std::filesystem::path& target_name,
+                                     const std::string& filename);
 
 class Generator {
  public:
@@ -55,6 +60,8 @@ class Generator {
   void GenerateSources(std::ostream& os);
   void GeneratePython(std::ostream& os);
   void GenerateProtobufDescriptorRegistrations(std::ostream& os);
+  void GenerateBindings(std::ostream& c_header, std::ostream& c_source,
+                        std::ostream* rust);
   std::string CppNamespace() const;
 
  private:
@@ -76,9 +83,6 @@ class Generator {
 // `proto_filename` is the canonical proto path, such as
 // `phaser/testdata/TestMessage.proto`. The Bazel rule derives the same symbol
 // from that path.
-std::string GeneratedIncludeFilename(
-    const std::filesystem::path& package_name,
-    const std::filesystem::path& target_name, const std::string& filename);
 std::string PythonRegisterSymbol(const std::string& proto_filename);
 void WriteEmptyPythonRegistration(std::ostream& os, const std::string& symbol);
 

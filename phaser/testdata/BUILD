@@ -1,11 +1,19 @@
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@rules_python//python:defs.bzl", "py_test")
+load("@rules_rust//rust:defs.bzl", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//phaser:phaser_library.bzl", "phaser_library")
 
 package(default_visibility = ["//visibility:public"])
+
+# Set by build:asan in .bazelrc. rust_test's platform transition ignores
+# --test_tag_filters, so the Rust test uses this to stay out of ASan builds.
+config_setting(
+    name = "asan",
+    define_values = {"asan": "1"},
+)
 
 # libFuzzer regression inputs from CreateReadonly ASan crashes.
 exports_files([
@@ -81,6 +89,47 @@ py_test(
         "//phaser:valgrind.supp",
     ],
     deps = ["@rules_python//python/runfiles"],
+)
+
+phaser_library(
+    name = "test_message_c_phaser",
+    add_namespace = "c_api",
+    # test_message_phaser owns the short TestMessage.phaser.h symlink.
+    direct_header_symlinks = False,
+    rust = True,
+    runtime = "//phaser/runtime:phaser_runtime",
+    deps = [":test_message_proto"],
+)
+
+cc_test(
+    name = "phaser_c_api_test",
+    srcs = ["c_api_test.c"],
+    # Valgrind looks up phaser/valgrind.supp from the test runfiles.
+    data = ["//phaser:valgrind.supp"],
+    deps = [":test_message_c_phaser"],
+)
+
+rust_test(
+    name = "phaser_rust_test",
+    srcs = ["rust_test.rs"],
+    crate_name = "phaser_rust_test",
+    data = ["//phaser:valgrind.supp"],
+    edition = "2021",
+    # rustc links libc before the C++ archives. On Linux, protobuf's port.o
+    # references atexit, so libc has to be named again at the end.
+    # rustc also does not link the ASan runtime for sanitized C++ objects, and
+    # the rust_test platform transition ignores --test_tag_filters, so this
+    # target is incompatible under --config=asan. The C API test still runs.
+    rustc_flags = select({
+        "@platforms//os:linux": ["-Clink-arg=-lc"],
+        "//conditions:default": [],
+    }),
+    tags = ["no-asan"],
+    target_compatible_with = select({
+        ":asan": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [":test_message_c_phaser_rs"],
 )
 
 phaser_library(
