@@ -80,4 +80,27 @@ void EnumGenerator::GenerateHeader(std::ostream& os) {
   os << "}\n\n";
 }
 
+void EnumGenerator::GeneratePython(std::ostream& os) {
+  std::string name(enum_->name());
+  if (enum_->containing_type() != nullptr) {
+    name = std::string(enum_->containing_type()->name()) + "_" + name;
+  }
+  os << "  py::enum_<" << name << ">(m, \"" << name << "\")";
+  // allow_alias gives several names one number. py::enum_ rejects a second
+  // .value() for a number, so only the first declared name is registered.
+  std::set<int> seen_numbers;
+  for (int i = 0; i < enum_->value_count(); i++) {
+    const google::protobuf::EnumValueDescriptor* value = enum_->value(i);
+    if (!seen_numbers.insert(value->number()).second) {
+      continue;
+    }
+    std::string const_name(value->name());
+    if (enum_->containing_type() != nullptr) {
+      const_name = name + "_" + const_name;
+    }
+    os << "\n      .value(\"" << value->name() << "\", " << const_name << ")";
+  }
+  os << ";\n";
+}
+
 }  // namespace phaser

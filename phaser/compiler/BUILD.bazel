@@ -10,6 +10,7 @@ cc_library(
         "gen.cc",
         "message_gen.cc",
         "message_gen_arrow.cc",
+        "message_gen_python.cc",
     ],
     copts = PHASER_PROTOC_COPTS,
     hdrs = [
