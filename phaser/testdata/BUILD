@@ -97,6 +97,8 @@ phaser_library(
 cc_test(
     name = "phaser_c_api_test",
     srcs = ["c_api_test.c"],
+    # Valgrind looks up phaser/valgrind.supp from the test runfiles.
+    data = ["//phaser:valgrind.supp"],
     deps = [":test_message_c_phaser"],
 )
 
@@ -104,7 +106,17 @@ rust_test(
     name = "phaser_rust_test",
     srcs = ["rust_test.rs"],
     crate_name = "phaser_rust_test",
+    data = ["//phaser:valgrind.supp"],
     edition = "2021",
+    # rustc links libc before the C++ archives. On Linux, protobuf's port.o
+    # references atexit, so libc has to be named again at the end.
+    # rustc also does not link the ASan runtime for sanitized C++ objects.
+    # The C API test still runs under ASan.
+    rustc_flags = select({
+        "@platforms//os:linux": ["-Clink-arg=-lc"],
+        "//conditions:default": [],
+    }),
+    tags = ["no-asan"],
     deps = [":test_message_c_phaser_rs"],
 )
 
