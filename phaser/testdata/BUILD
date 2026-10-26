@@ -8,6 +8,13 @@ load("//phaser:phaser_library.bzl", "phaser_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# Set by build:asan in .bazelrc. rust_test's platform transition ignores
+# --test_tag_filters, so the Rust test uses this to stay out of ASan builds.
+config_setting(
+    name = "asan",
+    define_values = {"asan": "1"},
+)
+
 # libFuzzer regression inputs from CreateReadonly ASan crashes.
 exports_files([
     "fuzz_crash_union_int64.bin",
@@ -110,13 +117,18 @@ rust_test(
     edition = "2021",
     # rustc links libc before the C++ archives. On Linux, protobuf's port.o
     # references atexit, so libc has to be named again at the end.
-    # rustc also does not link the ASan runtime for sanitized C++ objects.
-    # The C API test still runs under ASan.
+    # rustc also does not link the ASan runtime for sanitized C++ objects, and
+    # the rust_test platform transition ignores --test_tag_filters, so this
+    # target is incompatible under --config=asan. The C API test still runs.
     rustc_flags = select({
         "@platforms//os:linux": ["-Clink-arg=-lc"],
         "//conditions:default": [],
     }),
     tags = ["no-asan"],
+    target_compatible_with = select({
+        ":asan": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     deps = [":test_message_c_phaser_rs"],
 )
 
