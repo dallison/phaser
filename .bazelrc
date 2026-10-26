@@ -10,6 +10,11 @@ build:asan --linkopt=-fsanitize=address
 # phaser_python_test loads an instrumented extension into the uninstrumented
 # CPython interpreter. ASan aborts unless its runtime is the first library
 # loaded, which a dlopen of the extension is not. Tag that test no-asan.
+# phaser_rust_test is linked by rustc with -nodefaultlibs, which does not pull
+# in the ASan runtime. Its rust_test platform transition also ignores
+# test_tag_filters, so the test is marked incompatible when --define=asan=1
+# (set here) rather than filtered by tag. The C API cc_test still runs.
+build:asan --define=asan=1
 test:asan --test_tag_filters=-no-asan
 
 # AddressSanitizer + libFuzzer for long receive-path fuzz runs.

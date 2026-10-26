@@ -157,6 +157,20 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "phaser_c",
+    srcs = ["phaser_c.cc"],
+    hdrs = [
+        "phaser_c.h",
+        "phaser_c_handle.h",
+    ],
+    alwayslink = True,
+    copts = PHASER_COPTS,
+    deps = [":phaser_runtime"],
+)
+
+exports_files(["rust_support.rs"])
+
 cc_test(
     name = "arrow_test",
     srcs = ["arrow_test.cc"],
