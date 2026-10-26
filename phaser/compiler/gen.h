@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <string>
 #include <memory>
 #include <vector>
 
@@ -57,9 +58,11 @@ class Generator {
 
   void GenerateHeaders(std::ostream& os, std::string* error);
   void GenerateSources(std::ostream& os);
+  void GeneratePython(std::ostream& os);
   void GenerateProtobufDescriptorRegistrations(std::ostream& os);
   void GenerateBindings(std::ostream& c_header, std::ostream& c_source,
                         std::ostream* rust);
+  std::string CppNamespace() const;
 
  private:
   void OpenNamespace(std::ostream& os);
@@ -75,5 +78,12 @@ class Generator {
   bool generate_ros_metadata_;
   FrontendStyle frontend_style_;
 };
+
+// Symbol defined by each generated .pybind.cc and called from the module.
+// `proto_filename` is the canonical proto path, such as
+// `phaser/testdata/TestMessage.proto`. The Bazel rule derives the same symbol
+// from that path.
+std::string PythonRegisterSymbol(const std::string& proto_filename);
+void WriteEmptyPythonRegistration(std::ostream& os, const std::string& symbol);
 
 }  // namespace phaser

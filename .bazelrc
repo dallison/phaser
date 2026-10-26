@@ -7,6 +7,10 @@ build:asan -c dbg
 build:asan --copt=-fsanitize=address
 build:asan --copt=-fno-omit-frame-pointer
 build:asan --linkopt=-fsanitize=address
+# phaser_python_test loads an instrumented extension into the uninstrumented
+# CPython interpreter. ASan aborts unless its runtime is the first library
+# loaded, which a dlopen of the extension is not. Tag that test no-asan.
+test:asan --test_tag_filters=-no-asan
 
 # AddressSanitizer + libFuzzer for long receive-path fuzz runs.
 # Requires clang (GCC does not support -fsanitize=fuzzer). Linux recommended:
@@ -36,6 +40,9 @@ build:valgrind --copt=-g
 build:valgrind --copt=-fno-omit-frame-pointer
 
 test:valgrind --test_output=errors
+# CPython's default allocator hides blocks from memcheck. malloc makes the
+# Python test's allocations visible without changing the C++ tests.
+test:valgrind --test_env=PYTHONMALLOC=malloc
 # Valgrind is slow; give tests plenty of time.
 test:valgrind --test_timeout=900
 # Only fail on definite leaks: protobuf/abseil keep global state that valgrind

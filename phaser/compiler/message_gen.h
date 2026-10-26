@@ -92,6 +92,12 @@ class MessageGenerator {
   void GenerateBindings(std::ostream& decl, std::ostream& def,
                         std::ostream* rust,
                         std::vector<std::string>* declared_types);
+  // Python bindings are emitted in three passes so a method can return a type
+  // declared later in the file: enums, then class objects, then methods.
+  void GeneratePythonEnums(std::ostream& os);
+  void GeneratePythonClasses(std::ostream& os);
+  void GeneratePythonMethods(std::ostream& os);
+  bool PythonUsesAny();
 
   void GenerateFieldDeclarations(std::ostream& os);
 
@@ -152,6 +158,12 @@ class MessageGenerator {
   void GenerateFieldProtobufAccessors(std::shared_ptr<FieldInfo> field,
                                       std::shared_ptr<UnionInfo> union_field,
                                       int union_index, std::ostream& os);
+  void GeneratePythonField(std::ostream& os,
+                           const std::shared_ptr<FieldInfo>& field);
+  // FieldCType with a leading :: when the type is already qualified, so it
+  // still resolves inside `using namespace` of this message's package.
+  std::string PythonValueType(
+      const google::protobuf::FieldDescriptor* field);
   void GenerateUnionProtobufAccessors(std::ostream& os);
   void GenerateNestedTypes(std::ostream& os);
   void GenerateFieldNumbers(std::ostream& os);

@@ -1,4 +1,4 @@
-#include "phaser/testdata/TestMessage.phaser.c.h"
+#include "phaser/testdata/test_message_c_phaser/phaser/testdata/TestMessage.phaser.c.h"
 
 #include <stdint.h>
 #include <stdio.h>

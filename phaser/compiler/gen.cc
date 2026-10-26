@@ -253,11 +253,12 @@ bool CodeGenerator::Generate(
                           header_output.get());
     WriteToZeroCopyStream("// No Phaser definitions in this schema.\n",
                           source_output.get());
+    // descriptor.proto and options.proto are not declared as language outputs.
+    // Every other schema, including ones with no messages, is.
     const bool skip_language_bindings =
         file->name() == std::string("google/protobuf/descriptor.proto") ||
         file->name() == std::string("phaser/options.proto");
-    if (!skip_language_bindings &&
-        frontend_style_ == FrontendStyle::kC) {
+    if (!skip_language_bindings && frontend_style_ == FrontendStyle::kC) {
       std::filesystem::path c_header(filename);
       c_header.replace_extension(".phaser.c.h");
       if (!WriteOutput(generator_context, c_header,
@@ -272,6 +273,22 @@ bool CodeGenerator::Generate(
                        "// No Phaser Rust API in this schema.\n", error)) {
         return false;
       }
+    }
+    if (!skip_language_bindings) {
+      std::filesystem::path pyp(filename);
+      pyp.replace_extension(".pybind.cc");
+      auto python_output =
+          std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream>(
+              generator_context->Open(pyp.string()));
+      if (python_output == nullptr) {
+        *error = absl::StrFormat("Failed to create empty Python output for %s",
+                                 file->name());
+        return false;
+      }
+      std::stringstream python_stream;
+      WriteEmptyPythonRegistration(
+          python_stream, PythonRegisterSymbol(std::string(file->name())));
+      WriteToZeroCopyStream(python_stream.str(), python_output.get());
     }
     return true;
   }
@@ -342,8 +359,20 @@ bool CodeGenerator::Generate(
   }
 
   // Write to the streams that protobuf wants
+  std::filesystem::path pyp(filename);
+  pyp.replace_extension(".pybind.cc");
+  std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> python_output(
+      generator_context->Open(pyp.string()));
+  if (python_output == nullptr) {
+    *error = absl::StrFormat("Failed to open %s for writing", pyp.string());
+    return false;
+  }
+  std::stringstream python_stream;
+  gen.GeneratePython(python_stream);
+
   WriteToZeroCopyStream(header_stream.str(), header_output.get());
   WriteToZeroCopyStream(source_stream.str(), source_output.get());
+  WriteToZeroCopyStream(python_stream.str(), python_output.get());
   return true;
 }
 

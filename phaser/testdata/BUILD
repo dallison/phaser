@@ -1,6 +1,7 @@
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_python//python:defs.bzl", "py_test")
 load("@rules_rust//rust:defs.bzl", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//phaser:phaser_library.bzl", "phaser_library")
@@ -64,13 +65,30 @@ cc_proto_library(
 phaser_library(
     name = "test_message_phaser",
     add_namespace = "phaser",
+    python = True,
     runtime = "//phaser/runtime:phaser_runtime",
     deps = [":test_message_proto"],
+)
+
+py_test(
+    name = "phaser_python_test",
+    srcs = ["python_test.py"],
+    main = "python_test.py",
+    # See test:asan in .bazelrc. Valgrind's --suppressions path is relative to
+    # the test runfiles directory, so the file has to be a data dependency.
+    tags = ["no-asan"],
+    data = [
+        ":test_message_phaser_py",
+        "//phaser:valgrind.supp",
+    ],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 phaser_library(
     name = "test_message_c_phaser",
     add_namespace = "c_api",
+    # test_message_phaser owns the short TestMessage.phaser.h symlink.
+    direct_header_symlinks = False,
     rust = True,
     runtime = "//phaser/runtime:phaser_runtime",
     deps = [":test_message_proto"],

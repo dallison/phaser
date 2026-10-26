@@ -4,6 +4,7 @@ This module provides a rule to generate phaser message files from proto_library 
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@com_google_protobuf//bazel/common:proto_info.bzl", "ProtoInfo")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
@@ -12,9 +13,46 @@ MessageInfo = provider(fields = [
     "transitive_sources",
     "cpp_outputs",
     "symlink_headers",
+    "python_registers",
 ])
 
 PhaserGenInfo = provider(fields = ["rust_files"])
+
+def _python_register_symbol(base):
+    stem = base[:-len(".proto")] if base.endswith(".proto") else base
+    chars = []
+    for i in range(len(stem)):
+        c = stem[i]
+        chars.append(c if c.isalnum() else "_")
+    return "phaser_python_register_" + "".join(chars)
+
+def _sanitize_identifier(name):
+    chars = []
+    for i in range(len(name)):
+        c = name[i]
+        if c.isalnum() or c == "_":
+            chars.append(c)
+        else:
+            chars.append("_")
+    if not chars or chars[0].isdigit():
+        chars.insert(0, "_")
+    return "".join(chars)
+
+def _python_module_source(module_name, registers):
+    lines = [
+        "#include <pybind11/pybind11.h>",
+        "namespace py = pybind11;",
+        "namespace phaser::python {",
+    ]
+    for sym in registers:
+        lines.append("void {}(py::module_&);".format(sym))
+    lines.append("}  // namespace phaser::python")
+    lines.append("PYBIND11_MODULE({}, m) {{".format(module_name))
+    for sym in registers:
+        lines.append("  phaser::python::{}(m);".format(sym))
+    lines.append("}")
+    lines.append("")
+    return "\n".join(lines)
 
 def _phaser_action(
         ctx,
@@ -120,14 +158,16 @@ def _skip_phaser_generation(source_file):
         return True
     return False
 
-def _phaser_aspect_impl(target, _ctx):
+def _phaser_aspect_impl(target, ctx):
     direct_sources = []
     transitive_sources = depset()
     cpp_outputs = []
     symlink_headers = []
+    python_registers = []
 
     def add_output(base, symlink):
         cpp_outputs.append(paths.replace_extension(base, ".phaser.cc"))
+        cpp_outputs.append(paths.replace_extension(base, ".pybind.cc"))
         header = paths.replace_extension(base, ".phaser.h")
         cpp_outputs.append(header)
         if symlink:
@@ -136,17 +176,49 @@ def _phaser_aspect_impl(target, _ctx):
     if ProtoInfo in target:
         transitive_sources = target[ProtoInfo].transitive_sources
         direct_paths = {s.path: True for s in _to_list(target[ProtoInfo].direct_sources)}
+        source_bases = []
         for s in _to_list(transitive_sources):
             if _skip_phaser_generation(s):
                 continue
             direct_sources.append(s)
-            add_output(_proto_output_base(s), s.path in direct_paths)
+            base = _proto_output_base(s)
+            source_bases.append(base)
+            add_output(base, s.path in direct_paths)
+
+        # Dependency protos first, then anything else this target imports, then
+        # this target's own files. Each register function binds its classes
+        # before its methods, so a later file can return an earlier type.
+        seen = {}
+
+        def add_symbol(sym):
+            if sym in seen:
+                return
+            seen[sym] = True
+            python_registers.append(sym)
+
+        if hasattr(ctx.rule.attr, "deps"):
+            for dep in ctx.rule.attr.deps:
+                if MessageInfo in dep:
+                    for sym in dep[MessageInfo].python_registers:
+                        add_symbol(sym)
+        direct_syms = []
+        for s in _to_list(target[ProtoInfo].direct_sources):
+            if _skip_phaser_generation(s):
+                continue
+            direct_syms.append(_python_register_symbol(_proto_output_base(s)))
+        for base in source_bases:
+            sym = _python_register_symbol(base)
+            if sym not in direct_syms:
+                add_symbol(sym)
+        for sym in direct_syms:
+            add_symbol(sym)
 
     return [MessageInfo(
         direct_sources = direct_sources,
         transitive_sources = transitive_sources,
         cpp_outputs = cpp_outputs,
         symlink_headers = symlink_headers,
+        python_registers = python_registers,
     )]
 
 phaser_aspect = aspect(
@@ -171,6 +243,8 @@ def _phaser_impl(ctx):
     cpp_outputs = []
     rust_files = []
     seen_extra = {}
+    python_registers = []
+    seen_registers = {}
     package_name = ctx.attr.package_name
     for dep in ctx.attr.deps:
         dep_outs = []
@@ -235,6 +309,10 @@ def _phaser_impl(ctx):
 
         direct_sources += dep[MessageInfo].direct_sources
         transitive_sources.append(dep[MessageInfo].transitive_sources)
+        for sym in dep[MessageInfo].python_registers:
+            if sym not in seen_registers:
+                seen_registers[sym] = True
+                python_registers.append(sym)
         outputs += dep_outs
 
     _phaser_action(
@@ -251,6 +329,17 @@ def _phaser_impl(ctx):
         ctx.attr.ros_metadata,
         ctx.attr.rust,
     )
+
+    if ctx.attr.python:
+        if frontend != "protobuf":
+            fail("phaser_library python bindings require frontend=protobuf")
+        module_name = _sanitize_identifier(ctx.attr.target_name + "_py")
+        umbrella = ctx.actions.declare_file(module_name + "_module.pybind.cc")
+        ctx.actions.write(
+            output = umbrella,
+            content = _python_module_source(module_name, python_registers),
+        )
+        outputs.append(umbrella)
 
     return [
         DefaultInfo(files = depset(outputs)),
@@ -280,6 +369,7 @@ _phaser_gen = rule(
         "enable_active_message": attr.bool(default = False),
         "ros_metadata": attr.bool(default = False),
         "rust": attr.bool(default = False),
+        "python": attr.bool(default = False),
     },
     implementation = _phaser_impl,
 )
@@ -325,8 +415,13 @@ def _rust_crate_name(name):
 def _split_files_impl(ctx):
     files = []
     for file in ctx.files.deps:
-        if file.extension == ctx.attr.ext:
-            files.append(file)
+        if file.extension != ctx.attr.ext:
+            continue
+        if ctx.attr.exclude_suffix and file.basename.endswith(ctx.attr.exclude_suffix):
+            continue
+        if ctx.attr.include_suffix and not file.basename.endswith(ctx.attr.include_suffix):
+            continue
+        files.append(file)
 
     return [DefaultInfo(files = depset(files))]
 
@@ -334,6 +429,8 @@ _split_files = rule(
     attrs = {
         "deps": attr.label_list(mandatory = True),
         "ext": attr.string(mandatory = True),
+        "exclude_suffix": attr.string(default = ""),
+        "include_suffix": attr.string(default = ""),
     },
     implementation = _split_files_impl,
 )
@@ -349,7 +446,8 @@ def phaser_library(
         copts = [],
         direct_header_symlinks = True,
         ros_metadata = False,
-        rust = False):
+        rust = False,
+        python = False):
     """
     Generate a cc_libary for protobuf files specified in deps.
 
@@ -373,6 +471,10 @@ def phaser_library(
         ros_metadata: generate ROS datatype, definition, and MD5 functions.
         rust: build a Rust crate named "<name>_rs" over the C API. Selects
             frontend "c" when frontend is omitted.
+        python: also build a pybind11 module named `<name>_py`. Messages are
+            exposed with the protobuf getter and setter API (`x`, `set_x`,
+            `has_x`, `clear_x`, and the repeated `add_`/`size` methods). The
+            ROS frontend is not supported.
     """
     if frontend == None:
         frontend = "c" if rust else "protobuf"
@@ -380,6 +482,8 @@ def phaser_library(
         fail("phaser_library frontend must be 'protobuf', 'ros', or 'c', got: {}".format(frontend))
     if rust and frontend != "c":
         fail("phaser_library rust=True requires frontend = \"c\"")
+    if python and frontend != "protobuf":
+        fail("phaser_library python bindings require frontend=protobuf")
 
     output_package_name = native.package_name()
     repository_name = native.repository_name()
@@ -402,12 +506,14 @@ def phaser_library(
         frontend = frontend,
         ros_metadata = ros_metadata,
         rust = rust,
+        python = python,
     )
 
     srcs = name + "_srcs"
     _split_files(
         name = srcs,
         ext = "cc",
+        exclude_suffix = ".pybind.cc",
         deps = [phaser],
     )
 
@@ -456,4 +562,19 @@ def phaser_library(
             crate_name = _rust_crate_name(name),
             edition = "2021",
             deps = [":" + name],
+        )
+
+    if python:
+        py_name = _sanitize_identifier(name + "_py")
+        py_srcs = name + "_py_srcs"
+        _split_files(
+            name = py_srcs,
+            ext = "cc",
+            include_suffix = ".pybind.cc",
+            deps = [phaser],
+        )
+        pybind_extension(
+            name = py_name,
+            srcs = [py_srcs],
+            deps = [name],
         )
