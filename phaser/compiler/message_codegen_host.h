@@ -9,6 +9,7 @@
 // binary.
 
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,6 +39,15 @@ class MessageCodegenHost {
 
   const std::vector<std::shared_ptr<FieldInfo>>& fields_in_order() const {
     return generator_.fields_in_order_;
+  }
+
+  const std::vector<std::shared_ptr<FieldInfo>>& fields() const {
+    return generator_.fields_;
+  }
+
+  const std::map<const google::protobuf::OneofDescriptor*,
+                 std::shared_ptr<UnionInfo>>& unions() const {
+    return generator_.unions_;
   }
 
   std::string MessageName(const google::protobuf::Descriptor* desc,
@@ -79,60 +89,16 @@ class MessageCodegenHost {
     return generator_.IsRosDuration(desc);
   }
 
-  void GenerateROSSerialization(std::ostream& os, bool decl) {
-    generator_.GenerateROSSerialization(os, decl);
+  bool IsRosTime(const google::protobuf::Descriptor* desc) const {
+    return generator_.IsRosTime(desc);
   }
 
-  void GenerateROSDirectSerialization(std::ostream& os, bool decl) {
-    generator_.GenerateROSDirectSerialization(os, decl);
+  std::string FieldOffset(const FieldInfo& field) const {
+    return generator_.FieldOffset(field);
   }
 
-  void GenerateROSDirectDeserialization(std::ostream& os, bool decl) {
-    generator_.GenerateROSDirectDeserialization(os, decl);
-  }
-
-  void GenerateArrowSchemaField(std::ostream& os,
-                                const google::protobuf::FieldDescriptor* field,
-                                const std::string& name, bool nullable) {
-    generator_.GenerateArrowSchemaField(os, field, name, nullable);
-  }
-
-  void GenerateArrowWriteField(std::ostream& os, const FieldInfo& field,
-                               int index) {
-    generator_.GenerateArrowWriteField(os, field, index);
-  }
-
-  void GenerateArrowReadField(std::ostream& os, const FieldInfo& field,
-                              int index) {
-    generator_.GenerateArrowReadField(os, field, index);
-  }
-
-  void GenerateArrowCollectField(std::ostream& os, const FieldInfo& field) {
-    generator_.GenerateArrowCollectField(os, field);
-  }
-
-  bool ArrowFieldNullable(
-      const google::protobuf::FieldDescriptor* field) const {
-    return generator_.ArrowFieldNullable(field);
-  }
-
-  const char* ArrowScalarAdd(
-      const google::protobuf::FieldDescriptor* field) const {
-    return generator_.ArrowScalarAdd(field);
-  }
-
-  const char* ArrowScalarWrite(
-      const google::protobuf::FieldDescriptor* field) const {
-    return generator_.ArrowScalarWrite(field);
-  }
-
-  const char* ArrowScalarRead(
-      const google::protobuf::FieldDescriptor* field) const {
-    return generator_.ArrowScalarRead(field);
-  }
-
-  std::string ArrowQuoted(std::string_view text) const {
-    return generator_.ArrowQuoted(text);
+  std::string FieldId(const FieldInfo& field) const {
+    return generator_.FieldId(field);
   }
 
  private:

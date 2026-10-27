@@ -7,7 +7,11 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "codegen",
-    srcs = ["gen/codegen.cc"],
+    srcs = [
+        "gen/arrow_message_codegen.cc",
+        "gen/codegen.cc",
+    ],
+    hdrs = ["gen/arrow_message_codegen.h"],
     alwayslink = True,
     copts = PHASER_PROTOC_COPTS,
     deps = ["//phaser/compiler:message_generator"],
