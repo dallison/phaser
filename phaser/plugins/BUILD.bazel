@@ -66,11 +66,6 @@ alias(
 )
 
 alias(
-    name = "stamped_ros_avro_conversion",
-    actual = "//phaser/plugins/stamped_ros_avro:conversion",
-)
-
-alias(
     name = "conversion_plugin",
     actual = "//phaser/plugins/common:conversion_plugin",
 )
@@ -80,7 +75,3 @@ alias(name = "avro_pybind", actual = "//phaser/plugins/avro:pybind")
 alias(name = "parquet_pybind", actual = "//phaser/plugins/parquet:pybind")
 alias(name = "protobuf_pybind", actual = "//phaser/plugins/protobuf:pybind")
 alias(name = "ros_pybind", actual = "//phaser/plugins/ros:pybind")
-alias(
-    name = "stamped_ros_avro_pybind",
-    actual = "//phaser/plugins/stamped_ros_avro:pybind",
-)

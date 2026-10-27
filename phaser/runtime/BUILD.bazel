@@ -51,7 +51,6 @@ cc_library(
     name = "phaser_runtime",
     srcs = [
         "message_property.cc",
-        "ros_avro_record.cc",
         "md5.cc",
         "message.cc",
         "phaser_bank.cc",
@@ -65,7 +64,6 @@ cc_library(
         "active_message.h",
         "any.h",
         "columnar_forward.h",
-        "ros_avro_record.h",
         "arrays.h",
         "fields.h",
         "iterators.h",
@@ -122,8 +120,6 @@ pybind_extension(
         "//phaser/plugins:protobuf_pybind",
         "//phaser/plugins:ros_conversion",
         "//phaser/plugins:ros_pybind",
-        "//phaser/plugins:stamped_ros_avro_conversion",
-        "//phaser/plugins:stamped_ros_avro_pybind",
     ],
 )
 
@@ -145,8 +141,6 @@ pybind_extension(
         "//phaser/plugins:protobuf_pybind",
         "//phaser/plugins:ros_conversion",
         "//phaser/plugins:ros_pybind",
-        "//phaser/plugins:stamped_ros_avro_conversion",
-        "//phaser/plugins:stamped_ros_avro_pybind",
         "//phaser/testdata:ros_metadata_protobuf_phaser",
     ],
 )
@@ -161,19 +155,6 @@ py_test(
         "//phaser:valgrind.supp",
     ],
     deps = ["@rules_python//python/runfiles"],
-)
-
-cc_test(
-    name = "ros_avro_record_test",
-    srcs = ["ros_avro_record_test.cc"],
-    copts = PHASER_COPTS,
-    data = ["//phaser:valgrind.supp"],
-    deps = [
-        ":phaser_runtime",
-        "//phaser/plugins:ros_conversion",
-        "//phaser/testdata:ros_metadata_protobuf_phaser",
-        "@com_google_googletest//:gtest_main",
-    ],
 )
 
 cc_library(

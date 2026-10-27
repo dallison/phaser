@@ -1742,10 +1742,7 @@ uses a name the plugin did not declare. `kForward` installs `from` to `to`.
 `kReverse` installs `to` to `from`. `kBoth` installs both. The protobuf plugin
 accepts `"phaser"` and `"protobuf"`. The ROS plugin also accepts `"ros"` and
 converts protobuf and ROS in both directions. The Avro and Parquet plugins
-accept `"avro"` and `"parquet"` as `kForward` outputs. The stamped ROS Avro
-plugin accepts `"stamped-ros-avro"` and is also `kForward`.
-`ros_avro_record::ConvertToStampedRosBytesAvroRecord` writes that record and
-rejects a source other than `"phaser"`, `"protobuf"`, or `"ros"`.
+accept `"avro"` and `"parquet"` as `kForward` outputs.
 
 A plugin registers by calling `PhaserBankRegisterConversionPlugin` from a
 static initializer. The bank does not list plugins. A new format is its own

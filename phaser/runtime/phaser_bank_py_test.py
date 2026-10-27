@@ -44,8 +44,6 @@ class PhaserBankPyTest(unittest.TestCase):
         self.assertEqual(bank.parquet.FORMAT, bank.FORMAT_PARQUET)
         self.assertEqual(bank.ros.FORMAT, bank.FORMAT_ROS)
         self.assertEqual(bank.protobuf.FORMAT, bank.FORMAT_PROTOBUF)
-        self.assertEqual(
-            bank.stamped_ros_avro.FORMAT, bank.FORMAT_STAMPED_ROS_AVRO)
         ops = bank.arrow.operations()
         self.assertIn("collect-types", ops)
         self.assertIn("write", ops)
