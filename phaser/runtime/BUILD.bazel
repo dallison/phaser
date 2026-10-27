@@ -156,7 +156,10 @@ py_test(
     srcs = ["phaser_bank_py_test.py"],
     main = "phaser_bank_py_test.py",
     tags = ["no-asan"],
-    data = [":phaser_bank_py_testlib"],
+    data = [
+        ":phaser_bank_py_testlib",
+        "//phaser:valgrind.supp",
+    ],
     deps = ["@rules_python//python/runfiles"],
 )
 
