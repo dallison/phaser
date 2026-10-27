@@ -3,8 +3,8 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/compiler/generator_plugin.h"
-#include "phaser/compiler/message_gen.h"
-#include "phaser/compiler/ros_codegen_helpers.h"
+#include "phaser/compiler/message_codegen_host.h"
+#include "phaser/plugins/ros/ros_codegen_helpers.h"
 
 #include "phaser/options.pb.h"
 
@@ -2350,30 +2350,30 @@ void MessageGenerator::GenerateROSSerialization(std::ostream& os, bool decl) {
 }
 
 
-namespace codegen {
+namespace {
 
-void RosMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
-                                          std::ostream& os) {
-  generator.GenerateROSSerialization(os, true);
-  generator.GenerateROSDirectSerialization(os, true);
-  generator.GenerateROSDirectDeserialization(os, true);
+void EmitRosWireMessageHeader(MessageGenerator& generator, std::ostream& os) {
+  MessageCodegenHost host(generator);
+  host.GenerateROSSerialization(os, true);
+  host.GenerateROSDirectSerialization(os, true);
+  host.GenerateROSDirectDeserialization(os, true);
 }
 
-void RosMessageCodegen::EmitMessageSource(MessageGenerator& generator,
-                                          std::ostream& os) {
-  generator.GenerateROSSerialization(os, false);
-  generator.GenerateROSDirectSerialization(os, false);
-  generator.GenerateROSDirectDeserialization(os, false);
+void EmitRosWireMessageSource(MessageGenerator& generator, std::ostream& os) {
+  MessageCodegenHost host(generator);
+  host.GenerateROSSerialization(os, false);
+  host.GenerateROSDirectSerialization(os, false);
+  host.GenerateROSDirectDeserialization(os, false);
 }
 
-void RosMessageCodegen::EmitBankInfoFields(MessageGenerator& generator,
-                                           std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitRosBankInfoFields(MessageGenerator& generator, std::ostream& os) {
+  MessageCodegenHost host(generator);
+  const std::string name = host.MessageName(host.message());
   os << "  .protobuf_to_ros = " << name << "::ProtobufToROS,\n";
   os << "  .phaser_to_ros = " << name << "::PhaserToROS,\n";
   const bool has_ros_metadata =
-      generator.generate_ros_metadata_ ||
-      generator.message_->options().HasExtension(phaser::ros_message);
+      host.generate_ros_metadata() ||
+      host.message()->options().HasExtension(phaser::ros_message);
   if (has_ros_metadata) {
     os << "  .ros_data_type = " << name << "::RosDataType,\n";
     os << "  .ros_md5 = " << name << "::RosMd5,\n";
@@ -2384,22 +2384,6 @@ void RosMessageCodegen::EmitBankInfoFields(MessageGenerator& generator,
     os << "  .ros_definition = nullptr,\n";
   }
   os << "  .ros_to_protobuf = " << name << "::ROSToProtobuf,\n";
-}
-
-}  // namespace codegen
-
-namespace {
-
-void EmitRosWireMessageHeader(MessageGenerator& generator, std::ostream& os) {
-  codegen::RosMessageCodegen::EmitMessageHeader(generator, os);
-}
-
-void EmitRosWireMessageSource(MessageGenerator& generator, std::ostream& os) {
-  codegen::RosMessageCodegen::EmitMessageSource(generator, os);
-}
-
-void EmitRosBankInfoFields(MessageGenerator& generator, std::ostream& os) {
-  codegen::RosMessageCodegen::EmitBankInfoFields(generator, os);
 }
 
 const GeneratorPlugin kRosGeneratorPlugin = {

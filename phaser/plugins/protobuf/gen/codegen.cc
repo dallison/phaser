@@ -3,21 +3,19 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/compiler/generator_plugin.h"
-#include "phaser/compiler/message_gen.h"
+#include "phaser/compiler/message_codegen_host.h"
 
 namespace phaser {
-namespace codegen {
+namespace {
 
-void ProtobufMessageCodegen::EmitMessageWireHeader(MessageGenerator& generator,
-                                                   std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitProtobufWireMessageHeader(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  static absl::Status PhaserToProtobuf("
         "absl::Span<const char> phaser, ::phaser::ProtoBuffer& output);\n\n";
 }
 
-void ProtobufMessageCodegen::EmitMessageWireSource(MessageGenerator& generator,
-                                                   std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitProtobufWireMessageSource(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "absl::Status " << name
      << "::PhaserToProtobuf(absl::Span<const char> phaser, "
         "::phaser::ProtoBuffer& output) {\n";
@@ -31,30 +29,29 @@ void ProtobufMessageCodegen::EmitMessageWireSource(MessageGenerator& generator,
   os << "}\n\n";
 }
 
-void ProtobufMessageCodegen::EmitBankInfoFields(MessageGenerator& generator,
-                                                std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitProtobufBankInfoFields(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  .phaser_to_protobuf = " << name << "::PhaserToProtobuf,\n";
   os << "  .protobuf_full_name = " << name << "::FullName,\n";
   os << "  .protobuf_name = " << name << "::Name,\n";
 }
 
-}  // namespace codegen
-
-namespace {
-
-void EmitProtobufWireMessageHeader(MessageGenerator& generator,
-                                   std::ostream& os) {
-  codegen::ProtobufMessageCodegen::EmitMessageWireHeader(generator, os);
+void EmitProtobufWireMessageHeaderFromGenerator(MessageGenerator& generator,
+                                                std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitProtobufWireMessageHeader(host, os);
 }
 
-void EmitProtobufWireMessageSource(MessageGenerator& generator,
-                                   std::ostream& os) {
-  codegen::ProtobufMessageCodegen::EmitMessageWireSource(generator, os);
+void EmitProtobufWireMessageSourceFromGenerator(MessageGenerator& generator,
+                                                std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitProtobufWireMessageSource(host, os);
 }
 
-void EmitProtobufBankInfoFields(MessageGenerator& generator, std::ostream& os) {
-  codegen::ProtobufMessageCodegen::EmitBankInfoFields(generator, os);
+void EmitProtobufBankInfoFieldsFromGenerator(MessageGenerator& generator,
+                                             std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitProtobufBankInfoFields(host, os);
 }
 
 const GeneratorPlugin kProtobufGeneratorPlugin = {
@@ -64,9 +61,9 @@ const GeneratorPlugin kProtobufGeneratorPlugin = {
     nullptr,
     nullptr,
     nullptr,
-    EmitProtobufBankInfoFields,
-    EmitProtobufWireMessageHeader,
-    EmitProtobufWireMessageSource,
+    EmitProtobufBankInfoFieldsFromGenerator,
+    EmitProtobufWireMessageHeaderFromGenerator,
+    EmitProtobufWireMessageSourceFromGenerator,
 };
 
 struct ProtobufGeneratorPluginRegistrar {

@@ -20,47 +20,7 @@
 namespace phaser {
 
 class MessageGenerator;
-
-namespace codegen {
-
-class ArrowMessageCodegen {
- public:
-  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
-  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
-  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
-};
-
-class AvroMessageCodegen {
- public:
-  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
-  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
-  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
-};
-
-class ParquetMessageCodegen {
- public:
-  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
-  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
-  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
-};
-
-class RosMessageCodegen {
- public:
-  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
-  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
-  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
-};
-
-class ProtobufMessageCodegen {
- public:
-  static void EmitMessageWireHeader(MessageGenerator& generator,
-                                    std::ostream& os);
-  static void EmitMessageWireSource(MessageGenerator& generator,
-                                    std::ostream& os);
-  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
-};
-
-}  // namespace codegen
+class MessageCodegenHost;
 
 enum class FrontendStyle { kProtobuf, kRos, kC };
 
@@ -147,11 +107,7 @@ class MessageGenerator {
   void GenerateEnums(std::ostream& os);
 
  private:
-  friend class codegen::ArrowMessageCodegen;
-  friend class codegen::AvroMessageCodegen;
-  friend class codegen::ParquetMessageCodegen;
-  friend class codegen::RosMessageCodegen;
-  friend class codegen::ProtobufMessageCodegen;
+  friend class MessageCodegenHost;
   void CompileFields();
   void CompileUnions();
   void FinalizeOffsetsAndSizes();

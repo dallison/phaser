@@ -10,7 +10,6 @@ _GENERATOR_SRCS = [
     "message_gen.cc",
     "message_gen_c.cc",
     "message_gen_python.cc",
-    "ros_codegen_helpers.cc",
 ]
 
 _GENERATOR_HDRS = [
@@ -19,7 +18,6 @@ _GENERATOR_HDRS = [
     "generator_plugin.h",
     "message_codegen_host.h",
     "message_gen.h",
-    "ros_codegen_helpers.h",
 ]
 
 _GENERATOR_DEPS = [
@@ -38,7 +36,9 @@ cc_library(
     srcs = _GENERATOR_SRCS,
     copts = PHASER_PROTOC_COPTS,
     hdrs = _GENERATOR_HDRS,
-    deps = _GENERATOR_DEPS,
+    deps = _GENERATOR_DEPS + [
+        "//phaser/plugins/ros:ros_codegen_helpers",
+    ],
 )
 
 # Backward-compatible alias for in-tree targets.

@@ -1776,7 +1776,7 @@ should ship both a generator plugin (depend on
 a runtime plugin. Set `GeneratorPlugin::priority` so `BankInfo` fields emit in
 struct order (wire plugins use 0–1, columnar uses 20+). Shared ROS metadata and
 wire-type helpers for the core generator and `ros_codegen` live in
-`phaser/compiler/ros_codegen_helpers.h` (`phaser::codegen` namespace).
+`phaser/plugins/ros/ros_codegen_helpers.h` (`phaser::codegen` namespace).
 
 ### Streaming and DebugString
 You can stream a message to `std::ostream` using the `PhaserStreamTo` function.  If you want this

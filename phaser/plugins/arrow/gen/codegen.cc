@@ -3,7 +3,7 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/compiler/generator_plugin.h"
-#include "phaser/compiler/message_gen.h"
+#include "phaser/compiler/message_codegen_host.h"
 
 #include "absl/strings/escaping.h"
 #include "google/protobuf/descriptor.pb.h"
@@ -735,11 +735,10 @@ void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
   os << "  }\n";
 }
 
-namespace codegen {
+namespace {
 
-void ArrowMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
-                                            std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitArrowMessageHeader(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  static absl::Status AppendArrowSchema("
         "::phaser::arrow::SchemaBuilder& builder, std::string_view name, "
         "bool nullable, const ::phaser::arrow::TypeSet& types);\n";
@@ -757,10 +756,8 @@ void ArrowMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
      << name << ">* out);\n";
 }
 
-void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
-                                            std::ostream& os) {
-  MessageGenerator& g = generator;
-  const std::string name = g.MessageName(g.message_);
+void EmitArrowMessageSource(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
 
   os << "absl::Status " << name
      << "::ToArrow(struct ArrowSchema* schema, struct ArrowArray* array) "
@@ -795,14 +792,14 @@ void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
         "represent recursive message \") + std::string(FullName()));\n";
   os << "  }\n";
   os << "  builder.BeginStruct(name, nullable);\n";
-  for (const auto& item : g.fields_in_order_) {
+  for (const auto& item : host.fields_in_order()) {
     if (item->IsUnion()) {
       const auto& union_field = static_cast<const UnionInfo&>(*item);
       os << "  builder.BeginStruct("
-         << g.ArrowQuoted(std::string(union_field.oneof->name())) << ", false);\n";
+         << host.ArrowQuoted(std::string(union_field.oneof->name())) << ", false);\n";
       for (const auto& arm : union_field.members) {
-        g.GenerateArrowSchemaField(os, arm->field,
-                                   g.ArrowQuoted(std::string(arm->field->name())),
+        host.GenerateArrowSchemaField(os, arm->field,
+                                   host.ArrowQuoted(std::string(arm->field->name())),
                                    true);
       }
       os << "  builder.EndStruct();\n";
@@ -810,32 +807,32 @@ void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
     }
     const auto* desc = item->field;
     if (desc->is_map()) {
-      os << "  builder.BeginMap(" << g.ArrowQuoted(std::string(desc->name()))
+      os << "  builder.BeginMap(" << host.ArrowQuoted(std::string(desc->name()))
          << ", false);\n";
       os << "  if (absl::Status _phaser_status = "
-         << g.MessageName(desc->message_type(), true)
+         << host.MessageName(desc->message_type(), true)
          << "::AppendArrowSchema(builder, \"entries\", false, types); "
             "!_phaser_status.ok()) return _phaser_status;\n";
       os << "  builder.EndMap();\n";
       continue;
     }
     if (desc->is_repeated()) {
-      if (g.UsesArrayFacade(desc)) {
+      if (host.UsesArrayFacade(desc)) {
         os << "  builder.BeginFixedList("
-           << g.ArrowQuoted(std::string(desc->name())) << ", "
-           << g.GetArraySize(desc) << ");\n";
-        g.GenerateArrowSchemaField(os, desc, "\"item\"", false);
+           << host.ArrowQuoted(std::string(desc->name())) << ", "
+           << host.GetArraySize(desc) << ");\n";
+        host.GenerateArrowSchemaField(os, desc, "\"item\"", false);
         os << "  builder.EndFixedList();\n";
       } else {
-        os << "  builder.BeginList(" << g.ArrowQuoted(std::string(desc->name()))
+        os << "  builder.BeginList(" << host.ArrowQuoted(std::string(desc->name()))
            << ", false);\n";
-        g.GenerateArrowSchemaField(os, desc, "\"item\"", false);
+        host.GenerateArrowSchemaField(os, desc, "\"item\"", false);
         os << "  builder.EndList();\n";
       }
       continue;
     }
-    g.GenerateArrowSchemaField(os, desc, g.ArrowQuoted(std::string(desc->name())),
-                               g.ArrowFieldNullable(desc));
+    host.GenerateArrowSchemaField(os, desc, host.ArrowQuoted(std::string(desc->name())),
+                               host.ArrowFieldNullable(desc));
   }
   os << "  builder.EndStruct();\n";
   os << "  return builder.status();\n";
@@ -847,8 +844,8 @@ void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
   os << "      !types->Visit(runtime->pb, absolute_binary_offset)) {\n";
   os << "    return absl::OkStatus();\n";
   os << "  }\n";
-  for (const auto& item : g.fields_in_order_) {
-    g.GenerateArrowCollectField(os, *item);
+  for (const auto& item : host.fields_in_order()) {
+    host.GenerateArrowCollectField(os, *item);
   }
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
@@ -858,8 +855,8 @@ void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
         "::phaser::arrow::TypeSet& types) const {\n";
   os << "  (void)types;\n";
   int index = 0;
-  for (const auto& item : g.fields_in_order_) {
-    g.GenerateArrowWriteField(os, *item, index);
+  for (const auto& item : host.fields_in_order()) {
+    host.GenerateArrowWriteField(os, *item, index);
     ++index;
   }
   os << "  return writer.FinishStruct();\n";
@@ -870,8 +867,8 @@ void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
   os << "  if (absl::Status _phaser_status = row.status(); !_phaser_status.ok()) "
         "return _phaser_status;\n";
   int read_index = 0;
-  for (const auto& item : g.fields_in_order_) {
-    g.GenerateArrowReadField(os, *item, read_index);
+  for (const auto& item : host.fields_in_order()) {
+    host.GenerateArrowReadField(os, *item, read_index);
     ++read_index;
   }
   os << "  return absl::OkStatus();\n";
@@ -908,19 +905,14 @@ void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
   os << "}\n\n";
 }
 
-void ArrowMessageCodegen::EmitBankInfoFields(MessageGenerator& generator,
-                                             std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitArrowBankInfoFields(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  .append_arrow_schema = " << name << "AppendArrowSchema,\n";
   os << "  .collect_arrow_types_at_offset = " << name
      << "CollectArrowTypesAtOffset,\n";
   os << "  .write_arrow_at_offset = " << name << "WriteArrowAtOffset,\n";
   os << "  .read_arrow_at_offset = " << name << "ReadArrowAtOffset,\n";
 }
-
-}  // namespace codegen
-
-namespace {
 
 void EmitArrowFileHeaderIncludes(std::ostream& os) {
   os << "#include \"phaser/runtime/columnar_forward.h\"\n";
@@ -930,16 +922,22 @@ void EmitArrowFileSourceIncludes(std::ostream& os) {
   os << "#include \"phaser/plugins/arrow/arrow.h\"\n";
 }
 
-void EmitArrowMessageHeader(MessageGenerator& generator, std::ostream& os) {
-  codegen::ArrowMessageCodegen::EmitMessageHeader(generator, os);
+void EmitArrowMessageHeaderFromGenerator(MessageGenerator& generator,
+                                         std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitArrowMessageHeader(host, os);
 }
 
-void EmitArrowMessageSource(MessageGenerator& generator, std::ostream& os) {
-  codegen::ArrowMessageCodegen::EmitMessageSource(generator, os);
+void EmitArrowMessageSourceFromGenerator(MessageGenerator& generator,
+                                         std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitArrowMessageSource(host, os);
 }
 
-void EmitArrowBankInfoFields(MessageGenerator& generator, std::ostream& os) {
-  codegen::ArrowMessageCodegen::EmitBankInfoFields(generator, os);
+void EmitArrowBankInfoFieldsFromGenerator(MessageGenerator& generator,
+                                          std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitArrowBankInfoFields(host, os);
 }
 
 const GeneratorPlugin kArrowGeneratorPlugin = {
@@ -947,9 +945,9 @@ const GeneratorPlugin kArrowGeneratorPlugin = {
     20,
     EmitArrowFileHeaderIncludes,
     EmitArrowFileSourceIncludes,
-    EmitArrowMessageHeader,
-    EmitArrowMessageSource,
-    EmitArrowBankInfoFields,
+    EmitArrowMessageHeaderFromGenerator,
+    EmitArrowMessageSourceFromGenerator,
+    EmitArrowBankInfoFieldsFromGenerator,
     nullptr,
     nullptr,
 };

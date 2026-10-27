@@ -4,7 +4,7 @@
 
 #include "phaser/compiler/generator_plugin.h"
 #include "phaser/compiler/message_gen.h"
-#include "phaser/compiler/ros_codegen_helpers.h"
+#include "phaser/plugins/ros/ros_codegen_helpers.h"
 
 #include <ctype.h>
 

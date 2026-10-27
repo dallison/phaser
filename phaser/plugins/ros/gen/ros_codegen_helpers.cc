@@ -2,7 +2,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/compiler/ros_codegen_helpers.h"
+#include "phaser/plugins/ros/ros_codegen_helpers.h"
 
 #include <cstdlib>
 #include <string_view>

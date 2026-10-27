@@ -3,14 +3,13 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/compiler/generator_plugin.h"
-#include "phaser/compiler/message_gen.h"
+#include "phaser/compiler/message_codegen_host.h"
 
 namespace phaser {
-namespace codegen {
+namespace {
 
-void ParquetMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
-                                              std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitParquetMessageHeader(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  static absl::Status ToParquet(absl::Span<const " << name
      << "> messages, std::string* out);\n";
   os << "  absl::Status ToParquet(std::string* out) const;\n";
@@ -24,9 +23,8 @@ void ParquetMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
         "absl::Span<const absl::Span<const char>> bytes, std::string* out);\n";
 }
 
-void ParquetMessageCodegen::EmitMessageSource(MessageGenerator& generator,
-                                              std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitParquetMessageSource(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
 
   os << "absl::Status " << name << "::ToParquet(absl::Span<const " << name
      << "> messages, std::string* out) {\n";
@@ -97,31 +95,32 @@ void ParquetMessageCodegen::EmitMessageSource(MessageGenerator& generator,
   os << "}\n\n";
 }
 
-void ParquetMessageCodegen::EmitBankInfoFields(MessageGenerator& generator,
-                                               std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitParquetBankInfoFields(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  .protobuf_to_parquet = " << name << "ProtobufToParquet,\n";
   os << "  .phaser_to_parquet = " << name << "PhaserToParquet,\n";
 }
-
-}  // namespace codegen
-
-namespace {
 
 void EmitParquetFileSourceIncludes(std::ostream& os) {
   os << "#include \"phaser/plugins/parquet/parquet.h\"\n";
 }
 
-void EmitParquetMessageHeader(MessageGenerator& generator, std::ostream& os) {
-  codegen::ParquetMessageCodegen::EmitMessageHeader(generator, os);
+void EmitParquetMessageHeaderFromGenerator(MessageGenerator& generator,
+                                           std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitParquetMessageHeader(host, os);
 }
 
-void EmitParquetMessageSource(MessageGenerator& generator, std::ostream& os) {
-  codegen::ParquetMessageCodegen::EmitMessageSource(generator, os);
+void EmitParquetMessageSourceFromGenerator(MessageGenerator& generator,
+                                           std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitParquetMessageSource(host, os);
 }
 
-void EmitParquetBankInfoFields(MessageGenerator& generator, std::ostream& os) {
-  codegen::ParquetMessageCodegen::EmitBankInfoFields(generator, os);
+void EmitParquetBankInfoFieldsFromGenerator(MessageGenerator& generator,
+                                            std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitParquetBankInfoFields(host, os);
 }
 
 const GeneratorPlugin kParquetGeneratorPlugin = {
@@ -129,9 +128,9 @@ const GeneratorPlugin kParquetGeneratorPlugin = {
     22,
     nullptr,
     EmitParquetFileSourceIncludes,
-    EmitParquetMessageHeader,
-    EmitParquetMessageSource,
-    EmitParquetBankInfoFields,
+    EmitParquetMessageHeaderFromGenerator,
+    EmitParquetMessageSourceFromGenerator,
+    EmitParquetBankInfoFieldsFromGenerator,
     nullptr,
     nullptr,
 };
@@ -145,5 +144,4 @@ struct ParquetGeneratorPluginRegistrar {
 ParquetGeneratorPluginRegistrar g_parquet_generator_plugin_registrar;
 
 }  // namespace
-
 }  // namespace phaser

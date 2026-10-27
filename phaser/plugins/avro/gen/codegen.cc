@@ -3,14 +3,13 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/compiler/generator_plugin.h"
-#include "phaser/compiler/message_gen.h"
+#include "phaser/compiler/message_codegen_host.h"
 
 namespace phaser {
-namespace codegen {
+namespace {
 
-void AvroMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
-                                           std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitAvroMessageHeader(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  static absl::Status ToAvro(absl::Span<const " << name
      << "> messages, std::string* out);\n";
   os << "  absl::Status ToAvro(std::string* out) const;\n";
@@ -24,9 +23,8 @@ void AvroMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
         "absl::Span<const absl::Span<const char>> bytes, std::string* out);\n";
 }
 
-void AvroMessageCodegen::EmitMessageSource(MessageGenerator& generator,
-                                           std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitAvroMessageSource(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
 
   os << "absl::Status " << name << "::ToAvro(absl::Span<const " << name
      << "> messages, std::string* out) {\n";
@@ -97,31 +95,32 @@ void AvroMessageCodegen::EmitMessageSource(MessageGenerator& generator,
   os << "}\n\n";
 }
 
-void AvroMessageCodegen::EmitBankInfoFields(MessageGenerator& generator,
-                                            std::ostream& os) {
-  const std::string name = generator.MessageName(generator.message_);
+void EmitAvroBankInfoFields(MessageCodegenHost& host, std::ostream& os) {
+  const std::string name = host.MessageName(host.message());
   os << "  .protobuf_to_avro = " << name << "ProtobufToAvro,\n";
   os << "  .phaser_to_avro = " << name << "PhaserToAvro,\n";
 }
-
-}  // namespace codegen
-
-namespace {
 
 void EmitAvroFileSourceIncludes(std::ostream& os) {
   os << "#include \"phaser/plugins/avro/avro.h\"\n";
 }
 
-void EmitAvroMessageHeader(MessageGenerator& generator, std::ostream& os) {
-  codegen::AvroMessageCodegen::EmitMessageHeader(generator, os);
+void EmitAvroMessageHeaderFromGenerator(MessageGenerator& generator,
+                                        std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitAvroMessageHeader(host, os);
 }
 
-void EmitAvroMessageSource(MessageGenerator& generator, std::ostream& os) {
-  codegen::AvroMessageCodegen::EmitMessageSource(generator, os);
+void EmitAvroMessageSourceFromGenerator(MessageGenerator& generator,
+                                        std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitAvroMessageSource(host, os);
 }
 
-void EmitAvroBankInfoFields(MessageGenerator& generator, std::ostream& os) {
-  codegen::AvroMessageCodegen::EmitBankInfoFields(generator, os);
+void EmitAvroBankInfoFieldsFromGenerator(MessageGenerator& generator,
+                                         std::ostream& os) {
+  MessageCodegenHost host(generator);
+  EmitAvroBankInfoFields(host, os);
 }
 
 const GeneratorPlugin kAvroGeneratorPlugin = {
@@ -129,9 +128,9 @@ const GeneratorPlugin kAvroGeneratorPlugin = {
     21,
     nullptr,
     EmitAvroFileSourceIncludes,
-    EmitAvroMessageHeader,
-    EmitAvroMessageSource,
-    EmitAvroBankInfoFields,
+    EmitAvroMessageHeaderFromGenerator,
+    EmitAvroMessageSourceFromGenerator,
+    EmitAvroBankInfoFieldsFromGenerator,
     nullptr,
     nullptr,
 };
@@ -145,5 +144,4 @@ struct AvroGeneratorPluginRegistrar {
 AvroGeneratorPluginRegistrar g_avro_generator_plugin_registrar;
 
 }  // namespace
-
 }  // namespace phaser
