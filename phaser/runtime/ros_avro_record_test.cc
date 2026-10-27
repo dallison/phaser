@@ -12,8 +12,11 @@ namespace {
 
 TEST(RosAvroRecordTest, StampedRosBytesRecordEncoding) {
   std::string record;
+  const std::string ros_bytes = "abc";
   ASSERT_TRUE(
-      ::phaser::ros_avro_record::WriteStampedRosBytesAvroRecord(1, 2, "abc", &record)
+      ::phaser::ros_avro_record::WriteStampedRosBytesAvroRecord(
+          1, 2, absl::Span<const char>(ros_bytes.data(), ros_bytes.size()),
+          &record)
           .ok());
   EXPECT_EQ(record.size(), 3U + 3U);
   EXPECT_EQ(record.substr(record.size() - 3), "abc");
