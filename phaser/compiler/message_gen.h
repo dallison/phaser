@@ -19,6 +19,49 @@
 
 namespace phaser {
 
+class MessageGenerator;
+
+namespace codegen {
+
+class ArrowMessageCodegen {
+ public:
+  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
+  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
+  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
+};
+
+class AvroMessageCodegen {
+ public:
+  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
+  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
+  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
+};
+
+class ParquetMessageCodegen {
+ public:
+  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
+  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
+  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
+};
+
+class RosMessageCodegen {
+ public:
+  static void EmitMessageHeader(MessageGenerator& generator, std::ostream& os);
+  static void EmitMessageSource(MessageGenerator& generator, std::ostream& os);
+  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
+};
+
+class ProtobufMessageCodegen {
+ public:
+  static void EmitMessageWireHeader(MessageGenerator& generator,
+                                    std::ostream& os);
+  static void EmitMessageWireSource(MessageGenerator& generator,
+                                    std::ostream& os);
+  static void EmitBankInfoFields(MessageGenerator& generator, std::ostream& os);
+};
+
+}  // namespace codegen
+
 enum class FrontendStyle { kProtobuf, kRos, kC };
 
 struct FieldInfo {
@@ -104,6 +147,11 @@ class MessageGenerator {
   void GenerateEnums(std::ostream& os);
 
  private:
+  friend class codegen::ArrowMessageCodegen;
+  friend class codegen::AvroMessageCodegen;
+  friend class codegen::ParquetMessageCodegen;
+  friend class codegen::RosMessageCodegen;
+  friend class codegen::ProtobufMessageCodegen;
   void CompileFields();
   void CompileUnions();
   void FinalizeOffsetsAndSizes();
@@ -250,7 +298,6 @@ class MessageGenerator {
   void GenerateCopy(std::ostream& os, bool decl);
   void GenerateDebugString(std::ostream& os);
   void GeneratePhaserBank(std::ostream& os);
-  void GenerateArrow(std::ostream& os, bool decl);
   void GenerateArrowSchemaField(std::ostream& os,
                                 const google::protobuf::FieldDescriptor* field,
                                 const std::string& name, bool nullable);

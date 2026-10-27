@@ -2,7 +2,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/runtime/avro.h"
+#include "phaser/plugins/avro/avro.h"
 
 #include <cstdint>
 #include <cstring>
@@ -14,7 +14,7 @@
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "phaser/runtime/arrow_abi.h"
+#include "phaser/plugins/arrow/arrow_abi.h"
 
 namespace phaser {
 namespace avro {

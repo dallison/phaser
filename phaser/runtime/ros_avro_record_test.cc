@@ -24,7 +24,7 @@ TEST(RosAvroRecordTest, ProtobufToStampedRosBytesUsesRosWire) {
   message.set_data(true);
   std::string protobuf = message.SerializeAsString();
   std::string record;
-  ASSERT_TRUE(::phaser::ros_avro_record::PhaserBankProtobufToStampedRosBytesAvroRecord(
+  ASSERT_TRUE(::phaser::ros_avro_record::ProtobufToStampedRosBytesAvroRecord(
                   Bool::FullName(), protobuf, 10, 20, &record)
                   .ok());
   EXPECT_GT(record.size(), 0U);

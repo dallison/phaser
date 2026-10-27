@@ -2,7 +2,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/runtime/arrow.h"
+#include "phaser/plugins/arrow/arrow.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -1315,6 +1315,149 @@ FieldReader BatchReader::Row(int64_t row) const {
   return reader;
 }
 
+namespace {
+
+absl::flat_hash_map<std::string, ArrowPluginFn>& ArrowOps() {
+  static auto* ops = new absl::flat_hash_map<std::string, ArrowPluginFn>();
+  return *ops;
+}
+
+absl::Status MissingArrowHook(std::string_view full_name,
+                              std::string_view operation) {
+  return absl::FailedPreconditionError(absl::StrFormat(
+      "Phaser message '%s' does not support %s", full_name, operation));
+}
+
+template <typename Fn>
+absl::StatusOr<Fn> ArrowHook(std::string_view full_name, Fn BankInfo::* member,
+                             std::string_view operation) {
+  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
+  if (!bank_info.ok()) {
+    return bank_info.status();
+  }
+  const Fn hook = (**bank_info).*member;
+  if (hook == nullptr) {
+    return MissingArrowHook(full_name, operation);
+  }
+  return hook;
+}
+
+absl::Status CollectTypes(std::string_view full_name,
+                          const ArrowMessageArgs& args) {
+  if (args.types == nullptr) {
+    return absl::InvalidArgumentError("Arrow type set is null");
+  }
+  absl::StatusOr<decltype(BankInfo::collect_arrow_types_at_offset)> hook =
+      ArrowHook(full_name, &BankInfo::collect_arrow_types_at_offset,
+                "Arrow type collection");
+  if (!hook.ok()) {
+    return hook.status();
+  }
+  return (*hook)(args.runtime, args.offset, args.types);
+}
+
+absl::Status WriteAtOffset(std::string_view full_name,
+                           const ArrowMessageArgs& args) {
+  if (args.writer == nullptr) {
+    return absl::InvalidArgumentError("Arrow field writer is null");
+  }
+  absl::StatusOr<decltype(BankInfo::write_arrow_at_offset)> hook =
+      ArrowHook(full_name, &BankInfo::write_arrow_at_offset, "Arrow writing");
+  if (!hook.ok()) {
+    return hook.status();
+  }
+  return (*hook)(args.runtime, args.offset, args.writer, args.schema_types);
+}
+
+absl::Status ReadAtOffset(std::string_view full_name,
+                          const ArrowMessageArgs& args) {
+  if (args.reader == nullptr) {
+    return absl::InvalidArgumentError("Arrow field reader is null");
+  }
+  absl::StatusOr<decltype(BankInfo::read_arrow_at_offset)> hook =
+      ArrowHook(full_name, &BankInfo::read_arrow_at_offset, "Arrow reading");
+  if (!hook.ok()) {
+    return hook.status();
+  }
+  return (*hook)(args.runtime, args.offset, args.reader);
+}
+
+absl::Status AppendSchema(std::string_view full_name,
+                         const ArrowMessageArgs& args) {
+  if (args.schema_builder == nullptr) {
+    return absl::InvalidArgumentError("Arrow schema builder is null");
+  }
+  absl::StatusOr<decltype(BankInfo::append_arrow_schema)> hook =
+      ArrowHook(full_name, &BankInfo::append_arrow_schema, "Arrow schema");
+  if (!hook.ok()) {
+    return hook.status();
+  }
+  return (*hook)(args.schema_builder, args.field_name, args.nullable,
+                 args.schema_types);
+}
+
+absl::Status RegisterBuiltinArrowOps() {
+  static const ArrowPluginOp kOps[] = {
+      {kArrowPluginCollectTypes.data(), CollectTypes},
+      {kArrowPluginWrite.data(), WriteAtOffset},
+      {kArrowPluginRead.data(), ReadAtOffset},
+      {kArrowPluginAppendSchema.data(), AppendSchema},
+  };
+  return RegisterArrowPlugin(absl::MakeConstSpan(kOps));
+}
+
+std::vector<std::string> ArrowPluginOperationNames() {
+  static const absl::Status builtins = RegisterBuiltinArrowOps();
+  (void)builtins;
+  std::vector<std::string> names;
+  names.reserve(ArrowOps().size());
+  for (const auto& [name, unused] : ArrowOps()) {
+    (void)unused;
+    names.push_back(name);
+  }
+  return names;
+}
+
+}  // namespace
+
+std::vector<std::string> ListPluginOperations() {
+  return ArrowPluginOperationNames();
+}
+
+absl::Status RegisterArrowPlugin(absl::Span<const ArrowPluginOp> operations) {
+  for (const ArrowPluginOp& operation : operations) {
+    if (operation.name == nullptr || operation.name[0] == '\0') {
+      return absl::InvalidArgumentError("Arrow plugin operation name is empty");
+    }
+    if (operation.invoke == nullptr) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Arrow plugin operation %s has no function", operation.name));
+    }
+    const bool inserted =
+        ArrowOps().emplace(operation.name, operation.invoke).second;
+    if (!inserted) {
+      return absl::AlreadyExistsError(absl::StrFormat(
+          "Arrow plugin operation %s is already registered", operation.name));
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status CallArrowPlugin(std::string_view operation,
+                             std::string_view full_name,
+                             const ArrowMessageArgs& args) {
+  static const absl::Status builtins = RegisterBuiltinArrowOps();
+  if (!builtins.ok()) {
+    return builtins;
+  }
+  const auto it = ArrowOps().find(std::string(operation));
+  if (it == ArrowOps().end()) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Arrow plugin has no operation %s", operation));
+  }
+  return it->second(full_name, args);
+}
+
 absl::Status CollectAny(const AnyMessage& any, TypeSet* types) {
   if (!any.has_value() || any.value().data() == nullptr) {
     return absl::OkStatus();
@@ -1328,7 +1471,10 @@ absl::Status CollectAny(const AnyMessage& any, TypeSet* types) {
   if (!offset.ok()) {
     return offset.status();
   }
-  return PhaserBankCollectArrowTypesAtOffset(type, any.runtime, *offset, types);
+  return CallArrowPlugin(kArrowPluginCollectTypes, type,
+                         ArrowMessageArgs{.runtime = any.runtime,
+                                          .offset = *offset,
+                                          .types = types});
 }
 
 absl::Status WriteAny(const AnyMessage& any, FieldWriter& writer,
@@ -1357,8 +1503,12 @@ absl::Status WriteAny(const AnyMessage& any, FieldWriter& writer,
     if (!offset.ok()) {
       return offset.status();
     }
-    if (absl::Status status = PhaserBankWriteArrowAtOffset(
-            type, any.runtime, *offset, &arm, &types);
+    if (absl::Status status = CallArrowPlugin(
+            kArrowPluginWrite, type,
+            ArrowMessageArgs{.runtime = any.runtime,
+                             .offset = *offset,
+                             .writer = &arm,
+                             .schema_types = &types});
         !status.ok()) {
       return status;
     }
@@ -1409,7 +1559,10 @@ absl::Status ReadAny(AnyMessage* any, const FieldReader& row) {
     return status;
   }
   const FieldReader payload = value.UnionValue();
-  return PhaserBankReadArrowAtOffset(type_name, any->runtime, offset, &payload);
+  return CallArrowPlugin(kArrowPluginRead, type_name,
+                         ArrowMessageArgs{.runtime = any->runtime,
+                                          .offset = offset,
+                                          .reader = &payload});
 }
 
 }  // namespace arrow

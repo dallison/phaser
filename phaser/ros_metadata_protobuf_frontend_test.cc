@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "phaser/runtime/md5.h"
+#include "phaser/runtime/message_property.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/phaser_bank_protobuf.h"
 #include "phaser/testdata/ros_metadata_protobuf_phaser/phaser/testdata/RosMetadata.phaser.h"
@@ -49,16 +50,16 @@ TEST(RosMetadataProtobufFrontendTest, MatchesRosMetadata) {
             "MSG: example_msgs/LegacyStatus\n"
             "# Legacy status.\nuint8 OK = 0\n");
 
-  absl::StatusOr<std::string_view> data_type =
-      ::phaser::PhaserBankRosDataType(Wrapper::FullName());
+  absl::StatusOr<std::string> data_type = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosDataType, Wrapper::FullName());
   ASSERT_TRUE(data_type.ok());
   EXPECT_EQ(*data_type, Wrapper::RosDataType());
-  absl::StatusOr<std::string> md5 =
-      ::phaser::PhaserBankRosMd5(Wrapper::FullName());
+  absl::StatusOr<std::string> md5 = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosMd5, Wrapper::FullName());
   ASSERT_TRUE(md5.ok());
   EXPECT_EQ(*md5, Wrapper::RosMd5());
-  absl::StatusOr<std::string_view> definition =
-      ::phaser::PhaserBankRosDefinition(Wrapper::FullName());
+  absl::StatusOr<std::string> definition = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosDefinition, Wrapper::FullName());
   ASSERT_TRUE(definition.ok());
   EXPECT_EQ(*definition, Wrapper::RosDefinition());
 

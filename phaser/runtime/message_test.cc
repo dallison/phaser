@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "absl/strings/str_format.h"
+#include "phaser/runtime/message_property.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/runtime.h"
 #include "phaser/testdata/TestMessage.pb.h"
@@ -2139,28 +2140,50 @@ TEST(MessageTest, PhaserBank) {
 }
 
 TEST(MessageTest, PhaserBankRosRequiresGeneratedSupport) {
-  ::phaser::ROSBuffer output;
+  std::string output;
+  const absl::Span<const char> empty;
+  EXPECT_FALSE(::phaser::PhaserBankConvert("foo.bar.TestMessage",
+                                           ::phaser::kProtobufFormat,
+                                           empty, ::phaser::kRosFormat,
+                                           &output)
+                   .ok());
+  EXPECT_FALSE(::phaser::PhaserBankConvert("foo.bar.TestMessage",
+                                           ::phaser::kPhaserFormat, empty,
+                                           ::phaser::kRosFormat, &output)
+                   .ok());
+  EXPECT_FALSE(::phaser::CallMessageProperty(
+                   ::phaser::kMessagePropertyRosDataType, "foo.bar.TestMessage")
+                   .ok());
+  EXPECT_FALSE(::phaser::CallMessageProperty(::phaser::kMessagePropertyRosMd5,
+                                            "foo.bar.TestMessage")
+                   .ok());
   EXPECT_FALSE(
-      ::phaser::PhaserBankProtobufToROS("foo.bar.TestMessage", "", output)
+      ::phaser::CallMessageProperty(::phaser::kMessagePropertyRosDefinition,
+                                   "foo.bar.TestMessage")
           .ok());
-  EXPECT_FALSE(
-      ::phaser::PhaserBankPhaserToROS("foo.bar.TestMessage", {}, output).ok());
-  EXPECT_FALSE(::phaser::PhaserBankRosDataType("foo.bar.TestMessage").ok());
-  EXPECT_FALSE(::phaser::PhaserBankRosMd5("foo.bar.TestMessage").ok());
-  EXPECT_FALSE(::phaser::PhaserBankRosDefinition("foo.bar.TestMessage").ok());
-  EXPECT_FALSE(
-      ::phaser::PhaserBankProtobufFullName("foo.bar.TestMessage").ok());
-  EXPECT_FALSE(::phaser::PhaserBankProtobufName("foo.bar.TestMessage").ok());
-  ::phaser::ProtoBuffer protobuf_output;
-  EXPECT_FALSE(::phaser::PhaserBankRosToProtobuf("foo.bar.TestMessage", {},
-                                                 protobuf_output)
+  EXPECT_FALSE(::phaser::CallMessageProperty(
+                   ::phaser::kMessagePropertyProtobufFullName, "foo.bar.TestMessage")
                    .ok());
-  EXPECT_FALSE(::phaser::PhaserBankPhaserToProtobuf("foo.bar.TestMessage", {},
-                                                    protobuf_output)
+  EXPECT_FALSE(::phaser::CallMessageProperty(
+                   ::phaser::kMessagePropertyProtobufName, "foo.bar.TestMessage")
                    .ok());
-  EXPECT_FALSE(
-      ::phaser::PhaserBankProtobufToROS("missing.Message", "", output).ok());
-  EXPECT_FALSE(::phaser::PhaserBankRosDataType("missing.Message").ok());
+  EXPECT_FALSE(::phaser::PhaserBankConvert("foo.bar.TestMessage",
+                                           ::phaser::kRosFormat, empty,
+                                           ::phaser::kProtobufFormat,
+                                           &output)
+                   .ok());
+  EXPECT_FALSE(::phaser::PhaserBankConvert(
+                   "foo.bar.TestMessage", ::phaser::kPhaserFormat, empty,
+                   ::phaser::kProtobufFormat, &output)
+                   .ok());
+  EXPECT_FALSE(::phaser::PhaserBankConvert("missing.Message",
+                                           ::phaser::kProtobufFormat,
+                                           empty, ::phaser::kRosFormat,
+                                           &output)
+                   .ok());
+  EXPECT_FALSE(::phaser::CallMessageProperty(
+                   ::phaser::kMessagePropertyRosDataType, "missing.Message")
+                   .ok());
 }
 
 // Regression for pooled-output reuse: repeated nested messages with per-element

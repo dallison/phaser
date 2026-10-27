@@ -43,6 +43,11 @@ cc_test(
     copts = PHASER_COPTS + PHASER_PROTOBUF_GENERATED_COPTS,
     data = ["valgrind.supp"],
     deps = [
+        "//phaser/plugins:arrow",
+        "//phaser/plugins:avro",
+        "//phaser/plugins:avro_conversion",
+        "//phaser/plugins:parquet",
+        "//phaser/plugins:parquet_conversion",
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:test_message_phaser",
         "@com_google_googletest//:gtest_main",
@@ -55,6 +60,7 @@ cc_test(
     copts = PHASER_COPTS + PHASER_PROTOBUF_GENERATED_COPTS,
     data = ["valgrind.supp"],
     deps = [
+        "//phaser/plugins:arrow",
         "//phaser/runtime:phaser_runtime",
         "//phaser/testdata:test_message_phaser",
         "@com_google_googletest//:gtest_main",
@@ -256,6 +262,8 @@ cc_test(
     deps = [
         "//phaser/runtime:phaser_bank_protobuf",
         "//phaser/runtime:phaser_runtime",
+        "//phaser/plugins:protobuf_conversion",
+        "//phaser/plugins:ros_conversion",
         "//phaser/testdata:ros_compile_cc_proto",
         "//phaser/testdata:ros_compile_phaser",
         "//phaser/testdata:ros_intrinsics_phaser",

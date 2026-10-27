@@ -1,0 +1,12 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//phaser:copts.bzl", "PHASER_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "conversion_plugin",
+    hdrs = ["conversion_plugin.h"],
+    copts = PHASER_COPTS,
+    include_prefix = "phaser/plugins/common",
+    deps = ["//phaser/runtime:phaser_runtime"],
+)

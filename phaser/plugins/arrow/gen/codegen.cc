@@ -2,6 +2,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
+#include "phaser/compiler/generator_plugin.h"
 #include "phaser/compiler/message_gen.h"
 
 #include "absl/strings/escaping.h"
@@ -111,8 +112,13 @@ void MessageGenerator::GenerateArrowSchemaField(
     os << "  builder.BeginUnion(\"value\", false);\n";
     os << "  for (const std::string& _phaser_type : types.types()) {\n";
     os << "    if (absl::Status _phaser_status = "
-          "::phaser::PhaserBankAppendArrowSchema(\n";
-    os << "            _phaser_type, &builder, _phaser_type, false, &types);\n";
+          "::phaser::arrow::CallArrowPlugin(\n";
+    os << "            ::phaser::arrow::kArrowPluginAppendSchema, _phaser_type,\n";
+    os << "            ::phaser::arrow::ArrowMessageArgs{\n";
+    os << "                .schema_types = &types,\n";
+    os << "                .schema_builder = &builder,\n";
+    os << "                .field_name = _phaser_type,\n";
+    os << "                .nullable = false});\n";
     os << "        !_phaser_status.ok()) return _phaser_status;\n";
     os << "  }\n";
     os << "  builder.EndUnion();\n";
@@ -729,142 +735,53 @@ void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
   os << "  }\n";
 }
 
-void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
-  const std::string name = MessageName(message_);
-  if (decl) {
-    os << "  static absl::Status AppendArrowSchema("
-          "::phaser::arrow::SchemaBuilder& builder, std::string_view name, "
-          "bool nullable, const ::phaser::arrow::TypeSet& types);\n";
-    os << "  absl::Status CollectArrowTypes(::phaser::arrow::TypeSet* types) "
-          "const;\n";
-    os << "  absl::Status WriteArrow(::phaser::arrow::FieldWriter writer, "
-          "const ::phaser::arrow::TypeSet& types) const;\n";
-    os << "  absl::Status ReadArrow(::phaser::arrow::FieldReader row);\n";
-    os << "  absl::Status ToArrow(struct ArrowSchema* schema, struct ArrowArray* "
-          "array) const {\n";
-    os << "    const " << name << "* _phaser_self = this;\n";
-    os << "    return ::phaser::arrow::MessagesToArrow<" << name
-       << ">(absl::MakeConstSpan(_phaser_self, 1), schema, array);\n";
-    os << "  }\n";
-    os << "  static absl::Status ToArrow(absl::Span<const " << name
-       << "> messages, struct ArrowSchema* schema, struct ArrowArray* array) {\n";
-    os << "    return ::phaser::arrow::MessagesToArrow(messages, schema, array);\n";
-    os << "  }\n";
-    os << "  static absl::Status FromArrow(const struct ArrowSchema* schema, "
-          "const struct ArrowArray* array, std::vector<"
-       << name << ">* out) {\n";
-    os << "    return ::phaser::arrow::MessagesFromArrow(schema, array, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ToAvro(absl::Span<const " << name
-       << "> messages, std::string* out) {\n";
-    os << "    return ::phaser::avro::WriteMessages(messages, out);\n";
-    os << "  }\n";
-    os << "  absl::Status ToAvro(std::string* out) const {\n";
-    os << "    const " << name << "* _phaser_self = this;\n";
-    os << "    return ToAvro(absl::MakeConstSpan(_phaser_self, 1), out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToAvro(std::string_view bytes, "
-          "std::string* out) {\n";
-    os << "    " << name << " message;\n";
-    os << "    if (!message.ParseFromArray(bytes.data(), bytes.size())) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "    }\n";
-    os << "    return message.ToAvro(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToAvro("
-          "absl::Span<const std::string_view> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (std::string_view item : bytes) {\n";
-    os << "      " << name << " message;\n";
-    os << "      if (!message.ParseFromArray(item.data(), item.size())) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(std::move(message));\n";
-    os << "    }\n";
-    os << "    return ToAvro(messages, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToAvro(absl::Span<const char> bytes, "
-          "std::string* out) {\n";
-    os << "    if (bytes.empty()) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "    }\n";
-    os << "    " << name
-       << " message = CreateReadonly(bytes.data(), bytes.size());\n";
-    os << "    return message.ToAvro(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToAvro("
-          "absl::Span<const absl::Span<const char>> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (absl::Span<const char> item : bytes) {\n";
-    os << "      if (item.empty()) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(CreateReadonly(item.data(), item.size()));\n";
-    os << "    }\n";
-    os << "    return ToAvro(messages, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ToParquet(absl::Span<const " << name
-       << "> messages, std::string* out) {\n";
-    os << "    return ::phaser::parquet::WriteMessages(messages, out);\n";
-    os << "  }\n";
-    os << "  absl::Status ToParquet(std::string* out) const {\n";
-    os << "    const " << name << "* _phaser_self = this;\n";
-    os << "    return ToParquet(absl::MakeConstSpan(_phaser_self, 1), out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToParquet(std::string_view bytes, "
-          "std::string* out) {\n";
-    os << "    " << name << " message;\n";
-    os << "    if (!message.ParseFromArray(bytes.data(), bytes.size())) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "    }\n";
-    os << "    return message.ToParquet(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToParquet("
-          "absl::Span<const std::string_view> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (std::string_view item : bytes) {\n";
-    os << "      " << name << " message;\n";
-    os << "      if (!message.ParseFromArray(item.data(), item.size())) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(std::move(message));\n";
-    os << "    }\n";
-    os << "    return ToParquet(messages, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToParquet(absl::Span<const char> bytes, "
-          "std::string* out) {\n";
-    os << "    if (bytes.empty()) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "    }\n";
-    os << "    " << name
-       << " message = CreateReadonly(bytes.data(), bytes.size());\n";
-    os << "    return message.ToParquet(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToParquet("
-          "absl::Span<const absl::Span<const char>> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (absl::Span<const char> item : bytes) {\n";
-    os << "      if (item.empty()) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(CreateReadonly(item.data(), item.size()));\n";
-    os << "    }\n";
-    os << "    return ToParquet(messages, out);\n";
-    os << "  }\n";
-    return;
-  }
+namespace codegen {
+
+void ArrowMessageCodegen::EmitMessageHeader(MessageGenerator& generator,
+                                            std::ostream& os) {
+  const std::string name = generator.MessageName(generator.message_);
+  os << "  static absl::Status AppendArrowSchema("
+        "::phaser::arrow::SchemaBuilder& builder, std::string_view name, "
+        "bool nullable, const ::phaser::arrow::TypeSet& types);\n";
+  os << "  absl::Status CollectArrowTypes(::phaser::arrow::TypeSet* types) "
+        "const;\n";
+  os << "  absl::Status WriteArrow(::phaser::arrow::FieldWriter writer, "
+        "const ::phaser::arrow::TypeSet& types) const;\n";
+  os << "  absl::Status ReadArrow(::phaser::arrow::FieldReader row);\n";
+  os << "  absl::Status ToArrow(struct ArrowSchema* schema, "
+        "struct ArrowArray* array) const;\n";
+  os << "  static absl::Status ToArrow(absl::Span<const " << name
+     << "> messages, struct ArrowSchema* schema, struct ArrowArray* array);\n";
+  os << "  static absl::Status FromArrow(const struct ArrowSchema* schema, "
+        "const struct ArrowArray* array, std::vector<"
+     << name << ">* out);\n";
+}
+
+void ArrowMessageCodegen::EmitMessageSource(MessageGenerator& generator,
+                                            std::ostream& os) {
+  MessageGenerator& g = generator;
+  const std::string name = g.MessageName(g.message_);
+
+  os << "absl::Status " << name
+     << "::ToArrow(struct ArrowSchema* schema, struct ArrowArray* array) "
+        "const {\n";
+  os << "  const " << name << "* _phaser_self = this;\n";
+  os << "  return ::phaser::arrow::MessagesToArrow<" << name
+     << ">(absl::MakeConstSpan(_phaser_self, 1), schema, array);\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::ToArrow(absl::Span<const " << name
+     << "> messages, struct ArrowSchema* schema, struct ArrowArray* array) {\n";
+  os << "  return ::phaser::arrow::MessagesToArrow(messages, schema, array);\n";
+  os << "}\n\n";
+
+  os << "absl::Status " << name
+     << "::FromArrow(const struct ArrowSchema* schema, const struct ArrowArray* "
+        "array, std::vector<"
+     << name << ">* out) {\n";
+  os << "  return ::phaser::arrow::MessagesFromArrow(schema, array, out);\n";
+  os << "}\n\n";
 
   os << "absl::Status " << name
      << "::AppendArrowSchema(::phaser::arrow::SchemaBuilder& builder, "
@@ -878,47 +795,47 @@ void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
         "represent recursive message \") + std::string(FullName()));\n";
   os << "  }\n";
   os << "  builder.BeginStruct(name, nullable);\n";
-  for (const auto& item : fields_in_order_) {
+  for (const auto& item : g.fields_in_order_) {
     if (item->IsUnion()) {
       const auto& union_field = static_cast<const UnionInfo&>(*item);
       os << "  builder.BeginStruct("
-         << ArrowQuoted(std::string(union_field.oneof->name())) << ", false);\n";
+         << g.ArrowQuoted(std::string(union_field.oneof->name())) << ", false);\n";
       for (const auto& arm : union_field.members) {
-        GenerateArrowSchemaField(os, arm->field,
-                                 ArrowQuoted(std::string(arm->field->name())),
-                                 true);
+        g.GenerateArrowSchemaField(os, arm->field,
+                                   g.ArrowQuoted(std::string(arm->field->name())),
+                                   true);
       }
       os << "  builder.EndStruct();\n";
       continue;
     }
     const auto* desc = item->field;
     if (desc->is_map()) {
-      os << "  builder.BeginMap(" << ArrowQuoted(std::string(desc->name()))
+      os << "  builder.BeginMap(" << g.ArrowQuoted(std::string(desc->name()))
          << ", false);\n";
       os << "  if (absl::Status _phaser_status = "
-         << MessageName(desc->message_type(), true)
+         << g.MessageName(desc->message_type(), true)
          << "::AppendArrowSchema(builder, \"entries\", false, types); "
             "!_phaser_status.ok()) return _phaser_status;\n";
       os << "  builder.EndMap();\n";
       continue;
     }
     if (desc->is_repeated()) {
-      if (UsesArrayFacade(desc)) {
+      if (g.UsesArrayFacade(desc)) {
         os << "  builder.BeginFixedList("
-           << ArrowQuoted(std::string(desc->name())) << ", "
-           << GetArraySize(desc) << ");\n";
-        GenerateArrowSchemaField(os, desc, "\"item\"", false);
+           << g.ArrowQuoted(std::string(desc->name())) << ", "
+           << g.GetArraySize(desc) << ");\n";
+        g.GenerateArrowSchemaField(os, desc, "\"item\"", false);
         os << "  builder.EndFixedList();\n";
       } else {
-        os << "  builder.BeginList(" << ArrowQuoted(std::string(desc->name()))
+        os << "  builder.BeginList(" << g.ArrowQuoted(std::string(desc->name()))
            << ", false);\n";
-        GenerateArrowSchemaField(os, desc, "\"item\"", false);
+        g.GenerateArrowSchemaField(os, desc, "\"item\"", false);
         os << "  builder.EndList();\n";
       }
       continue;
     }
-    GenerateArrowSchemaField(os, desc, ArrowQuoted(std::string(desc->name())),
-                             ArrowFieldNullable(desc));
+    g.GenerateArrowSchemaField(os, desc, g.ArrowQuoted(std::string(desc->name())),
+                               g.ArrowFieldNullable(desc));
   }
   os << "  builder.EndStruct();\n";
   os << "  return builder.status();\n";
@@ -930,8 +847,8 @@ void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
   os << "      !types->Visit(runtime->pb, absolute_binary_offset)) {\n";
   os << "    return absl::OkStatus();\n";
   os << "  }\n";
-  for (const auto& item : fields_in_order_) {
-    GenerateArrowCollectField(os, *item);
+  for (const auto& item : g.fields_in_order_) {
+    g.GenerateArrowCollectField(os, *item);
   }
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
@@ -941,8 +858,8 @@ void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
         "::phaser::arrow::TypeSet& types) const {\n";
   os << "  (void)types;\n";
   int index = 0;
-  for (const auto& item : fields_in_order_) {
-    GenerateArrowWriteField(os, *item, index);
+  for (const auto& item : g.fields_in_order_) {
+    g.GenerateArrowWriteField(os, *item, index);
     ++index;
   }
   os << "  return writer.FinishStruct();\n";
@@ -952,10 +869,10 @@ void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
      << "::ReadArrow(::phaser::arrow::FieldReader row) {\n";
   os << "  if (absl::Status _phaser_status = row.status(); !_phaser_status.ok()) "
         "return _phaser_status;\n";
-  index = 0;
-  for (const auto& item : fields_in_order_) {
-    GenerateArrowReadField(os, *item, index);
-    ++index;
+  int read_index = 0;
+  for (const auto& item : g.fields_in_order_) {
+    g.GenerateArrowReadField(os, *item, read_index);
+    ++read_index;
   }
   os << "  return absl::OkStatus();\n";
   os << "}\n\n";
@@ -989,23 +906,62 @@ void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
      << ">()) return ::phaser::internal::AllocationFailedError();\n";
   os << "  return message.ReadArrow(*reader);\n";
   os << "}\n\n";
-
-  os << "static absl::Status " << name
-     << "ProtobufToAvro(std::string_view bytes, std::string* out) {\n";
-  os << "  return " << name << "::ProtobufToAvro(bytes, out);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "PhaserToAvro(absl::Span<const char> bytes, std::string* out) {\n";
-  os << "  return " << name << "::PhaserToAvro(bytes, out);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "ProtobufToParquet(std::string_view bytes, std::string* out) {\n";
-  os << "  return " << name << "::ProtobufToParquet(bytes, out);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "PhaserToParquet(absl::Span<const char> bytes, std::string* out) {\n";
-  os << "  return " << name << "::PhaserToParquet(bytes, out);\n";
-  os << "}\n\n";
 }
+
+void ArrowMessageCodegen::EmitBankInfoFields(MessageGenerator& generator,
+                                             std::ostream& os) {
+  const std::string name = generator.MessageName(generator.message_);
+  os << "  .append_arrow_schema = " << name << "AppendArrowSchema,\n";
+  os << "  .collect_arrow_types_at_offset = " << name
+     << "CollectArrowTypesAtOffset,\n";
+  os << "  .write_arrow_at_offset = " << name << "WriteArrowAtOffset,\n";
+  os << "  .read_arrow_at_offset = " << name << "ReadArrowAtOffset,\n";
+}
+
+}  // namespace codegen
+
+namespace {
+
+void EmitArrowFileHeaderIncludes(std::ostream& os) {
+  os << "#include \"phaser/runtime/columnar_forward.h\"\n";
+}
+
+void EmitArrowFileSourceIncludes(std::ostream& os) {
+  os << "#include \"phaser/plugins/arrow/arrow.h\"\n";
+}
+
+void EmitArrowMessageHeader(MessageGenerator& generator, std::ostream& os) {
+  codegen::ArrowMessageCodegen::EmitMessageHeader(generator, os);
+}
+
+void EmitArrowMessageSource(MessageGenerator& generator, std::ostream& os) {
+  codegen::ArrowMessageCodegen::EmitMessageSource(generator, os);
+}
+
+void EmitArrowBankInfoFields(MessageGenerator& generator, std::ostream& os) {
+  codegen::ArrowMessageCodegen::EmitBankInfoFields(generator, os);
+}
+
+const GeneratorPlugin kArrowGeneratorPlugin = {
+    "arrow",
+    20,
+    EmitArrowFileHeaderIncludes,
+    EmitArrowFileSourceIncludes,
+    EmitArrowMessageHeader,
+    EmitArrowMessageSource,
+    EmitArrowBankInfoFields,
+    nullptr,
+    nullptr,
+};
+
+struct ArrowGeneratorPluginRegistrar {
+  ArrowGeneratorPluginRegistrar() {
+    RegisterGeneratorPlugin(kArrowGeneratorPlugin);
+  }
+};
+
+ArrowGeneratorPluginRegistrar g_arrow_generator_plugin_registrar;
+
+}  // namespace
 
 }  // namespace phaser

@@ -27,6 +27,9 @@
 
 namespace phaser {
 
+// Format name accepted by the ROS conversion plugin.
+inline constexpr std::string_view kRosFormat = "ros";
+
 // A non-owning sequential reader for ROS1 wire data.
 class ROSReader {
  public:

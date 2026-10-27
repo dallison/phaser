@@ -1,0 +1,86 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//phaser:copts.bzl", "PHASER_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+# Backward-compatible target names (//phaser/plugins:<name>).
+
+alias(
+    name = "arrow",
+    actual = "//phaser/plugins/arrow:runtime",
+)
+
+alias(
+    name = "arrow_codegen",
+    actual = "//phaser/plugins/arrow:codegen",
+)
+
+alias(
+    name = "avro",
+    actual = "//phaser/plugins/avro:runtime",
+)
+
+alias(
+    name = "avro_codegen",
+    actual = "//phaser/plugins/avro:codegen",
+)
+
+alias(
+    name = "avro_conversion",
+    actual = "//phaser/plugins/avro:conversion",
+)
+
+alias(
+    name = "parquet",
+    actual = "//phaser/plugins/parquet:runtime",
+)
+
+alias(
+    name = "parquet_codegen",
+    actual = "//phaser/plugins/parquet:codegen",
+)
+
+alias(
+    name = "parquet_conversion",
+    actual = "//phaser/plugins/parquet:conversion",
+)
+
+alias(
+    name = "ros_codegen",
+    actual = "//phaser/plugins/ros:codegen",
+)
+
+alias(
+    name = "ros_conversion",
+    actual = "//phaser/plugins/ros:conversion",
+)
+
+alias(
+    name = "protobuf_codegen",
+    actual = "//phaser/plugins/protobuf:codegen",
+)
+
+alias(
+    name = "protobuf_conversion",
+    actual = "//phaser/plugins/protobuf:conversion",
+)
+
+alias(
+    name = "stamped_ros_avro_conversion",
+    actual = "//phaser/plugins/stamped_ros_avro:conversion",
+)
+
+alias(
+    name = "conversion_plugin",
+    actual = "//phaser/plugins/common:conversion_plugin",
+)
+
+alias(name = "arrow_pybind", actual = "//phaser/plugins/arrow:pybind")
+alias(name = "avro_pybind", actual = "//phaser/plugins/avro:pybind")
+alias(name = "parquet_pybind", actual = "//phaser/plugins/parquet:pybind")
+alias(name = "protobuf_pybind", actual = "//phaser/plugins/protobuf:pybind")
+alias(name = "ros_pybind", actual = "//phaser/plugins/ros:pybind")
+alias(
+    name = "stamped_ros_avro_pybind",
+    actual = "//phaser/plugins/stamped_ros_avro:pybind",
+)

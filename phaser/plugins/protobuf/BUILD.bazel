@@ -1,0 +1,32 @@
+load("@pybind11_bazel//:build_defs.bzl", "pybind_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//phaser:copts.bzl", "PHASER_COPTS", "PHASER_PROTOC_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "codegen",
+    srcs = ["gen/codegen.cc"],
+    alwayslink = True,
+    copts = PHASER_PROTOC_COPTS,
+    deps = ["//phaser/compiler:message_generator"],
+)
+
+pybind_library(
+    name = "pybind",
+    srcs = ["runtime/pybind.cc"],
+    alwayslink = True,
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/runtime:plugin_pybind",
+    ],
+)
+
+cc_library(
+    name = "conversion",
+    srcs = ["runtime/conversion.cc"],
+    alwayslink = True,
+    copts = PHASER_COPTS,
+    deps = ["//phaser/plugins/common:conversion_plugin"],
+)

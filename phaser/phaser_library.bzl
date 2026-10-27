@@ -534,6 +534,9 @@ def phaser_library(
     # Generated sources register embedded FileDescriptorProtos with this
     # library. The descriptor is then available without linking the .pb.cc.
     libdeps.append(Label("//phaser/runtime:phaser_bank_protobuf"))
+    libdeps.append(Label("//phaser/plugins:arrow"))
+    libdeps.append(Label("//phaser/plugins:avro"))
+    libdeps.append(Label("//phaser/plugins:parquet"))
     if frontend == "c":
         libdeps.append(Label("//phaser/runtime:phaser_c"))
     libdeps = libdeps + cc_deps

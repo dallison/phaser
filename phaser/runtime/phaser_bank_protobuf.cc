@@ -13,6 +13,7 @@
 #include "absl/strings/str_join.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/descriptor.pb.h"
+#include "phaser/runtime/message_property.h"
 #include "phaser/runtime/phaser_bank.h"
 
 namespace phaser {
@@ -158,8 +159,8 @@ void RegisterProtobufFileDescriptor(std::string_view serialized_file) {
 
 absl::StatusOr<const google::protobuf::Descriptor*>
 PhaserBankProtobufDescriptor(std::string_view full_name) {
-  absl::StatusOr<std::string_view> protobuf_full_name =
-      PhaserBankProtobufFullName(full_name);
+  absl::StatusOr<std::string> protobuf_full_name =
+      CallMessageProperty(kMessagePropertyProtobufFullName, full_name);
   if (!protobuf_full_name.ok()) {
     return protobuf_full_name.status();
   }

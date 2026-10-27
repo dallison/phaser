@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "phaser/runtime/md5.h"
+#include "phaser/runtime/message_property.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/runtime/phaser_bank_protobuf.h"
 #include "phaser/testdata/ros_metadata_ros_phaser/phaser/testdata/RosMetadata.phaser.h"
@@ -37,25 +38,25 @@ TEST(RosMetadataRosFrontendTest, MatchesRosMetadata) {
             "MSG: example_msgs/LegacyStatus\n"
             "# Legacy status.\nuint8 OK = 0\n");
 
-  absl::StatusOr<std::string_view> data_type =
-      ::phaser::PhaserBankRosDataType(Bool::FullName());
+  absl::StatusOr<std::string> data_type = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosDataType, Bool::FullName());
   ASSERT_TRUE(data_type.ok());
   EXPECT_EQ(*data_type, Bool::RosDataType());
-  absl::StatusOr<std::string> md5 =
-      ::phaser::PhaserBankRosMd5(Bool::FullName());
+  absl::StatusOr<std::string> md5 = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosMd5, Bool::FullName());
   ASSERT_TRUE(md5.ok());
   EXPECT_EQ(*md5, Bool::RosMd5());
-  absl::StatusOr<std::string_view> definition =
-      ::phaser::PhaserBankRosDefinition(Bool::FullName());
+  absl::StatusOr<std::string> definition = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosDefinition, Bool::FullName());
   ASSERT_TRUE(definition.ok());
   EXPECT_EQ(*definition, Bool::RosDefinition());
 
-  absl::StatusOr<std::string_view> protobuf_full_name =
-      ::phaser::PhaserBankProtobufFullName(Bool::FullName());
+  absl::StatusOr<std::string> protobuf_full_name = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyProtobufFullName, Bool::FullName());
   ASSERT_TRUE(protobuf_full_name.ok());
   EXPECT_EQ(*protobuf_full_name, "example_msgs.proto.Bool");
-  absl::StatusOr<std::string_view> protobuf_name =
-      ::phaser::PhaserBankProtobufName(Bool::FullName());
+  absl::StatusOr<std::string> protobuf_name = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyProtobufName, Bool::FullName());
   ASSERT_TRUE(protobuf_name.ok());
   EXPECT_EQ(*protobuf_name, "Bool");
 

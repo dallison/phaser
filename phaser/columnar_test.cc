@@ -8,6 +8,8 @@
 
 #include "gtest/gtest.h"
 #include "phaser/runtime/phaser_bank.h"
+#include "phaser/plugins/avro/avro.h"
+#include "phaser/plugins/parquet/parquet.h"
 #include "phaser/testdata/TestMessage.phaser.h"
 
 namespace {
@@ -51,11 +53,16 @@ TEST(ColumnarMessageTest, WireFormatsMatchTheMessage) {
 
   std::string bank_protobuf;
   std::string bank_phaser;
-  ASSERT_TRUE(phaser::PhaserBankProtobufToAvro(foo::bar::phaser::TestMessage::FullName(),
-                                              protobuf, &bank_protobuf)
+  ASSERT_TRUE(phaser::PhaserBankConvert(
+                  foo::bar::phaser::TestMessage::FullName(),
+                  phaser::kProtobufFormat,
+                  absl::MakeConstSpan(protobuf.data(), protobuf.size()),
+                  phaser::avro::kFormat, &bank_protobuf)
                   .ok());
-  ASSERT_TRUE(phaser::PhaserBankPhaserToAvro(foo::bar::phaser::TestMessage::FullName(),
-                                            payload, &bank_phaser)
+  ASSERT_TRUE(phaser::PhaserBankConvert(foo::bar::phaser::TestMessage::FullName(),
+                                       phaser::kPhaserFormat, payload,
+                                       phaser::avro::kFormat,
+                                       &bank_phaser)
                   .ok());
   EXPECT_EQ(from_message, bank_protobuf);
   EXPECT_EQ(from_message, bank_phaser);
@@ -77,9 +84,11 @@ TEST(ColumnarMessageTest, WireFormatsMatchTheMessage) {
   EXPECT_NE(parquet_message.find("hello"), std::string::npos);
 
   std::string bank_parquet;
-  ASSERT_TRUE(phaser::PhaserBankProtobufToParquet(
-                  foo::bar::phaser::TestMessage::FullName(), protobuf,
-                  &bank_parquet)
+  ASSERT_TRUE(phaser::PhaserBankConvert(
+                  foo::bar::phaser::TestMessage::FullName(),
+                  phaser::kProtobufFormat,
+                  absl::MakeConstSpan(protobuf.data(), protobuf.size()),
+                  phaser::parquet::kFormat, &bank_parquet)
                   .ok());
   EXPECT_EQ(parquet_message, bank_parquet);
 
@@ -110,24 +119,116 @@ TEST(ColumnarMessageTest, WireFormatsMatchTheMessage) {
 
   const std::string_view full_name = foo::bar::phaser::TestMessage::FullName();
   std::string converted;
-  ASSERT_TRUE(phaser::PhaserBankConvert(full_name, phaser::BankInputType::kPhaser,
-                                       payload, phaser::BankOutputType::kAvro,
+  ASSERT_TRUE(phaser::PhaserBankConvert(full_name, phaser::kPhaserFormat,
+                                       payload, phaser::avro::kFormat,
                                        &converted)
                   .ok());
   EXPECT_EQ(from_phaser, converted);
   ASSERT_TRUE(phaser::PhaserBankConvert(
-                  full_name, phaser::BankInputType::kProtobuf,
+                  full_name, phaser::kProtobufFormat,
                   absl::MakeConstSpan(protobuf.data(), protobuf.size()),
-                  phaser::BankOutputType::kParquet, &converted)
+                  phaser::parquet::kFormat, &converted)
                   .ok());
   EXPECT_EQ(parquet_protobuf, converted);
-  EXPECT_FALSE(phaser::PhaserBankConvert(full_name, phaser::BankInputType::kRos,
-                                        payload, phaser::BankOutputType::kAvro,
+  EXPECT_FALSE(phaser::PhaserBankConvert(full_name, phaser::kRosFormat,
+                                        payload, phaser::avro::kFormat,
                                         &converted)
                    .ok());
   EXPECT_TRUE(converted.empty());
-  EXPECT_FALSE(phaser::PhaserBankConvert(full_name, phaser::BankInputType::kPhaser,
-                                        payload, phaser::BankOutputType::kAvro,
+  EXPECT_FALSE(phaser::PhaserBankConvert(full_name, phaser::kPhaserFormat,
+                                        payload, phaser::avro::kFormat,
                                         nullptr)
+                   .ok());
+}
+
+absl::Status WriteDirection(std::string_view full_name, absl::Span<const char> bytes,
+                            std::string* out, const void* options,
+                            std::string_view label) {
+  (void)full_name;
+  (void)bytes;
+  (void)options;
+  *out = std::string(label);
+  return absl::OkStatus();
+}
+
+absl::Status WriteForward(std::string_view full_name, absl::Span<const char> bytes,
+                          std::string* out, const void* options) {
+  return WriteDirection(full_name, bytes, out, options, "forward");
+}
+
+absl::Status WriteReverse(std::string_view full_name, absl::Span<const char> bytes,
+                          std::string* out, const void* options) {
+  return WriteDirection(full_name, bytes, out, options, "reverse");
+}
+
+TEST(ColumnarMessageTest, ConversionDirectionSelectsTheInstalledEdge) {
+  const char* const forward_formats[] = {"plugin-src", "plugin-dst"};
+  const phaser::BankConversion forward[] = {
+      {"plugin-src", "plugin-dst", phaser::BankConversionDirection::kForward,
+       WriteForward, nullptr},
+  };
+  ASSERT_TRUE(phaser::PhaserBankRegisterConversionPlugin(
+                  {"direction-forward", forward_formats, forward})
+                  .ok());
+  std::string out;
+  ASSERT_TRUE(phaser::PhaserBankConvert("unused", "plugin-src", {}, "plugin-dst",
+                                       &out)
+                  .ok());
+  EXPECT_EQ(out, "forward");
+  EXPECT_FALSE(
+      phaser::PhaserBankConvert("unused", "plugin-dst", {}, "plugin-src", &out)
+          .ok());
+
+  const char* const reverse_formats[] = {"plugin-reverse-src",
+                                        "plugin-reverse-dst"};
+  const phaser::BankConversion reverse[] = {
+      {"plugin-reverse-src", "plugin-reverse-dst",
+       phaser::BankConversionDirection::kReverse, nullptr, WriteReverse},
+  };
+  ASSERT_TRUE(phaser::PhaserBankRegisterConversionPlugin(
+                  {"direction-reverse", reverse_formats, reverse})
+                  .ok());
+  ASSERT_TRUE(phaser::PhaserBankConvert("unused", "plugin-reverse-dst", {},
+                                       "plugin-reverse-src", &out)
+                  .ok());
+  EXPECT_EQ(out, "reverse");
+  EXPECT_FALSE(phaser::PhaserBankConvert("unused", "plugin-reverse-src", {},
+                                        "plugin-reverse-dst", &out)
+                   .ok());
+
+  const char* const both_formats[] = {"plugin-both-src", "plugin-both-dst"};
+  const phaser::BankConversion both[] = {
+      {"plugin-both-src", "plugin-both-dst", phaser::BankConversionDirection::kBoth,
+       WriteForward, WriteReverse},
+  };
+  ASSERT_TRUE(phaser::PhaserBankRegisterConversionPlugin(
+                  {"direction-both", both_formats, both})
+                  .ok());
+  ASSERT_TRUE(phaser::PhaserBankConvert("unused", "plugin-both-src", {},
+                                       "plugin-both-dst", &out)
+                  .ok());
+  EXPECT_EQ(out, "forward");
+  ASSERT_TRUE(phaser::PhaserBankConvert("unused", "plugin-both-dst", {},
+                                       "plugin-both-src", &out)
+                  .ok());
+  EXPECT_EQ(out, "reverse");
+
+  const char* const missing_formats[] = {"plugin-missing-src",
+                                         "plugin-missing-dst"};
+  const phaser::BankConversion missing[] = {
+      {"plugin-missing-src", "plugin-missing-dst",
+       phaser::BankConversionDirection::kBoth, WriteForward, nullptr},
+  };
+  EXPECT_FALSE(phaser::PhaserBankRegisterConversionPlugin(
+                   {"direction-missing", missing_formats, missing})
+                   .ok());
+
+  const char* const undeclared_formats[] = {"plugin-src"};
+  const phaser::BankConversion undeclared[] = {
+      {"plugin-src", "plugin-undeclared", phaser::BankConversionDirection::kForward,
+       WriteForward, nullptr},
+  };
+  EXPECT_FALSE(phaser::PhaserBankRegisterConversionPlugin(
+                   {"direction-undeclared", undeclared_formats, undeclared})
                    .ok());
 }

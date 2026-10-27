@@ -494,17 +494,14 @@ When the caller has the protobuf full name and not the C++ type, the bank
 writes one payload:
 
 ```c++
-status = ::phaser::PhaserBankProtobufToAvro(
-    "foo.bar.TestMessage", protobuf_bytes, &avro);
-status = ::phaser::PhaserBankPhaserToParquet(
-    "foo.bar.TestMessage", phaser_bytes, &parquet);
 status = ::phaser::PhaserBankConvert(
-    "foo.bar.TestMessage", ::phaser::BankInputType::kProtobuf, protobuf_bytes,
-    ::phaser::BankOutputType::kAvro, &avro);
+    "foo.bar.TestMessage", "protobuf", protobuf_bytes, "avro", &avro);
+status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", "phaser", phaser_bytes, "parquet", &parquet);
 ```
 
-`PhaserBankConvert` also accepts `BankOutputType::kParquet`, and
-`BankInputType::kPhaser` for a native payload. See the user guide's
+`PhaserBankConvert` takes the format names `"phaser"`, `"protobuf"`, `"avro"`,
+and `"parquet"`. See the user guide's
 [Avro and Parquet](phaser/docs/phaser_user_guide.md#avro-and-parquet) section
 for the type mapping and file layout.
 
@@ -528,26 +525,22 @@ The same lookup converts wire formats when the caller has the protobuf full
 name and not the C++ type:
 
 ```c++
-absl::Status status = ::phaser::PhaserBankProtobufToROS(
-    "foo.bar.TestMessage", protobuf_bytes, ros_output);
-status = ::phaser::PhaserBankRosToProtobuf(
-    "foo.bar.TestMessage", ros_bytes, protobuf_output);
-status = ::phaser::PhaserBankPhaserToROS(
-    "foo.bar.TestMessage", phaser_bytes, ros_output);
-status = ::phaser::PhaserBankPhaserToProtobuf(
-    "foo.bar.TestMessage", phaser_bytes, protobuf_output);
-
 std::string converted;
+absl::Status status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", "protobuf", protobuf_bytes, "ros", &converted);
 status = ::phaser::PhaserBankConvert(
-    "foo.bar.TestMessage", ::phaser::BankInputType::kProtobuf, protobuf_bytes,
-    ::phaser::BankOutputType::kRos, &converted);
+    "foo.bar.TestMessage", "ros", ros_bytes, "protobuf", &converted);
+status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", "phaser", phaser_bytes, "ros", &converted);
+status = ::phaser::PhaserBankConvert(
+    "foo.bar.TestMessage", "phaser", phaser_bytes, "protobuf", &converted);
 ```
 
-`PhaserBankRosDataType`, `PhaserBankRosMd5`, and `PhaserBankRosDefinition`
-return the ROS datatype, MD5, and definition when the message was compiled with
-ROS metadata. `PhaserBankProtobufFullName` and `PhaserBankProtobufName` return
-the protobuf names. The bank also dispatches the generated Arrow functions for
-an `Any` payload. The user guide's
+`CallMessageProperty` returns a named property of a message. The built-in names
+are `"ros-datatype"`, `"ros-md5"`, `"ros-definition"`, `"protobuf-full-name"`,
+and `"protobuf-name"`. The ROS properties are present when the message was
+compiled with ROS metadata. An `Any` payload is read and written through the
+Arrow plugin. The user guide's
 [Phaser Bank](phaser/docs/phaser_user_guide.md#the-phaser-bank) and
 [Message information](phaser/docs/phaser_user_guide.md#message-information)
 sections cover reflection, `MessageInfo`/`FieldInfo`, and the rest of the

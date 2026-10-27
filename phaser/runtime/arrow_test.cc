@@ -2,7 +2,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/runtime/arrow.h"
+#include "phaser/plugins/arrow/arrow.h"
 
 #include <gtest/gtest.h>
 

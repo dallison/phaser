@@ -3,6 +3,7 @@
 // See LICENSE file for licensing information.
 
 #include "phaser/compiler/gen.h"
+#include "phaser/compiler/generator_plugin.h"
 
 #include <filesystem>
 #include <fstream>
@@ -422,6 +423,7 @@ Generator::Generator(const google::protobuf::FileDescriptor* file,
 void Generator::GenerateHeaders(std::ostream& os, std::string* error) {
   os << "#pragma once\n";
   os << "#include \"phaser/runtime/runtime.h\"\n";
+  EmitGeneratorPluginFileHeaderIncludes(os);
   os << "#include <new>\n";
   if (frontend_style_ == FrontendStyle::kRos && UsesRos1Intrinsic(file_)) {
     os << "#include \"phaser/runtime/ros.h\"\n";
@@ -560,6 +562,10 @@ void Generator::GenerateSources(std::ostream& os) {
                                                    std::string(file_->name())));
   p.replace_extension(".phaser.h");
   os << "#include \"" << p.string() << "\"\n";
+  EmitGeneratorPluginFileSourceIncludes(os);
+  if (frontend_style_ == FrontendStyle::kRos && UsesRos1Intrinsic(file_)) {
+    os << "#include \"phaser/runtime/ros.h\"\n";
+  }
   GenerateProtobufDescriptorRegistrations(os);
 
   OpenNamespace(os);

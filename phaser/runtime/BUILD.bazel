@@ -1,6 +1,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_python//python:defs.bzl", "py_test")
 load(
     "//phaser:copts.bzl",
     "PHASER_COPTS",
@@ -49,10 +50,8 @@ cc_test(
 cc_library(
     name = "phaser_runtime",
     srcs = [
-        "arrow.cc",
-        "avro.cc",
+        "message_property.cc",
         "ros_avro_record.cc",
-        "parquet.cc",
         "md5.cc",
         "message.cc",
         "phaser_bank.cc",
@@ -65,16 +64,14 @@ cc_library(
     hdrs = [
         "active_message.h",
         "any.h",
-        "arrow.h",
-        "arrow_abi.h",
-        "avro.h",
+        "columnar_forward.h",
         "ros_avro_record.h",
-        "parquet.h",
         "arrays.h",
         "fields.h",
         "iterators.h",
         "md5.h",
         "message.h",
+        "message_property.h",
         "runtime.h",
         "ros_direct.h",
         "ros_wireformat.h",
@@ -100,10 +97,67 @@ cc_library(
     ],
 )
 
+pybind_library(
+    name = "plugin_pybind",
+    srcs = ["plugin_pybind.cc"],
+    hdrs = ["plugin_pybind.h"],
+    copts = PHASER_COPTS,
+)
+
 pybind_extension(
     name = "phaser_bank_py",
     srcs = ["phaser_bank_pybind.cc"],
-    deps = [":phaser_runtime"],
+    deps = [
+        ":phaser_runtime",
+        ":plugin_pybind",
+        "//phaser/plugins:arrow",
+        "//phaser/plugins:arrow_pybind",
+        "//phaser/plugins:avro",
+        "//phaser/plugins:avro_conversion",
+        "//phaser/plugins:avro_pybind",
+        "//phaser/plugins:parquet",
+        "//phaser/plugins:parquet_conversion",
+        "//phaser/plugins:parquet_pybind",
+        "//phaser/plugins:protobuf_conversion",
+        "//phaser/plugins:protobuf_pybind",
+        "//phaser/plugins:ros_conversion",
+        "//phaser/plugins:ros_pybind",
+        "//phaser/plugins:stamped_ros_avro_conversion",
+        "//phaser/plugins:stamped_ros_avro_pybind",
+    ],
+)
+
+pybind_extension(
+    name = "phaser_bank_py_testlib",
+    srcs = ["phaser_bank_pybind.cc"],
+    deps = [
+        ":phaser_runtime",
+        ":plugin_pybind",
+        "//phaser/plugins:arrow",
+        "//phaser/plugins:arrow_pybind",
+        "//phaser/plugins:avro",
+        "//phaser/plugins:avro_conversion",
+        "//phaser/plugins:avro_pybind",
+        "//phaser/plugins:parquet",
+        "//phaser/plugins:parquet_conversion",
+        "//phaser/plugins:parquet_pybind",
+        "//phaser/plugins:protobuf_conversion",
+        "//phaser/plugins:protobuf_pybind",
+        "//phaser/plugins:ros_conversion",
+        "//phaser/plugins:ros_pybind",
+        "//phaser/plugins:stamped_ros_avro_conversion",
+        "//phaser/plugins:stamped_ros_avro_pybind",
+        "//phaser/testdata:ros_metadata_protobuf_phaser",
+    ],
+)
+
+py_test(
+    name = "phaser_bank_py_test",
+    srcs = ["phaser_bank_py_test.py"],
+    main = "phaser_bank_py_test.py",
+    tags = ["no-asan"],
+    data = [":phaser_bank_py_testlib"],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 cc_test(
@@ -113,6 +167,7 @@ cc_test(
     data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
+        "//phaser/plugins:ros_conversion",
         "//phaser/testdata:ros_metadata_protobuf_phaser",
         "@com_google_googletest//:gtest_main",
     ],
@@ -206,6 +261,9 @@ cc_test(
     data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
+        "//phaser/plugins:arrow",
+        "//phaser/plugins:avro",
+        "//phaser/plugins:parquet",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -216,7 +274,7 @@ cc_test(
     copts = PHASER_COPTS,
     data = ["//phaser:valgrind.supp"],
     deps = [
-        ":phaser_runtime",
+        "//phaser/plugins:arrow",
         "@com_google_googletest//:gtest_main",
     ],
 )

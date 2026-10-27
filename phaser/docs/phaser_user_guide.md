@@ -1412,12 +1412,21 @@ A message that contains itself cannot be represented as an Arrow tree.
 conversion from Arrow to ROS or from Arrow to protobuf; convert the Phaser
 message with the wire APIs after `FromArrow`.
 
-The Phaser bank can build and read an `Any` payload whose type is known only by
-name. Those entry points are `PhaserBankAppendArrowSchema`,
-`PhaserBankCollectArrowTypesAtOffset`, `PhaserBankWriteArrowAtOffset`, and
-`PhaserBankReadArrowAtOffset`. Generated messages call them. Application code
-normally uses `ToArrow` and `FromArrow`. The same column layout is what
+An `Any` payload whose type is known only by name is handled by the Arrow
+plugin. `CallArrowPlugin` looks up the operation by name and runs it for that
+message. The built-in names are `"append-schema"`, `"collect-types"`,
+`"write"`, and `"read"`. `ToArrow` and `FromArrow` call them. Application code
+normally uses those methods. Another plugin can register more operation names
+with `RegisterArrowPlugin`. The same column layout is what
 [Avro and Parquet](#avro-and-parquet) write.
+
+```cpp
+struct ArrowMessageArgs { /* runtime, offset, and the fields that operation uses */ };
+absl::Status RegisterArrowPlugin(absl::Span<const ArrowPluginOp> operations);
+absl::Status CallArrowPlugin(std::string_view operation,
+                             std::string_view full_name,
+                             const ArrowMessageArgs& args);
+```
 
 ## Avro and Parquet
 
@@ -1473,23 +1482,16 @@ be ambiguous with the batch overload.
 
 The same four conversions are available through the bank when the caller has
 the protobuf full name and not the C++ type. Each bank function takes one
-message. `PhaserBankConvert` selects the pair with `BankInputType` and
-`BankOutputType`:
+message. `PhaserBankConvert` selects the pair by format name:
 
 ```c++
-status = ::phaser::PhaserBankProtobufToAvro(
-    "foo.bar.TestMessage", protobuf_bytes, &avro);
-status = ::phaser::PhaserBankPhaserToParquet(
-    "foo.bar.TestMessage", phaser_bytes, &parquet);
 status = ::phaser::PhaserBankConvert(
-    "foo.bar.TestMessage", ::phaser::BankInputType::kProtobuf, protobuf_bytes,
-    ::phaser::BankOutputType::kAvro, &avro);
+    "foo.bar.TestMessage", "protobuf", protobuf_bytes, "avro", &avro);
 status = ::phaser::PhaserBankConvert(
-    "foo.bar.TestMessage", ::phaser::BankInputType::kPhaser, phaser_bytes,
-    ::phaser::BankOutputType::kParquet, &parquet);
+    "foo.bar.TestMessage", "phaser", phaser_bytes, "parquet", &parquet);
 ```
 
-`kProtobuf` and `kPhaser` are the inputs. `kAvro` and `kParquet` are the
+`"protobuf"` and `"phaser"` are the inputs. `"avro"` and `"parquet"` are the
 outputs. ROS bytes are not an input for either format.
 
 If you already have an Arrow batch, `::phaser::avro::WriteFile` and
@@ -1605,62 +1607,16 @@ absl::StatusOr<Field *>
 PhaserBankGetFieldByNumber(const std::string &message_type, Message &msg,
                            int number);
 
-absl::Status PhaserBankProtobufToROS(std::string_view full_name,
-                                     std::string_view bytes,
-                                     ROSBuffer &output);
-absl::Status PhaserBankPhaserToROS(std::string_view full_name,
-                                   absl::Span<const char> bytes,
-                                   ROSBuffer &output);
-absl::StatusOr<std::string_view> PhaserBankRosDataType(
-    std::string_view full_name);
-absl::StatusOr<std::string> PhaserBankRosMd5(std::string_view full_name);
-absl::StatusOr<std::string_view> PhaserBankRosDefinition(
-    std::string_view full_name);
-
-absl::Status PhaserBankRosToProtobuf(std::string_view full_name,
-                                     absl::Span<const char> bytes,
-                                     ProtoBuffer &output);
-absl::Status PhaserBankPhaserToProtobuf(std::string_view full_name,
-                                        absl::Span<const char> bytes,
-                                        ProtoBuffer &output);
-absl::StatusOr<std::string_view> PhaserBankProtobufFullName(
-    std::string_view full_name);
-absl::StatusOr<std::string_view> PhaserBankProtobufName(
-    std::string_view full_name);
 absl::StatusOr<const google::protobuf::Descriptor *>
     PhaserBankProtobufDescriptor(std::string_view full_name);
 
-absl::Status PhaserBankAppendArrowSchema(
-    std::string_view full_name, ::phaser::arrow::SchemaBuilder *builder,
-    std::string_view name, bool nullable,
-    const ::phaser::arrow::TypeSet *types);
-absl::Status PhaserBankCollectArrowTypesAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, ::phaser::arrow::TypeSet *types);
-absl::Status PhaserBankWriteArrowAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, ::phaser::arrow::FieldWriter *writer,
-    const ::phaser::arrow::TypeSet *types);
-absl::Status PhaserBankReadArrowAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader *reader);
-absl::Status PhaserBankProtobufToAvro(std::string_view full_name,
-                                      std::string_view bytes, std::string *out);
-absl::Status PhaserBankPhaserToAvro(std::string_view full_name,
-                                    absl::Span<const char> bytes,
-                                    std::string *out);
-absl::Status PhaserBankProtobufToParquet(std::string_view full_name,
-                                         std::string_view bytes,
-                                         std::string *out);
-absl::Status PhaserBankPhaserToParquet(std::string_view full_name,
-                                       absl::Span<const char> bytes,
-                                       std::string *out);
-
-enum class BankInputType { kPhaser, kProtobuf, kRos };
-enum class BankOutputType { kProtobuf, kRos, kAvro, kParquet };
-absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
-                               absl::Span<const char> bytes,
-                               BankOutputType output, std::string *out);
+enum class BankConversionDirection { kForward, kReverse, kBoth };
+absl::Status PhaserBankRegisterConversionPlugin(
+    const BankConversionPlugin &plugin);
+absl::Status PhaserBankConvert(std::string_view full_name,
+                               std::string_view from,
+                               absl::Span<const char> bytes, std::string_view to,
+                               std::string *out, const void *options = nullptr);
 ```
 
 All the functions take the message type name and return an Abseil Status or
@@ -1726,22 +1682,20 @@ These are the type-erased forms of the generated wire conversions. The message
 full name is the bank key, the same string as `Descriptor::full_name()`. A
 missing conversion function returns an error rather than crashing.
 
-`PhaserBankProtobufToROS` and `PhaserBankPhaserToROS` convert protobuf wire
-bytes or a native Phaser payload into ROS1 bytes. Both take the message full
-name, the input bytes, and a `::phaser::ROSBuffer`.
+`PhaserBankConvert` from `"protobuf"` or `"phaser"` to `"ros"` writes ROS1
+bytes. Both take the message full name and the input bytes.
 
-`PhaserBankRosDataType`, `PhaserBankRosMd5`, and `PhaserBankRosDefinition`
-return the ROS datatype, MD5, and message definition. These are present when
-the message was compiled with ROS metadata. Otherwise they return an error.
+`CallMessageProperty` looks up a named property of a message. The built-in
+names are `"ros-datatype"`, `"ros-md5"`, `"ros-definition"`,
+`"protobuf-full-name"`, and `"protobuf-name"`. The ROS properties are present
+when the message was compiled with ROS metadata. Otherwise they return an
+error. `"protobuf-full-name"` is the same string as `Descriptor::full_name()`
+and the key used to register the message. `"protobuf-name"` is only the
+unqualified message name, such as `Inner`. Another plugin can register more
+property names with `RegisterMessagePropertyPlugin`.
 
-`PhaserBankRosToProtobuf` and `PhaserBankPhaserToProtobuf` convert ROS1 bytes
-or a native Phaser payload into protobuf wire bytes.
-
-`PhaserBankProtobufFullName` returns the protobuf full name, such as
-`foo.bar.Outer.Inner`. That is the same string as `Descriptor::full_name()`
-and the key used to register the message. `PhaserBankProtobufName` returns
-only the unqualified message name, such as `Inner`, which is useful for
-display and is not unique across packages.
+`PhaserBankConvert` to `"protobuf"` converts ROS1 bytes or a native Phaser
+payload into protobuf wire bytes.
 
 `PhaserBankProtobufDescriptor` returns the `google::protobuf::Descriptor`
 built from the `FileDescriptorProto` embedded in the generated Phaser library.
@@ -1749,21 +1703,80 @@ Linking the protobuf `.pb.cc` is not required. `descriptor.proto`, and any
 file already provided by libprotobuf, are read from the generated descriptor
 pool. The function is declared in `phaser/runtime/phaser_bank_protobuf.h`.
 
-### Arrow
-`PhaserBankAppendArrowSchema`, `PhaserBankCollectArrowTypesAtOffset`,
-`PhaserBankWriteArrowAtOffset`, and `PhaserBankReadArrowAtOffset` call the
-generated Arrow functions for a message identified by its protobuf full name.
-`ToArrow` uses them to convert the concrete payload inside an `Any`. See the
-[Arrow](#arrow) section for the schema and the `ToArrow` / `FromArrow` API.
-`PhaserBankProtobufToAvro`, `PhaserBankPhaserToAvro`,
-`PhaserBankProtobufToParquet`, and `PhaserBankPhaserToParquet` write one
-protobuf or Phaser payload. See [Avro and Parquet](#avro-and-parquet).
+### Python (`phaser_bank_py`)
+`//phaser/runtime:phaser_bank_py` is a pybind11 module with the same bank
+conversions and ROS connection helpers as the C++ API. Add it as a `data`
+dependency of your `py_binary` or `py_test`, load the `.so` from runfiles (same
+pattern as `<name>_py` message modules), and import it as `phaser_bank_py`.
 
-`PhaserBankConvert` takes a `BankInputType` and a `BankOutputType` and calls
-the matching function. The input is `kPhaser`, `kProtobuf`, or `kRos`. The
-output is `kProtobuf`, `kRos`, `kAvro`, or `kParquet`. The result is a
-`std::string`. A pair with no conversion, such as ROS to Avro, returns an
-error.
+Format name constants (`FORMAT_PHASER`, `FORMAT_ROS`, and so on) match the C++
+wire-format strings. `convert(full_name, from_format, payload, to_format)`
+calls `PhaserBankConvert`. Named helpers such as `phaser_to_ros` and
+`protobuf_to_avro` are thin wrappers. `registered_formats()`,
+`has_conversion(from, to)`, and `conversion_edges()` introspect the conversion
+graph. `message_property(name, full_name)` and `message_properties()` wrap
+`CallMessageProperty`; property name constants are `PROP_ROS_DATATYPE`, and
+similar.
+
+Each runtime plugin can register a submodule on the bank module (for example
+`phaser_bank_py.arrow`) by linking a `:pybind` target with `alwayslink = True`
+into `phaser_bank_py`. The Arrow submodule exposes operation name constants and
+`operations()`. Link the message libraries you need into the same process so
+static initializers register types in the bank before you convert or query
+metadata.
+
+### Arrow
+`ToArrow` and `FromArrow` convert the concrete payload inside an `Any` through
+the Arrow plugin, including `"append-schema"`. See the [Arrow](#arrow) section
+for the schema, the operation names, and the `ToArrow` / `FromArrow` API.
+`PhaserBankConvert` to `"avro"` or `"parquet"` writes one protobuf or Phaser
+payload. See [Avro and Parquet](#avro-and-parquet).
+
+`PhaserBankConvert` takes the source and destination format names and calls the
+plugin registered for that pair. The result is a `std::string`. A pair with no
+plugin, such as ROS to Avro, returns an error.
+
+A plugin declares the format names it accepts and lists one conversion for each
+pair, with a `BankConversionDirection`. Registration fails when a conversion
+uses a name the plugin did not declare. `kForward` installs `from` to `to`.
+`kReverse` installs `to` to `from`. `kBoth` installs both. The protobuf plugin
+accepts `"phaser"` and `"protobuf"`. The ROS plugin also accepts `"ros"` and
+converts protobuf and ROS in both directions. The Avro and Parquet plugins
+accept `"avro"` and `"parquet"` as `kForward` outputs. The stamped ROS Avro
+plugin accepts `"stamped-ros-avro"` and is also `kForward`.
+`ros_avro_record::ConvertToStampedRosBytesAvroRecord` writes that record and
+rejects a source other than `"phaser"`, `"protobuf"`, or `"ros"`.
+
+A plugin registers by calling `PhaserBankRegisterConversionPlugin` from a
+static initializer. The bank does not list plugins. A new format is its own
+`cc_library` with that initializer and `alwayslink = True`, so the linker
+keeps the object. Each built-in format lives in its own directory under
+`phaser/plugins/<name>/` with a `gen/` tree (compiler hooks, linked into the
+`phaser` binary) and a `runtime/` tree (libraries and bank conversion
+registrars). Shared bank conversion helpers are in `phaser/plugins/common/`.
+Bazel still exposes the old `//phaser/plugins:arrow`, `:avro_conversion`, and
+similar names as aliases. Columnar runtimes are `//phaser/plugins/<name>:runtime`;
+wire bank edges are `:conversion` where applicable.
+Generated message libraries link the columnar plugins automatically. Depend on
+the conversion plugins you use for `PhaserBankConvert`.
+
+Columnar formats also need **generator plugins** so the `phaser` compiler can
+emit message methods and `BankInfo` fields without hard-coding each format in
+the core generator. A generator plugin is a `GeneratorPlugin` registered from a
+static initializer (same link-time pattern as runtime plugins). The core
+generator calls hooks to add file includes, message declarations, method
+definitions, and bank function pointers. Built-in generator plugins are the `codegen` targets under
+`phaser/plugins/{ros,protobuf,arrow,avro,parquet}/` (also available as
+`//phaser/plugins:*_codegen` aliases); they are linked into the `phaser`
+compiler binary
+with `alwayslink = True`. Wire plugins emit ROS serialization and protobuf
+bank edges; columnar plugins emit Arrow/Avro/Parquet methods. A new format
+should ship both a generator plugin (depend on
+`//phaser/compiler:message_generator` and include `message_codegen_host.h`) and
+a runtime plugin. Set `GeneratorPlugin::priority` so `BankInfo` fields emit in
+struct order (wire plugins use 0–1, columnar uses 20+). Shared ROS metadata and
+wire-type helpers for the core generator and `ros_codegen` live in
+`phaser/compiler/ros_codegen_helpers.h` (`phaser::codegen` namespace).
 
 ### Streaming and DebugString
 You can stream a message to `std::ostream` using the `PhaserStreamTo` function.  If you want this

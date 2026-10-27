@@ -4,39 +4,34 @@
 
 #pragma once
 
-// Avro object-container writer. Phaser does not link libavro. The file is one
-// uncompressed block whose records follow the Arrow batch produced for the
-// same messages.
+// Uncompressed Parquet writer. Phaser does not link libparquet. One row group,
+// PLAIN values, and data page v1. The columns follow the Arrow batch produced
+// for the same messages.
 
 #include <string>
+#include <string_view>
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "phaser/runtime/arrow.h"
+#include "phaser/plugins/arrow/arrow.h"
 
 struct ArrowSchema;
 struct ArrowArray;
 
 namespace phaser {
-namespace avro {
+namespace parquet {
+
+// Format name accepted by the Parquet conversion plugin.
+inline constexpr std::string_view kFormat = "parquet";
 
 absl::Status WriteFile(const struct ArrowSchema* schema,
                        const struct ArrowArray* array, std::string* out);
-
-// Binary Avro encoding for one row of an Arrow batch (no object-container
-// header). Concatenated row encodings match the block body inside WriteFile.
-absl::Status WriteRecordBytes(const struct ArrowSchema* schema,
-                              const struct ArrowArray* array, int64_t row,
-                              std::string* out);
-absl::Status WriteAllRecordBytes(const struct ArrowSchema* schema,
-                                 const struct ArrowArray* array,
-                                 std::string* out);
 
 template <typename Message>
 absl::Status WriteMessages(absl::Span<const Message> messages,
                            std::string* out) {
   if (out == nullptr) {
-    return absl::InvalidArgumentError("Avro output string is null");
+    return absl::InvalidArgumentError("Parquet output string is null");
   }
   out->clear();
   struct ArrowSchema schema {};
@@ -58,5 +53,5 @@ absl::Status WriteMessages(absl::Span<const Message> messages,
   return status;
 }
 
-}  // namespace avro
+}  // namespace parquet
 }  // namespace phaser

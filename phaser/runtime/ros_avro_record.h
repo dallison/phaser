@@ -15,8 +15,17 @@
 namespace phaser {
 namespace ros_avro_record {
 
+// Format name accepted by the stamped ROS Avro conversion plugin.
+inline constexpr std::string_view kFormat = "stamped-ros-avro";
+
 constexpr char kStampedRosBytesAvroSchemaJson[] =
     R"({"doc":"Stamped ROS wire bytes.","fields":[{"name":"stamp","type":{"fields":[{"name":"secs","type":"int"},{"name":"nsecs","type":"int"}],"name":"stamp_record","type":"record"}},{"name":"ros_msg","type":"bytes"}],"name":"stamped_ros_bytes","namespace":"phaser","type":"record"})";
+
+// Passed as PhaserBankConvert options when `to` is `kFormat`.
+struct StampedRosAvroOptions {
+  int32_t stamp_secs;
+  int32_t stamp_nsecs;
+};
 
 // One Avro binary record: stamp (secs, nsecs) + length-prefixed ros_msg bytes.
 absl::Status WriteStampedRosBytesAvroRecord(int32_t stamp_secs, int32_t stamp_nsecs,
@@ -33,11 +42,18 @@ struct RosConnectionMetadata {
 absl::StatusOr<RosConnectionMetadata> PhaserBankRosConnectionMetadata(
     std::string_view protobuf_full_name);
 
-absl::Status PhaserBankProtobufToStampedRosBytesAvroRecord(
+// Converts `from` into one stamped ROS-bytes Avro record. `from` must be
+// "phaser", "protobuf", or "ros".
+absl::Status ConvertToStampedRosBytesAvroRecord(
+    std::string_view full_name, std::string_view from,
+    absl::Span<const char> bytes, int32_t stamp_secs, int32_t stamp_nsecs,
+    std::string* out);
+
+absl::Status ProtobufToStampedRosBytesAvroRecord(
     std::string_view protobuf_full_name, std::string_view protobuf_bytes,
     int32_t stamp_secs, int32_t stamp_nsecs, std::string* out);
 
-absl::Status PhaserBankPhaserToStampedRosBytesAvroRecord(
+absl::Status PhaserToStampedRosBytesAvroRecord(
     std::string_view protobuf_full_name, absl::Span<const char> phaser_bytes,
     int32_t stamp_secs, int32_t stamp_nsecs, std::string* out);
 
