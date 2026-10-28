@@ -19,11 +19,13 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "phaser/runtime/arrow_abi.h"
+#include "phaser/plugins/arrow/arrow_abi.h"
+#include "phaser/runtime/payload_buffer.h"
 
 namespace phaser {
 
 class AnyMessage;
+struct MessageRuntime;
 
 namespace arrow {
 
@@ -339,6 +341,47 @@ absl::Status MessagesFromArrow(const struct ArrowSchema* schema,
   }
   return absl::OkStatus();
 }
+
+// Arguments for an Arrow plugin operation on one message at a payload offset.
+// Each operation reads the fields it needs and ignores the rest.
+struct ArrowMessageArgs {
+  MessageRuntime* runtime = nullptr;
+  BufferOffset offset = 0;
+  TypeSet* types = nullptr;
+  FieldWriter* writer = nullptr;
+  const TypeSet* schema_types = nullptr;
+  const FieldReader* reader = nullptr;
+  SchemaBuilder* schema_builder = nullptr;
+  std::string_view field_name;
+  bool nullable = false;
+};
+
+using ArrowPluginFn = absl::Status (*)(std::string_view full_name,
+                                       const ArrowMessageArgs& args);
+
+// One named operation. `name` and `invoke` stay valid for the process.
+struct ArrowPluginOp {
+  const char* name;
+  ArrowPluginFn invoke;
+};
+
+inline constexpr std::string_view kArrowPluginCollectTypes = "collect-types";
+inline constexpr std::string_view kArrowPluginWrite = "write";
+inline constexpr std::string_view kArrowPluginRead = "read";
+inline constexpr std::string_view kArrowPluginAppendSchema = "append-schema";
+
+// Adds operations addressed by name. A second registration of the same name
+// fails. The built-in collect, write, read, and append-schema operations are
+// installed on the first call.
+absl::Status RegisterArrowPlugin(absl::Span<const ArrowPluginOp> operations);
+
+// Looks up `operation` and runs it for the message named `full_name`.
+absl::Status CallArrowPlugin(std::string_view operation,
+                             std::string_view full_name,
+                             const ArrowMessageArgs& args);
+
+// Registered operation names (including built-ins after first use).
+std::vector<std::string> ListPluginOperations();
 
 }  // namespace arrow
 }  // namespace phaser

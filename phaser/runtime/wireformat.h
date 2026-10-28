@@ -37,6 +37,10 @@ enum class MessageWireFormat {
   kUnknown,
 };
 
+// Wire-format names accepted by the protobuf conversion plugin.
+inline constexpr std::string_view kPhaserFormat = "phaser";
+inline constexpr std::string_view kProtobufFormat = "protobuf";
+
 namespace internal {
 
 inline uint32_t LoadWireUint32(absl::Span<const char> data, size_t offset) {

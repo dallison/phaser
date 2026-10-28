@@ -1,5 +1,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_extension", "pybind_library")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_python//python:defs.bzl", "py_test")
 load(
     "//phaser:copts.bzl",
     "PHASER_COPTS",
@@ -7,6 +9,8 @@ load(
 )
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files(["phaser_bank_pybind.cc"])
 
 # Serializing a message writes without checking for room, trusting the
 # caller to have made enough (see kTrustSerializedSize in wireformat.h).
@@ -46,9 +50,7 @@ cc_test(
 cc_library(
     name = "phaser_runtime",
     srcs = [
-        "arrow.cc",
-        "avro.cc",
-        "parquet.cc",
+        "message_property.cc",
         "md5.cc",
         "message.cc",
         "phaser_bank.cc",
@@ -61,15 +63,13 @@ cc_library(
     hdrs = [
         "active_message.h",
         "any.h",
-        "arrow.h",
-        "arrow_abi.h",
-        "avro.h",
-        "parquet.h",
+        "columnar_forward.h",
         "arrays.h",
         "fields.h",
         "iterators.h",
         "md5.h",
         "message.h",
+        "message_property.h",
         "runtime.h",
         "ros_direct.h",
         "ros_wireformat.h",
@@ -84,6 +84,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -92,6 +93,68 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@cpp_toolbelt//toolbelt",
     ],
+)
+
+pybind_library(
+    name = "plugin_pybind",
+    srcs = ["plugin_pybind.cc"],
+    hdrs = ["plugin_pybind.h"],
+    copts = PHASER_COPTS,
+)
+
+pybind_extension(
+    name = "phaser_bank_py",
+    srcs = ["phaser_bank_pybind.cc"],
+    deps = [
+        ":phaser_runtime",
+        ":plugin_pybind",
+        "//phaser/plugins:arrow",
+        "//phaser/plugins:arrow_pybind",
+        "//phaser/plugins:avro",
+        "//phaser/plugins:avro_conversion",
+        "//phaser/plugins:avro_pybind",
+        "//phaser/plugins:parquet",
+        "//phaser/plugins:parquet_conversion",
+        "//phaser/plugins:parquet_pybind",
+        "//phaser/plugins:protobuf_conversion",
+        "//phaser/plugins:protobuf_pybind",
+        "//phaser/plugins:ros_conversion",
+        "//phaser/plugins:ros_pybind",
+    ],
+)
+
+pybind_extension(
+    name = "phaser_bank_py_testlib",
+    srcs = ["phaser_bank_pybind.cc"],
+    deps = [
+        ":phaser_runtime",
+        ":plugin_pybind",
+        "//phaser/plugins:arrow",
+        "//phaser/plugins:arrow_pybind",
+        "//phaser/plugins:avro",
+        "//phaser/plugins:avro_conversion",
+        "//phaser/plugins:avro_pybind",
+        "//phaser/plugins:parquet",
+        "//phaser/plugins:parquet_conversion",
+        "//phaser/plugins:parquet_pybind",
+        "//phaser/plugins:protobuf_conversion",
+        "//phaser/plugins:protobuf_pybind",
+        "//phaser/plugins:ros_conversion",
+        "//phaser/plugins:ros_pybind",
+        "//phaser/testdata:ros_metadata_protobuf_phaser",
+    ],
+)
+
+py_test(
+    name = "phaser_bank_py_test",
+    srcs = ["phaser_bank_py_test.py"],
+    main = "phaser_bank_py_test.py",
+    tags = ["no-asan"],
+    data = [
+        ":phaser_bank_py_testlib",
+        "//phaser:valgrind.supp",
+    ],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 cc_library(
@@ -182,6 +245,9 @@ cc_test(
     data = ["//phaser:valgrind.supp"],
     deps = [
         ":phaser_runtime",
+        "//phaser/plugins:arrow",
+        "//phaser/plugins:avro",
+        "//phaser/plugins:parquet",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -192,7 +258,7 @@ cc_test(
     copts = PHASER_COPTS,
     data = ["//phaser:valgrind.supp"],
     deps = [
-        ":phaser_runtime",
+        "//phaser/plugins:arrow",
         "@com_google_googletest//:gtest_main",
     ],
 )

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "phaser/runtime/arrow_abi.h"
+#include "phaser/plugins/arrow/arrow_abi.h"
 #include "phaser/testdata/TestMessage.phaser.h"
 
 namespace {

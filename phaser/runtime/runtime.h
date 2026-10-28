@@ -12,8 +12,6 @@
 #include "phaser/runtime/md5.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/phaser_bank.h"
-#include "phaser/runtime/avro.h"
-#include "phaser/runtime/parquet.h"
 #include "phaser/runtime/ros_direct.h"
 #include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/union.h"

@@ -3,32 +3,48 @@ load("//phaser:copts.bzl", "PHASER_PROTOC_COPTS")
 
 package(default_visibility = ["//visibility:public"])
 
+_GENERATOR_SRCS = [
+    "enum_gen.cc",
+    "gen.cc",
+    "generator_plugin.cc",
+    "message_gen.cc",
+    "message_gen_c.cc",
+    "message_gen_python.cc",
+]
+
+_GENERATOR_HDRS = [
+    "enum_gen.h",
+    "gen.h",
+    "generator_plugin.h",
+    "message_codegen_host.h",
+    "message_gen.h",
+]
+
+_GENERATOR_DEPS = [
+    "//phaser:options_cc_proto",
+    "@com_google_absl//absl/container:flat_hash_map",
+    "@com_google_absl//absl/container:flat_hash_set",
+    "@com_google_absl//absl/status",
+    "@com_google_absl//absl/status:statusor",
+    "@com_google_absl//absl/strings",
+    "@com_google_absl//absl/strings:str_format",
+    "@com_google_protobuf//:protoc_lib",
+]
+
 cc_library(
-    name = "phaser_lib",
-    srcs = [
-        "enum_gen.cc",
-        "gen.cc",
-        "message_gen.cc",
-        "message_gen_arrow.cc",
-        "message_gen_c.cc",
-        "message_gen_python.cc",
-    ],
+    name = "message_generator",
+    srcs = _GENERATOR_SRCS,
     copts = PHASER_PROTOC_COPTS,
-    hdrs = [
-        "enum_gen.h",
-        "gen.h",
-        "message_gen.h",
+    hdrs = _GENERATOR_HDRS,
+    deps = _GENERATOR_DEPS + [
+        "//phaser/plugins/ros:ros_codegen_helpers",
     ],
-    deps = [
-        "//phaser:options_cc_proto",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_protobuf//:protoc_lib",
-    ],
+)
+
+# Backward-compatible alias for in-tree targets.
+alias(
+    name = "phaser_lib",
+    actual = ":message_generator",
 )
 
 cc_binary(
@@ -38,7 +54,12 @@ cc_binary(
     ],
     copts = PHASER_PROTOC_COPTS,
     deps = [
-        ":phaser_lib",
+        ":message_generator",
+        "//phaser/plugins:arrow_codegen",
+        "//phaser/plugins:avro_codegen",
+        "//phaser/plugins:parquet_codegen",
+        "//phaser/plugins:protobuf_codegen",
+        "//phaser/plugins:ros_codegen",
         "@com_google_absl//absl/flags:flag",
         "@com_google_absl//absl/flags:parse",
         "@com_google_protobuf//:protoc_lib",

@@ -2,9 +2,9 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/runtime/arrow.h"
-#include "phaser/runtime/avro.h"
-#include "phaser/runtime/parquet.h"
+#include "phaser/plugins/arrow/arrow.h"
+#include "phaser/plugins/avro/avro.h"
+#include "phaser/plugins/parquet/parquet.h"
 
 #include <cstdint>
 #include <cstring>

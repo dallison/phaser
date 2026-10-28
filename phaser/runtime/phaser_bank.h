@@ -5,16 +5,24 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "phaser/runtime/arrow.h"
 #include "phaser/runtime/message.h"
 #include "phaser/runtime/ros_wireformat.h"
 #include "phaser/runtime/wireformat.h"
 
 namespace phaser {
+
+namespace arrow {
+class SchemaBuilder;
+class TypeSet;
+class FieldWriter;
+class FieldReader;
+}  // namespace arrow
 
 struct BankInfo {
   void (*stream_to)(const Message& msg, std::ostream& os, int indent);
@@ -164,93 +172,58 @@ absl::StatusOr<const MessageInfo*> PhaserBankMessageInfo(
 absl::StatusOr<bool> PhaserBankHasField(const std::string& message_type,
                                         const Message& msg, int number);
 
-// Convert protobuf wire bytes or a native Phaser payload to ROS1 bytes.
-// `full_name` is the message's protobuf full name, the same key used by
-// PhaserBankRegisterMessage.
-absl::Status PhaserBankProtobufToROS(std::string_view full_name,
-                                     std::string_view bytes, ROSBuffer& output);
-absl::Status PhaserBankPhaserToROS(std::string_view full_name,
-                                   absl::Span<const char> bytes,
-                                   ROSBuffer& output);
+// Which ways a plugin conversion runs. `from` and `to` on BankConversion name
+// the forward direction.
+enum class BankConversionDirection {
+  kForward,
+  kReverse,
+  kBoth,
+};
 
-// ROS datatype, MD5, and definition. These are available when the message was
-// compiled with ROS metadata.
-absl::StatusOr<std::string_view> PhaserBankRosDataType(
-    std::string_view full_name);
-absl::StatusOr<std::string> PhaserBankRosMd5(std::string_view full_name);
-absl::StatusOr<std::string_view> PhaserBankRosDefinition(
-    std::string_view full_name);
-
-// Convert ROS1 bytes or a native Phaser payload to protobuf wire bytes.
-absl::Status PhaserBankRosToProtobuf(std::string_view full_name,
-                                     absl::Span<const char> bytes,
-                                     ProtoBuffer& output);
-absl::Status PhaserBankPhaserToProtobuf(std::string_view full_name,
-                                        absl::Span<const char> bytes,
-                                        ProtoBuffer& output);
-
-// Protobuf full name, such as "foo.bar.Outer.Inner". This is the same string
-// as Descriptor::full_name() and the bank key.
-absl::StatusOr<std::string_view> PhaserBankProtobufFullName(
-    std::string_view full_name);
-// Unqualified protobuf message name, such as "Inner".
-absl::StatusOr<std::string_view> PhaserBankProtobufName(
-    std::string_view full_name);
-
-// Arrow schema and row conversion for a message looked up by protobuf full
-// name. Used for Any payloads, whose concrete type is not known to the
-// message that contains them.
-absl::Status PhaserBankAppendArrowSchema(std::string_view full_name,
-                                         ::phaser::arrow::SchemaBuilder* builder,
-                                         std::string_view name, bool nullable,
-                                         const ::phaser::arrow::TypeSet* types);
-absl::Status PhaserBankCollectArrowTypesAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, ::phaser::arrow::TypeSet* types);
-absl::Status PhaserBankWriteArrowAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, ::phaser::arrow::FieldWriter* writer,
-    const ::phaser::arrow::TypeSet* types);
-absl::Status PhaserBankReadArrowAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader* reader);
-
-// Write one protobuf message, or one native Phaser payload, as an Avro object
-// container or an uncompressed Parquet file. `full_name` is the protobuf full
-// name. There is no conversion back from Avro or Parquet.
-absl::Status PhaserBankProtobufToAvro(std::string_view full_name,
-                                      std::string_view bytes, std::string* out);
-absl::Status PhaserBankPhaserToAvro(std::string_view full_name,
-                                    absl::Span<const char> bytes,
-                                    std::string* out);
-absl::Status PhaserBankProtobufToParquet(std::string_view full_name,
-                                         std::string_view bytes,
-                                         std::string* out);
-absl::Status PhaserBankPhaserToParquet(std::string_view full_name,
+using BankConvertFn = absl::Status (*)(std::string_view full_name,
                                        absl::Span<const char> bytes,
-                                       std::string* out);
+                                       std::string* out, const void* options);
 
-// Formats accepted by PhaserBankConvert. Each value is an input or output of
-// at least one bank conversion.
-enum class BankInputType {
-  kPhaser,
-  kProtobuf,
-  kRos,
+// One pair of formats. `forward` converts `from` to `to`. `reverse` converts
+// `to` to `from`. The direction selects which of those functions are installed.
+struct BankConversion {
+  const char* from;
+  const char* to;
+  BankConversionDirection direction;
+  BankConvertFn forward;
+  BankConvertFn reverse;
 };
 
-enum class BankOutputType {
-  kProtobuf,
-  kRos,
-  kAvro,
-  kParquet,
+// A conversion plugin. The plugin registers itself from a static initializer
+// by calling PhaserBankRegisterConversionPlugin. `formats` is the names this
+// plugin accepts. Registration fails when a conversion uses any other name,
+// when `direction` does not match the function pointers, or when an edge is
+// already registered. The library that contains the initializer has to be
+// linked whole, or the linker drops an object that nothing calls.
+struct BankConversionPlugin {
+  const char* name;
+  absl::Span<const char* const> formats;
+  absl::Span<const BankConversion> conversions;
 };
 
-// Dispatches to the bank conversion for this input and output. `bytes` is one
-// message in `input`. `out` receives one message in `output`. A pair with no
-// bank conversion returns an error.
-absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
-                               absl::Span<const char> bytes,
-                               BankOutputType output, std::string* out);
+absl::Status PhaserBankRegisterConversionPlugin(
+    const BankConversionPlugin& plugin);
+
+// Dispatches to the registered plugin edge for `from` and `to`. `bytes` is one
+// message in `from`. `out` receives one message in `to`. `options` is data for
+// the plugin that owns the edge. A pair with no registered edge returns an
+// error.
+absl::Status PhaserBankConvert(std::string_view full_name, std::string_view from,
+                               absl::Span<const char> bytes, std::string_view to,
+                               std::string* out, const void* options = nullptr);
+
+// Format names that appear in at least one registered conversion edge.
+std::vector<std::string> PhaserBankRegisteredFormats();
+
+bool PhaserBankHasConversion(std::string_view from, std::string_view to);
+
+// All registered conversion edges as (from_format, to_format) pairs.
+std::vector<std::pair<std::string, std::string>> PhaserBankConversionEdges();
 
 template <typename Field>
 absl::StatusOr<Field*> inline PhaserBankGetFieldByName(

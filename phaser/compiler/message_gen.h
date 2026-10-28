@@ -19,6 +19,9 @@
 
 namespace phaser {
 
+class MessageGenerator;
+class MessageCodegenHost;
+
 enum class FrontendStyle { kProtobuf, kRos, kC };
 
 struct FieldInfo {
@@ -104,6 +107,7 @@ class MessageGenerator {
   void GenerateEnums(std::ostream& os);
 
  private:
+  friend class MessageCodegenHost;
   void CompileFields();
   void CompileUnions();
   void FinalizeOffsetsAndSizes();
@@ -167,104 +171,12 @@ class MessageGenerator {
   void GenerateUnionProtobufAccessors(std::ostream& os);
   void GenerateNestedTypes(std::ostream& os);
   void GenerateFieldNumbers(std::ostream& os);
-  void GenerateSerializedSize(std::ostream& os, bool decl);
-  void GenerateSerializer(std::ostream& os, bool decl);
-  void GenerateDeserializer(std::ostream& os, bool decl);
-  void GenerateROSSerialization(std::ostream& os, bool decl);
-  void GenerateDirectProtobufToROS(std::ostream& os);
-  void GenerateDirectProtobufField(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& indent);
-  void GenerateDirectProtobufSingularField(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& indent);
-  void GenerateDirectProtobufReadValue(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& buffer, const std::string& value,
-      const std::string& indent);
-  void GenerateDirectROSWriteValue(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& value, const std::string& indent);
-  void GenerateDirectROSToProtobuf(std::ostream& os);
-  void GenerateDirectROSFieldToProtobuf(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& indent);
-  void GenerateDirectROSReadValue(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& reader, const std::string& value,
-      const std::string& indent);
-  void GenerateDirectProtoWriteValue(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& value, const std::string& field_number,
-      const std::string& indent, bool raw = false);
-  std::string DirectProtobufValueType(
-      const google::protobuf::FieldDescriptor* field) const;
-  void GenerateROSFieldSize(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& value_expression, const std::string& indent);
-  // With 'to_cursor', writes a scalar or string with the direct ROS writers,
-  // at '_phaser_out' in space ending at '_phaser_end'.
-  void GenerateROSFieldWrite(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& value_expression, const std::string& indent,
-      bool to_cursor = false);
-  void GenerateROSFieldRead(
-      std::ostream& os, const google::protobuf::FieldDescriptor* field,
-      const std::string& target_expression, const std::string& indent,
-      bool append = false, const std::string& index_expression = "",
-      int union_index = -1);
-  std::string ROSFieldValueExpression(
-      const std::shared_ptr<FieldInfo>& field,
-      const std::shared_ptr<UnionInfo>& union_field = nullptr,
-      int union_index = -1) const;
-  // Generated message type whose PhaserROSFixedSize() gives the ROS size of
-  // one value of this field, if the field holds one.
-  std::optional<std::string> ROSFixedSizeMessageType(
-      const google::protobuf::FieldDescriptor* field);
-  // C++ constant expression for the ROS size of one value of the field, or
-  // nullopt if the size depends on the contents.
-  std::optional<std::string> ROSFixedElementSize(
-      const google::protobuf::FieldDescriptor* field);
-  void GenerateROSFixedSize(std::ostream& os);
-  // ROS serialization of a message in a mutable buffer, read straight from
-  // the payload by static functions, for messages whose fields can all be.
-  bool CanSerializeROSDirectly();
-  void GenerateROSDirectSerialization(std::ostream& os, bool decl);
-  std::string ROSDirectValueExpression(const FieldInfo& field);
-  void GenerateROSDirectFieldSize(std::ostream& os, const FieldInfo& field);
-  void GenerateROSDirectFieldWrite(std::ostream& os, const FieldInfo& field);
-  // The fast path of ROSSerializedSize() and SerializeToROS() for a repeated
-  // message field of a message in a mutable buffer.
-  bool HasROSDirectVector(const google::protobuf::FieldDescriptor* field);
-  // A static ROS parser that writes straight into the payload, for messages
-  // whose fields are all scalars, enums or strings.
-  bool CanDeserializeROSDirectly();
-  void GenerateROSDirectDeserialization(std::ostream& os, bool decl);
-  // The PhaserWriter of a message whose fields are all singular scalars.
-  void GeneratePhaserWriter(std::ostream& os);
-
-  void GenerateProtobufSerialization(std::ostream& os);
   void GenerateStreamer(std::ostream& os);
   bool IsAny(const google::protobuf::Descriptor* desc);
   bool IsAny(const google::protobuf::FieldDescriptor* field);
   void GenerateCopy(std::ostream& os, bool decl);
   void GenerateDebugString(std::ostream& os);
   void GeneratePhaserBank(std::ostream& os);
-  void GenerateArrow(std::ostream& os, bool decl);
-  void GenerateArrowSchemaField(std::ostream& os,
-                                const google::protobuf::FieldDescriptor* field,
-                                const std::string& name, bool nullable);
-  void GenerateArrowWriteField(std::ostream& os, const FieldInfo& field,
-                               int index);
-  void GenerateArrowReadField(std::ostream& os, const FieldInfo& field,
-                              int index);
-  void GenerateArrowCollectField(std::ostream& os, const FieldInfo& field);
-  bool ArrowFieldNullable(const google::protobuf::FieldDescriptor* field) const;
-  const char* ArrowScalarAdd(const google::protobuf::FieldDescriptor* field) const;
-  const char* ArrowScalarWrite(
-      const google::protobuf::FieldDescriptor* field) const;
-  const char* ArrowScalarRead(const google::protobuf::FieldDescriptor* field) const;
-  std::string ArrowQuoted(std::string_view text) const;
   void GenerateMessageInfo(std::ostream& os, bool decl);
   void GenerateFieldInfo(int index, std::shared_ptr<FieldInfo> field,
                          std::shared_ptr<UnionInfo> union_field,

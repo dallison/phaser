@@ -9,16 +9,20 @@
 // for the same messages.
 
 #include <string>
+#include <string_view>
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
-#include "phaser/runtime/arrow.h"
+#include "phaser/plugins/arrow/arrow.h"
 
 struct ArrowSchema;
 struct ArrowArray;
 
 namespace phaser {
 namespace parquet {
+
+// Format name accepted by the Parquet conversion plugin.
+inline constexpr std::string_view kFormat = "parquet";
 
 absl::Status WriteFile(const struct ArrowSchema* schema,
                        const struct ArrowArray* array, std::string* out);

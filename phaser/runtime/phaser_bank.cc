@@ -5,7 +5,9 @@
 #include "phaser/runtime/phaser_bank.h"
 
 #include <memory>
+#include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_format.h"
 
 namespace phaser {
@@ -181,341 +183,183 @@ absl::StatusOr<bool> PhaserBankHasField(const std::string& message_type,
 
 namespace {
 
-absl::Status MissingBankFunction(std::string_view full_name,
-                                 std::string_view operation) {
-  return absl::FailedPreconditionError(absl::StrFormat(
-      "Phaser message '%s' does not support %s", full_name, operation));
+struct ConversionEdgeKey {
+  std::string from;
+  std::string to;
+
+  template <typename H>
+  friend H AbslHashValue(H hash, const ConversionEdgeKey& key) {
+    return H::combine(std::move(hash), key.from, key.to);
+  }
+
+  bool operator==(const ConversionEdgeKey& other) const {
+    return from == other.from && to == other.to;
+  }
+};
+
+absl::flat_hash_map<ConversionEdgeKey, BankConvertFn>& ConversionEdges() {
+  // Function-local so a plugin static initializer can register before the
+  // dynamic initialization of this translation unit.
+  static auto* edges =
+      new absl::flat_hash_map<ConversionEdgeKey, BankConvertFn>();
+  return *edges;
 }
 
-}  // namespace
-
-absl::Status PhaserBankProtobufToROS(std::string_view full_name,
-                                     std::string_view bytes,
-                                     ROSBuffer& output) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
+absl::Status InstallEdge(const char* from, const char* to, BankConvertFn convert) {
+  const bool inserted =
+      ConversionEdges()
+          .emplace(ConversionEdgeKey{from, to}, convert)
+          .second;
+  if (!inserted) {
+    return absl::AlreadyExistsError(absl::StrFormat(
+        "Phaser bank conversion from %s to %s is already registered", from, to));
   }
-  if ((*bank_info)->protobuf_to_ros == nullptr) {
-    return MissingBankFunction(full_name, "protobuf to ROS conversion");
-  }
-  return (*bank_info)->protobuf_to_ros(bytes, output);
-}
-
-absl::Status PhaserBankPhaserToROS(std::string_view full_name,
-                                   absl::Span<const char> bytes,
-                                   ROSBuffer& output) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->phaser_to_ros == nullptr) {
-    return MissingBankFunction(full_name, "Phaser to ROS conversion");
-  }
-  return (*bank_info)->phaser_to_ros(bytes, output);
-}
-
-absl::StatusOr<std::string_view> PhaserBankRosDataType(
-    std::string_view full_name) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->ros_data_type == nullptr) {
-    return MissingBankFunction(full_name, "ROS datatype");
-  }
-  return (*bank_info)->ros_data_type();
-}
-
-absl::StatusOr<std::string> PhaserBankRosMd5(std::string_view full_name) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->ros_md5 == nullptr) {
-    return MissingBankFunction(full_name, "ROS MD5");
-  }
-  return (*bank_info)->ros_md5();
-}
-
-absl::StatusOr<std::string_view> PhaserBankRosDefinition(
-    std::string_view full_name) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->ros_definition == nullptr) {
-    return MissingBankFunction(full_name, "ROS definition");
-  }
-  return (*bank_info)->ros_definition();
-}
-
-absl::Status PhaserBankRosToProtobuf(std::string_view full_name,
-                                     absl::Span<const char> bytes,
-                                     ProtoBuffer& output) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->ros_to_protobuf == nullptr) {
-    return MissingBankFunction(full_name, "ROS to protobuf conversion");
-  }
-  return (*bank_info)->ros_to_protobuf(bytes, output);
-}
-
-absl::Status PhaserBankPhaserToProtobuf(std::string_view full_name,
-                                        absl::Span<const char> bytes,
-                                        ProtoBuffer& output) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->phaser_to_protobuf == nullptr) {
-    return MissingBankFunction(full_name, "Phaser to protobuf conversion");
-  }
-  return (*bank_info)->phaser_to_protobuf(bytes, output);
-}
-
-absl::StatusOr<std::string_view> PhaserBankProtobufFullName(
-    std::string_view full_name) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->protobuf_full_name == nullptr) {
-    return MissingBankFunction(full_name, "protobuf full name");
-  }
-  return (*bank_info)->protobuf_full_name();
-}
-
-absl::StatusOr<std::string_view> PhaserBankProtobufName(
-    std::string_view full_name) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->protobuf_name == nullptr) {
-    return MissingBankFunction(full_name, "protobuf name");
-  }
-  return (*bank_info)->protobuf_name();
-}
-
-absl::Status PhaserBankAppendArrowSchema(
-    std::string_view full_name, ::phaser::arrow::SchemaBuilder* builder,
-    std::string_view name, bool nullable, const ::phaser::arrow::TypeSet* types) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->append_arrow_schema == nullptr) {
-    return MissingBankFunction(full_name, "Arrow schema");
-  }
-  return (*bank_info)->append_arrow_schema(builder, name, nullable, types);
-}
-
-absl::Status PhaserBankCollectArrowTypesAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, ::phaser::arrow::TypeSet* types) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->collect_arrow_types_at_offset == nullptr) {
-    return MissingBankFunction(full_name, "Arrow type collection");
-  }
-  return (*bank_info)->collect_arrow_types_at_offset(runtime, offset, types);
-}
-
-absl::Status PhaserBankWriteArrowAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, ::phaser::arrow::FieldWriter* writer,
-    const ::phaser::arrow::TypeSet* types) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->write_arrow_at_offset == nullptr) {
-    return MissingBankFunction(full_name, "Arrow writing");
-  }
-  return (*bank_info)->write_arrow_at_offset(runtime, offset, writer, types);
-}
-
-absl::Status PhaserBankReadArrowAtOffset(
-    std::string_view full_name, ::phaser::RuntimeHandle runtime,
-    ::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader* reader) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->read_arrow_at_offset == nullptr) {
-    return MissingBankFunction(full_name, "Arrow reading");
-  }
-  return (*bank_info)->read_arrow_at_offset(runtime, offset, reader);
-}
-
-absl::Status PhaserBankProtobufToAvro(std::string_view full_name,
-                                      std::string_view bytes, std::string* out) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->protobuf_to_avro == nullptr) {
-    return MissingBankFunction(full_name, "protobuf to Avro conversion");
-  }
-  return (*bank_info)->protobuf_to_avro(bytes, out);
-}
-
-absl::Status PhaserBankPhaserToAvro(std::string_view full_name,
-                                    absl::Span<const char> bytes,
-                                    std::string* out) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->phaser_to_avro == nullptr) {
-    return MissingBankFunction(full_name, "Phaser to Avro conversion");
-  }
-  return (*bank_info)->phaser_to_avro(bytes, out);
-}
-
-absl::Status PhaserBankProtobufToParquet(std::string_view full_name,
-                                         std::string_view bytes,
-                                         std::string* out) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->protobuf_to_parquet == nullptr) {
-    return MissingBankFunction(full_name, "protobuf to Parquet conversion");
-  }
-  return (*bank_info)->protobuf_to_parquet(bytes, out);
-}
-
-absl::Status PhaserBankPhaserToParquet(std::string_view full_name,
-                                       absl::Span<const char> bytes,
-                                       std::string* out) {
-  absl::StatusOr<BankInfo*> bank_info = GetPhaserBankInfo(full_name);
-  if (!bank_info.ok()) {
-    return bank_info.status();
-  }
-  if ((*bank_info)->phaser_to_parquet == nullptr) {
-    return MissingBankFunction(full_name, "Phaser to Parquet conversion");
-  }
-  return (*bank_info)->phaser_to_parquet(bytes, out);
-}
-
-namespace {
-
-std::string_view InputBytes(absl::Span<const char> bytes) {
-  return std::string_view(bytes.data(), bytes.size());
-}
-
-const char* InputName(BankInputType input) {
-  switch (input) {
-    case BankInputType::kPhaser:
-      return "Phaser";
-    case BankInputType::kProtobuf:
-      return "protobuf";
-    case BankInputType::kRos:
-      return "ROS";
-  }
-  return "an unknown input";
-}
-
-const char* OutputName(BankOutputType output) {
-  switch (output) {
-    case BankOutputType::kProtobuf:
-      return "protobuf";
-    case BankOutputType::kRos:
-      return "ROS";
-    case BankOutputType::kAvro:
-      return "Avro";
-    case BankOutputType::kParquet:
-      return "Parquet";
-  }
-  return "an unknown output";
-}
-
-absl::Status UnsupportedConversion(BankInputType input, BankOutputType output) {
-  return absl::InvalidArgumentError(absl::StrFormat(
-      "Phaser bank cannot convert %s to %s", InputName(input),
-      OutputName(output)));
-}
-
-absl::Status FinishProto(const ProtoBuffer& buffer, std::string* out) {
-  *out = buffer.AsString();
   return absl::OkStatus();
 }
 
-absl::Status FinishRos(const ROSBuffer& buffer, std::string* out) {
-  *out = buffer.AsString();
+absl::Status RequireFunction(BankConvertFn function, const char* which,
+                             const char* plugin) {
+  if (function == nullptr) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Conversion plugin %s is missing its %s function", plugin, which));
+  }
+  return absl::OkStatus();
+}
+
+bool DeclaredFormat(absl::Span<const char* const> formats, const char* name) {
+  for (const char* format : formats) {
+    if (format != nullptr && std::string_view(format) == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+absl::Status RejectFunction(BankConvertFn function, const char* which,
+                            const char* plugin) {
+  if (function != nullptr) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Conversion plugin %s sets its %s function for a direction that does "
+        "not use it",
+        plugin, which));
+  }
   return absl::OkStatus();
 }
 
 }  // namespace
 
-absl::Status PhaserBankConvert(std::string_view full_name, BankInputType input,
-                               absl::Span<const char> bytes,
-                               BankOutputType output, std::string* out) {
+absl::Status PhaserBankRegisterConversionPlugin(
+    const BankConversionPlugin& plugin) {
+  if (plugin.name == nullptr || plugin.name[0] == '\0') {
+    return absl::InvalidArgumentError("Conversion plugin name is empty");
+  }
+  for (size_t i = 0; i < plugin.formats.size(); ++i) {
+    const char* format = plugin.formats[i];
+    if (format == nullptr || format[0] == '\0') {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Conversion plugin %s has an empty format name", plugin.name));
+    }
+    for (size_t earlier = 0; earlier < i; ++earlier) {
+      if (std::string_view(plugin.formats[earlier]) == format) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "Conversion plugin %s lists format %s more than once", plugin.name,
+            format));
+      }
+    }
+  }
+  for (const BankConversion& conversion : plugin.conversions) {
+    if (conversion.from == nullptr || conversion.from[0] == '\0' ||
+        conversion.to == nullptr || conversion.to[0] == '\0') {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Conversion plugin %s has an empty format name", plugin.name));
+    }
+    if (std::string_view(conversion.from) == conversion.to) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Conversion plugin %s converts %s to itself", plugin.name,
+          conversion.from));
+    }
+    if (!DeclaredFormat(plugin.formats, conversion.from) ||
+        !DeclaredFormat(plugin.formats, conversion.to)) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Conversion plugin %s does not accept a conversion from %s to %s",
+          plugin.name, conversion.from, conversion.to));
+    }
+    switch (conversion.direction) {
+      case BankConversionDirection::kForward: {
+        absl::Status status =
+            RequireFunction(conversion.forward, "forward", plugin.name);
+        if (!status.ok()) return status;
+        status = RejectFunction(conversion.reverse, "reverse", plugin.name);
+        if (!status.ok()) return status;
+        status = InstallEdge(conversion.from, conversion.to, conversion.forward);
+        if (!status.ok()) return status;
+        break;
+      }
+      case BankConversionDirection::kReverse: {
+        absl::Status status =
+            RequireFunction(conversion.reverse, "reverse", plugin.name);
+        if (!status.ok()) return status;
+        status = RejectFunction(conversion.forward, "forward", plugin.name);
+        if (!status.ok()) return status;
+        status = InstallEdge(conversion.to, conversion.from, conversion.reverse);
+        if (!status.ok()) return status;
+        break;
+      }
+      case BankConversionDirection::kBoth: {
+        absl::Status status =
+            RequireFunction(conversion.forward, "forward", plugin.name);
+        if (!status.ok()) return status;
+        status = RequireFunction(conversion.reverse, "reverse", plugin.name);
+        if (!status.ok()) return status;
+        status = InstallEdge(conversion.from, conversion.to, conversion.forward);
+        if (!status.ok()) return status;
+        status = InstallEdge(conversion.to, conversion.from, conversion.reverse);
+        if (!status.ok()) return status;
+        break;
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status PhaserBankConvert(std::string_view full_name, std::string_view from,
+                               absl::Span<const char> bytes, std::string_view to,
+                               std::string* out, const void* options) {
   if (out == nullptr) {
     return absl::InvalidArgumentError("conversion output string is null");
   }
   out->clear();
-  switch (input) {
-    case BankInputType::kProtobuf:
-      switch (output) {
-        case BankOutputType::kRos: {
-          ROSBuffer buffer;
-          absl::Status status =
-              PhaserBankProtobufToROS(full_name, InputBytes(bytes), buffer);
-          if (!status.ok()) return status;
-          return FinishRos(buffer, out);
-        }
-        case BankOutputType::kAvro:
-          return PhaserBankProtobufToAvro(full_name, InputBytes(bytes), out);
-        case BankOutputType::kParquet:
-          return PhaserBankProtobufToParquet(full_name, InputBytes(bytes), out);
-        case BankOutputType::kProtobuf:
-          return UnsupportedConversion(input, output);
-      }
-      break;
-    case BankInputType::kPhaser:
-      switch (output) {
-        case BankOutputType::kProtobuf: {
-          ProtoBuffer buffer;
-          absl::Status status =
-              PhaserBankPhaserToProtobuf(full_name, bytes, buffer);
-          if (!status.ok()) return status;
-          return FinishProto(buffer, out);
-        }
-        case BankOutputType::kRos: {
-          ROSBuffer buffer;
-          absl::Status status = PhaserBankPhaserToROS(full_name, bytes, buffer);
-          if (!status.ok()) return status;
-          return FinishRos(buffer, out);
-        }
-        case BankOutputType::kAvro:
-          return PhaserBankPhaserToAvro(full_name, bytes, out);
-        case BankOutputType::kParquet:
-          return PhaserBankPhaserToParquet(full_name, bytes, out);
-      }
-      break;
-    case BankInputType::kRos:
-      switch (output) {
-        case BankOutputType::kProtobuf: {
-          ProtoBuffer buffer;
-          absl::Status status =
-              PhaserBankRosToProtobuf(full_name, bytes, buffer);
-          if (!status.ok()) return status;
-          return FinishProto(buffer, out);
-        }
-        case BankOutputType::kRos:
-        case BankOutputType::kAvro:
-        case BankOutputType::kParquet:
-          return UnsupportedConversion(input, output);
-      }
-      break;
+  const auto it = ConversionEdges().find(
+      ConversionEdgeKey{std::string(from), std::string(to)});
+  if (it == ConversionEdges().end()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "Phaser bank cannot convert %s to %s", from, to));
   }
-  return absl::InvalidArgumentError("unknown Phaser bank conversion");
+  return it->second(full_name, bytes, out, options);
+}
+
+std::vector<std::string> PhaserBankRegisteredFormats() {
+  absl::flat_hash_set<std::string> formats;
+  for (const auto& [edge, unused] : ConversionEdges()) {
+    (void)unused;
+    formats.insert(edge.from);
+    formats.insert(edge.to);
+  }
+  return std::vector<std::string>(formats.begin(), formats.end());
+}
+
+bool PhaserBankHasConversion(std::string_view from, std::string_view to) {
+  return ConversionEdges().contains(
+      ConversionEdgeKey{std::string(from), std::string(to)});
+}
+
+std::vector<std::pair<std::string, std::string>> PhaserBankConversionEdges() {
+  std::vector<std::pair<std::string, std::string>> edges;
+  edges.reserve(ConversionEdges().size());
+  for (const auto& [edge, unused] : ConversionEdges()) {
+    (void)unused;
+    edges.emplace_back(edge.from, edge.to);
+  }
+  return edges;
 }
 }  // namespace phaser

@@ -2,7 +2,7 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/runtime/avro.h"
+#include "phaser/plugins/avro/avro.h"
 
 #include <cstdint>
 #include <cstring>
@@ -14,7 +14,7 @@
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "phaser/runtime/arrow_abi.h"
+#include "phaser/plugins/arrow/arrow_abi.h"
 
 namespace phaser {
 namespace avro {
@@ -637,6 +637,71 @@ absl::Status WriteValue(const Schema& schema, int index,
 
 }  // namespace
 
+absl::Status WriteRecordBytes(const struct ArrowSchema* schema,
+                              const struct ArrowArray* array, int64_t row,
+                              std::string* out) {
+  if (out == nullptr) {
+    return absl::InvalidArgumentError("Avro output string is null");
+  }
+  if (schema == nullptr || array == nullptr) {
+    return absl::InvalidArgumentError("Arrow batch is missing");
+  }
+  Schema built;
+  absl::StatusOr<int> root = built.Build(schema, "");
+  if (!root.ok()) {
+    return root.status();
+  }
+  if (built.types[static_cast<size_t>(*root)].kind != Kind::kRecord) {
+    return absl::InvalidArgumentError("Avro record root must be a record");
+  }
+  absl::StatusOr<::phaser::arrow::BatchReader> rows =
+      ::phaser::arrow::BatchReader::Open(schema, array);
+  if (!rows.ok()) {
+    return rows.status();
+  }
+  if (row < 0 || row >= rows->length()) {
+    return absl::OutOfRangeError(
+        absl::StrFormat("Avro row index %d out of range [0, %d)", row,
+                        rows->length()));
+  }
+  out->clear();
+  return WriteValue(built, *root, rows->Row(row), out);
+}
+
+absl::Status WriteAllRecordBytes(const struct ArrowSchema* schema,
+                                 const struct ArrowArray* array,
+                                 std::string* out) {
+  if (out == nullptr) {
+    return absl::InvalidArgumentError("Avro output string is null");
+  }
+  if (schema == nullptr || array == nullptr) {
+    return absl::InvalidArgumentError("Arrow batch is missing");
+  }
+  Schema built;
+  absl::StatusOr<int> root = built.Build(schema, "");
+  if (!root.ok()) {
+    return root.status();
+  }
+  if (built.types[static_cast<size_t>(*root)].kind != Kind::kRecord) {
+    return absl::InvalidArgumentError("Avro record root must be a record");
+  }
+  absl::StatusOr<::phaser::arrow::BatchReader> rows =
+      ::phaser::arrow::BatchReader::Open(schema, array);
+  if (!rows.ok()) {
+    return rows.status();
+  }
+  out->clear();
+  for (int64_t row = 0; row < rows->length(); ++row) {
+    if (absl::Status status =
+            WriteValue(built, *root, rows->Row(row), out);
+        !status.ok()) {
+      out->clear();
+      return status;
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::Status WriteFile(const struct ArrowSchema* schema,
                        const struct ArrowArray* array, std::string* out) {
   if (out == nullptr) {
@@ -661,12 +726,9 @@ absl::Status WriteFile(const struct ArrowSchema* schema,
     return rows.status();
   }
   std::string body;
-  for (int64_t row = 0; row < rows->length(); ++row) {
-    if (absl::Status status =
-            WriteValue(built, *root, rows->Row(row), &body);
-        !status.ok()) {
-      return status;
-    }
+  if (absl::Status status = WriteAllRecordBytes(schema, array, &body);
+      !status.ok()) {
+    return status;
   }
   out->clear();
   out->append("Obj\x01", 4);

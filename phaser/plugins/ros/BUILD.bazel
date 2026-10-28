@@ -1,0 +1,57 @@
+load("@pybind11_bazel//:build_defs.bzl", "pybind_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//phaser:copts.bzl", "PHASER_COPTS", "PHASER_PROTOC_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ros_codegen_helpers",
+    srcs = ["gen/ros_codegen_helpers.cc"],
+    hdrs = ["gen/ros_codegen_helpers.h"],
+    copts = PHASER_PROTOC_COPTS,
+    include_prefix = "phaser/plugins/ros",
+    strip_include_prefix = "gen",
+    deps = [
+        "//phaser:options_cc_proto",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
+
+cc_library(
+    name = "codegen",
+    srcs = [
+        "gen/codegen.cc",
+        "gen/ros_wire_codegen.cc",
+    ],
+    hdrs = ["gen/ros_wire_codegen.h"],
+    alwayslink = True,
+    copts = PHASER_PROTOC_COPTS,
+    deps = [
+        ":ros_codegen_helpers",
+        "//phaser:options_cc_proto",
+        "//phaser/compiler:message_generator",
+    ],
+)
+
+pybind_library(
+    name = "pybind",
+    srcs = ["runtime/pybind.cc"],
+    alwayslink = True,
+    copts = PHASER_COPTS,
+    deps = [
+        "//phaser/runtime:phaser_runtime",
+        "//phaser/runtime:plugin_pybind",
+    ],
+)
+
+cc_library(
+    name = "conversion",
+    srcs = ["runtime/conversion.cc"],
+    alwayslink = True,
+    copts = PHASER_COPTS,
+    deps = ["//phaser/plugins/common:conversion_plugin"],
+)

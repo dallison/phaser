@@ -2,35 +2,37 @@
 // All Rights Reserved
 // See LICENSE file for licensing information.
 
-#include "phaser/compiler/message_gen.h"
+#include "phaser/compiler/message_codegen_host.h"
 
 #include "absl/strings/escaping.h"
 #include "google/protobuf/descriptor.pb.h"
 
 namespace phaser {
+namespace arrow_codegen {
+
 namespace {
 
 const char* ArrowBool(bool value) { return value ? "true" : "false"; }
 
 }  // namespace
 
-std::string MessageGenerator::ArrowQuoted(std::string_view text) const {
+std::string ArrowQuoted(MessageCodegenHost& host, std::string_view text) {
   return "\"" + absl::CEscape(text) + "\"";
 }
 
-bool MessageGenerator::ArrowFieldNullable(
-    const google::protobuf::FieldDescriptor* field) const {
+bool ArrowFieldNullable(MessageCodegenHost& host,
+    const google::protobuf::FieldDescriptor* field) {
   if (field->is_repeated() || field->is_map()) {
     return false;
   }
-  if (message_->options().map_entry() && field->name() == "key") {
+  if (host.message()->options().map_entry() && field->name() == "key") {
     return false;
   }
   return true;
 }
 
-const char* MessageGenerator::ArrowScalarAdd(
-    const google::protobuf::FieldDescriptor* field) const {
+const char* ArrowScalarAdd(MessageCodegenHost& host,
+    const google::protobuf::FieldDescriptor* field) {
   switch (field->type()) {
     case google::protobuf::FieldDescriptor::TYPE_INT32:
     case google::protobuf::FieldDescriptor::TYPE_SINT32:
@@ -62,8 +64,8 @@ const char* MessageGenerator::ArrowScalarAdd(
   }
 }
 
-const char* MessageGenerator::ArrowScalarWrite(
-    const google::protobuf::FieldDescriptor* field) const {
+const char* ArrowScalarWrite(MessageCodegenHost& host,
+    const google::protobuf::FieldDescriptor* field) {
   switch (field->type()) {
     case google::protobuf::FieldDescriptor::TYPE_INT32:
     case google::protobuf::FieldDescriptor::TYPE_SINT32:
@@ -95,24 +97,29 @@ const char* MessageGenerator::ArrowScalarWrite(
   }
 }
 
-const char* MessageGenerator::ArrowScalarRead(
-    const google::protobuf::FieldDescriptor* field) const {
-  return ArrowScalarWrite(field);
+const char* ArrowScalarRead(MessageCodegenHost& host,
+    const google::protobuf::FieldDescriptor* field) {
+  return ArrowScalarWrite(host, field);
 }
 
-void MessageGenerator::GenerateArrowSchemaField(
+void GenerateArrowSchemaField(MessageCodegenHost& host,
     std::ostream& os, const google::protobuf::FieldDescriptor* field,
     const std::string& name, bool nullable) {
   if (field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
-      IsAny(field)) {
+      host.IsAny(field)) {
     os << "  builder.BeginStruct(" << name << ", " << ArrowBool(nullable)
        << ");\n";
     os << "  builder.AddString(\"type_url\", true);\n";
     os << "  builder.BeginUnion(\"value\", false);\n";
     os << "  for (const std::string& _phaser_type : types.types()) {\n";
     os << "    if (absl::Status _phaser_status = "
-          "::phaser::PhaserBankAppendArrowSchema(\n";
-    os << "            _phaser_type, &builder, _phaser_type, false, &types);\n";
+          "::phaser::arrow::CallArrowPlugin(\n";
+    os << "            ::phaser::arrow::kArrowPluginAppendSchema, _phaser_type,\n";
+    os << "            ::phaser::arrow::ArrowMessageArgs{\n";
+    os << "                .schema_types = &types,\n";
+    os << "                .schema_builder = &builder,\n";
+    os << "                .field_name = _phaser_type,\n";
+    os << "                .nullable = false});\n";
     os << "        !_phaser_status.ok()) return _phaser_status;\n";
     os << "  }\n";
     os << "  builder.EndUnion();\n";
@@ -121,16 +128,16 @@ void MessageGenerator::GenerateArrowSchemaField(
   }
   if (field->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
     os << "  if (absl::Status _phaser_status = "
-       << MessageName(field->message_type(), true)
+       << host.MessageName(field->message_type(), true)
        << "::AppendArrowSchema(builder, " << name << ", " << ArrowBool(nullable)
        << ", types); !_phaser_status.ok()) return _phaser_status;\n";
     return;
   }
-  os << "  builder." << ArrowScalarAdd(field) << "(" << name << ", "
+  os << "  builder." << ArrowScalarAdd(host, field) << "(" << name << ", "
      << ArrowBool(nullable) << ");\n";
 }
 
-void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
+void GenerateArrowWriteField(MessageCodegenHost& host, std::ostream& os,
                                                const FieldInfo& field,
                                                int index) {
   if (field.IsUnion()) {
@@ -168,8 +175,8 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
             "_phaser_oneof.Child("
          << i << ");\n";
       if (arm->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-        const std::string type = MessageName(arm->message_type(), true);
-        if (IsAny(arm)) {
+        const std::string type = host.MessageName(arm->message_type(), true);
+        if (host.IsAny(arm)) {
           os << "        if (absl::Status _phaser_status = "
                 "::phaser::arrow::WriteAny("
              << union_field.member_name << ".GetReference<" << i << ", " << type
@@ -183,14 +190,14 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
         }
       } else if (arm->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
         os << "        if (absl::Status _phaser_status = _phaser_arm."
-           << ArrowScalarWrite(arm) << "(static_cast<int32_t>("
+           << ArrowScalarWrite(host, arm) << "(static_cast<int32_t>("
            << union_field.member_name << ".GetValue<" << i << ", "
-           << EnumName(arm->enum_type())
+           << host.EnumName(arm->enum_type())
            << ">())); !_phaser_status.ok()) return _phaser_status;\n";
       } else {
         os << "        if (absl::Status _phaser_status = _phaser_arm."
-           << ArrowScalarWrite(arm) << "(" << union_field.member_name
-           << ".GetValue<" << i << ", " << FieldCType(arm)
+           << ArrowScalarWrite(host, arm) << "(" << union_field.member_name
+           << ".GetValue<" << i << ", " << host.FieldCType(arm)
            << ">()); !_phaser_status.ok()) return _phaser_status;\n";
       }
       os << "      }\n";
@@ -198,7 +205,7 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
     }
     os << "    default:\n";
     os << "      return absl::InvalidArgumentError("
-       << ArrowQuoted(std::string(union_field.oneof->name()) +
+       << ArrowQuoted(host, std::string(union_field.oneof->name()) +
                       " has an unknown discriminator")
        << ");\n";
     os << "    }\n";
@@ -214,12 +221,12 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
   os << "    ::phaser::arrow::FieldWriter _phaser_child = writer.Child("
      << index << ");\n";
   if (desc->is_map() || desc->is_repeated()) {
-    const bool fixed = UsesArrayFacade(desc);
+    const bool fixed = host.UsesArrayFacade(desc);
     const bool ros_time =
-        IsRosFrontend() && IsRosIntrinsic(desc) && !IsRosHeader(desc->message_type());
+        host.IsRosFrontend() && host.IsRosIntrinsic(desc) && !host.IsRosHeader(desc->message_type());
     os << "    ::phaser::arrow::FieldWriter _phaser_values = "
           "_phaser_child.Values();\n";
-    if (fixed || (IsRosFrontend() && IsRosIntrinsic(desc))) {
+    if (fixed || (host.IsRosFrontend() && host.IsRosIntrinsic(desc))) {
       os << "    for (size_t _phaser_i = 0; _phaser_i < " << member
          << ".size(); ++_phaser_i) {\n";
     } else {
@@ -242,7 +249,7 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
             "_phaser_values.NullStruct(); !_phaser_status.ok()) return "
             "_phaser_status;\n";
       os << "      } else if (absl::Status _phaser_status = ";
-      if (IsAny(desc)) {
+      if (host.IsAny(desc)) {
         os << "::phaser::arrow::WriteAny(_phaser_item, _phaser_values, types); "
               "!_phaser_status.ok()) return _phaser_status;\n";
       } else {
@@ -251,17 +258,17 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
       }
     } else if (desc->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
       os << "      if (absl::Status _phaser_status = _phaser_values."
-         << ArrowScalarWrite(desc) << "(static_cast<int32_t>(" << member
+         << ArrowScalarWrite(host, desc) << "(static_cast<int32_t>(" << member
          << "[_phaser_i])); !_phaser_status.ok()) return _phaser_status;\n";
     } else {
       os << "      if (absl::Status _phaser_status = _phaser_values."
-         << ArrowScalarWrite(desc) << "(" << member
+         << ArrowScalarWrite(host, desc) << "(" << member
          << "[_phaser_i]); !_phaser_status.ok()) return _phaser_status;\n";
     }
     os << "    }\n";
     if (fixed) {
       os << "    if (absl::Status _phaser_status = _phaser_child.FinishFixed("
-         << GetArraySize(desc) << "); !_phaser_status.ok()) return "
+         << host.GetArraySize(desc) << "); !_phaser_status.ok()) return "
             "_phaser_status;\n";
     } else {
       os << "    if (absl::Status _phaser_status = "
@@ -273,13 +280,13 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
     return;
   }
 
-  if (IsRosFrontend() && IsRosIntrinsic(desc)) {
+  if (host.IsRosFrontend() && host.IsRosIntrinsic(desc)) {
     os << "    if (!" << member << ".IsPresent()) {\n";
     os << "      if (absl::Status _phaser_status = _phaser_child.NullStruct(); "
           "!_phaser_status.ok()) return _phaser_status;\n";
     os << "    } else {\n";
     os << "      const auto _phaser_value = " << member << ".Get();\n";
-    if (IsRosHeader(desc->message_type())) {
+    if (host.IsRosHeader(desc->message_type())) {
       os << "      if (absl::Status _phaser_status = "
             "::phaser::arrow::WriteHeader(_phaser_child, _phaser_value.seq, "
             "static_cast<int64_t>(_phaser_value.stamp.sec), "
@@ -303,7 +310,7 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
     os << "      if (absl::Status _phaser_status = _phaser_child.NullStruct(); "
           "!_phaser_status.ok()) return _phaser_status;\n";
     os << "    } else if (absl::Status _phaser_status = ";
-    if (IsAny(desc)) {
+    if (host.IsAny(desc)) {
       os << "::phaser::arrow::WriteAny(" << member
          << ".Get(), _phaser_child, types); !_phaser_status.ok()) return "
             "_phaser_status;\n";
@@ -317,7 +324,7 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
 
   os << "    if (" << member << ".IsPresent()) {\n";
   os << "      if (absl::Status _phaser_status = _phaser_child."
-     << ArrowScalarWrite(desc) << "(";
+     << ArrowScalarWrite(host, desc) << "(";
   if (desc->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
     os << "static_cast<int32_t>(" << member << ".Get())";
   } else {
@@ -329,7 +336,7 @@ void MessageGenerator::GenerateArrowWriteField(std::ostream& os,
   os << "  }\n";
 }
 
-void MessageGenerator::GenerateArrowReadField(std::ostream& os,
+void GenerateArrowReadField(MessageCodegenHost& host, std::ostream& os,
                                               const FieldInfo& field,
                                               int index) {
   if (field.IsUnion()) {
@@ -347,7 +354,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
     }
     os << "    if (_phaser_count > 1) {\n";
     os << "      return absl::InvalidArgumentError("
-       << ArrowQuoted(std::string(union_field.oneof->name()) +
+       << ArrowQuoted(host, std::string(union_field.oneof->name()) +
                       " has more than one Arrow value")
        << ");\n";
     os << "    }\n";
@@ -362,8 +369,8 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
             "_phaser_oneof.Child("
          << i << ");\n";
       if (arm->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
-        const std::string type = MessageName(arm->message_type(), true);
-        if (IsAny(arm)) {
+        const std::string type = host.MessageName(arm->message_type(), true);
+        if (host.IsAny(arm)) {
           os << "        if (absl::Status _phaser_status = "
                 "::phaser::arrow::ReadAny("
              << union_field.member_name << ".Mutable<" << i << ", " << type
@@ -380,7 +387,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
               "_phaser_arm.Int32();\n";
         os << "        if (!_phaser_value.ok()) return _phaser_value.status();\n";
         os << "        " << union_field.member_name << ".Set<" << i
-           << ">(static_cast<" << EnumName(arm->enum_type())
+           << ">(static_cast<" << host.EnumName(arm->enum_type())
            << ">(*_phaser_value));\n";
       } else if (arm->type() == google::protobuf::FieldDescriptor::TYPE_STRING ||
                  arm->type() == google::protobuf::FieldDescriptor::TYPE_BYTES) {
@@ -395,8 +402,8 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
         os << "        " << union_field.member_name << ".Set<" << i
            << ">(*_phaser_value);\n";
       } else {
-        os << "        absl::StatusOr<" << FieldCType(arm)
-           << "> _phaser_value = _phaser_arm." << ArrowScalarRead(arm)
+        os << "        absl::StatusOr<" << host.FieldCType(arm)
+           << "> _phaser_value = _phaser_arm." << ArrowScalarRead(host, arm)
            << "();\n";
         os << "        if (!_phaser_value.ok()) return _phaser_value.status();\n";
         os << "        " << union_field.member_name << ".Set<" << i
@@ -420,7 +427,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
         "!_phaser_status.ok()) return _phaser_status;\n";
 
   if (desc->is_map() || desc->is_repeated()) {
-    const bool fixed = UsesArrayFacade(desc);
+    const bool fixed = host.UsesArrayFacade(desc);
     if (!fixed) {
       os << "    " << member << ".Clear();\n";
     }
@@ -431,14 +438,14 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
     }
     os << "    } else {\n";
     if (fixed) {
-      os << "      if (_phaser_child.length() != " << GetArraySize(desc)
+      os << "      if (_phaser_child.length() != " << host.GetArraySize(desc)
          << ") {\n";
       os << "        return absl::InvalidArgumentError(\"Arrow fixed-size list "
             "has the wrong length\");\n";
       os << "      }\n";
       os << "      for (size_t _phaser_i = 0; _phaser_i < " << member
          << ".size(); ++_phaser_i) {\n";
-    } else if (IsRosFrontend() && IsRosIntrinsic(desc)) {
+    } else if (host.IsRosFrontend() && host.IsRosIntrinsic(desc)) {
       os << "      for (size_t _phaser_i = 0; _phaser_i < "
             "static_cast<size_t>(_phaser_child.length()); ++_phaser_i) {\n";
     } else {
@@ -450,8 +457,8 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
     os << "        if (absl::Status _phaser_status = _phaser_element.status(); "
           "!_phaser_status.ok()) return _phaser_status;\n";
     if (desc->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
-        IsRosFrontend() && IsRosIntrinsic(desc) &&
-        !IsRosHeader(desc->message_type())) {
+        host.IsRosFrontend() && host.IsRosIntrinsic(desc) &&
+        !host.IsRosHeader(desc->message_type())) {
       os << "        int64_t _phaser_sec = 0;\n";
       os << "        int32_t _phaser_nsec = 0;\n";
       os << "        if (absl::Status _phaser_status = "
@@ -462,7 +469,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
       } else {
         os << "        " << member << ".push_back(";
       }
-      if (IsRosDuration(desc->message_type())) {
+      if (host.IsRosDuration(desc->message_type())) {
         os << "::ros::Duration(static_cast<int32_t>(_phaser_sec), "
               "_phaser_nsec)";
       } else {
@@ -472,7 +479,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
       os << ");\n";
     } else if (desc->type() ==
                    google::protobuf::FieldDescriptor::TYPE_MESSAGE &&
-               IsAny(desc)) {
+               host.IsAny(desc)) {
       if (fixed) {
         os << "        auto _phaser_slot = " << member << "[_phaser_i];\n";
       } else {
@@ -501,10 +508,10 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
       os << "        if (!_phaser_value.ok()) return _phaser_value.status();\n";
       if (fixed) {
         os << "        " << member << ".Set(_phaser_i, static_cast<"
-           << EnumName(desc->enum_type()) << ">(*_phaser_value));\n";
+           << host.EnumName(desc->enum_type()) << ">(*_phaser_value));\n";
       } else {
         os << "        " << member << ".push_back(static_cast<"
-           << EnumName(desc->enum_type()) << ">(*_phaser_value));\n";
+           << host.EnumName(desc->enum_type()) << ">(*_phaser_value));\n";
       }
     } else if (desc->type() == google::protobuf::FieldDescriptor::TYPE_STRING ||
                desc->type() == google::protobuf::FieldDescriptor::TYPE_BYTES) {
@@ -522,8 +529,8 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
         os << "        " << member << ".push_back(*_phaser_value);\n";
       }
     } else {
-      os << "        absl::StatusOr<" << FieldCType(desc)
-         << "> _phaser_value = _phaser_element." << ArrowScalarRead(desc)
+      os << "        absl::StatusOr<" << host.FieldCType(desc)
+         << "> _phaser_value = _phaser_element." << ArrowScalarRead(host, desc)
          << "();\n";
       os << "        if (!_phaser_value.ok()) return _phaser_value.status();\n";
       if (fixed) {
@@ -538,11 +545,11 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
     return;
   }
 
-  if (IsRosFrontend() && IsRosIntrinsic(desc)) {
+  if (host.IsRosFrontend() && host.IsRosIntrinsic(desc)) {
     os << "    if (_phaser_child.IsNull()) {\n";
     os << "      " << member << ".Clear();\n";
     os << "    } else {\n";
-    if (IsRosHeader(desc->message_type())) {
+    if (host.IsRosHeader(desc->message_type())) {
       os << "      uint32_t _phaser_seq = 0;\n";
       os << "      if (!_phaser_child.Child(0).IsNull()) {\n";
       os << "        absl::StatusOr<uint32_t> _phaser_value = "
@@ -577,7 +584,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
       os << "      if (absl::Status _phaser_status = "
             "::phaser::arrow::ReadTimestamp(_phaser_child, &_phaser_sec, "
             "&_phaser_nsec); !_phaser_status.ok()) return _phaser_status;\n";
-      if (IsRosDuration(desc->message_type())) {
+      if (host.IsRosDuration(desc->message_type())) {
         os << "      " << member
            << ".Set(::ros::Duration(static_cast<int32_t>(_phaser_sec), "
               "_phaser_nsec));\n";
@@ -596,7 +603,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
     os << "    if (_phaser_child.IsNull()) {\n";
     os << "      " << member << ".Clear();\n";
     os << "    } else if (absl::Status _phaser_status = ";
-    if (IsAny(desc)) {
+    if (host.IsAny(desc)) {
       os << "::phaser::arrow::ReadAny(" << member
          << ".Mutable(), _phaser_child); !_phaser_status.ok()) return "
             "_phaser_status;\n";
@@ -614,7 +621,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
   if (desc->type() == google::protobuf::FieldDescriptor::TYPE_ENUM) {
     os << "      absl::StatusOr<int32_t> _phaser_value = _phaser_child.Int32();\n";
     os << "      if (!_phaser_value.ok()) return _phaser_value.status();\n";
-    os << "      " << member << ".Set(static_cast<" << EnumName(desc->enum_type())
+    os << "      " << member << ".Set(static_cast<" << host.EnumName(desc->enum_type())
        << ">(*_phaser_value));\n";
   } else if (desc->type() == google::protobuf::FieldDescriptor::TYPE_STRING ||
              desc->type() == google::protobuf::FieldDescriptor::TYPE_BYTES) {
@@ -627,8 +634,8 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
     os << "      if (!_phaser_value.ok()) return _phaser_value.status();\n";
     os << "      " << member << ".Set(*_phaser_value);\n";
   } else {
-    os << "      absl::StatusOr<" << FieldCType(desc)
-       << "> _phaser_value = _phaser_child." << ArrowScalarRead(desc)
+    os << "      absl::StatusOr<" << host.FieldCType(desc)
+       << "> _phaser_value = _phaser_child." << ArrowScalarRead(host, desc)
        << "();\n";
     os << "      if (!_phaser_value.ok()) return _phaser_value.status();\n";
     os << "      " << member << ".Set(*_phaser_value);\n";
@@ -637,7 +644,7 @@ void MessageGenerator::GenerateArrowReadField(std::ostream& os,
   os << "  }\n";
 }
 
-void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
+void GenerateArrowCollectField(MessageCodegenHost& host, std::ostream& os,
                                                  const FieldInfo& field) {
   if (field.IsUnion()) {
     const auto& union_field = static_cast<const UnionInfo&>(field);
@@ -658,9 +665,9 @@ void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
       if (arm->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
         continue;
       }
-      const std::string type = MessageName(arm->message_type(), true);
+      const std::string type = host.MessageName(arm->message_type(), true);
       os << "  case " << arm->number() << ":\n";
-      if (IsAny(arm)) {
+      if (host.IsAny(arm)) {
         os << "    if (absl::Status _phaser_status = ::phaser::arrow::CollectAny("
            << union_field.member_name << ".GetReference<" << i << ", " << type
            << ">(), types); !_phaser_status.ok()) return _phaser_status;\n";
@@ -680,17 +687,17 @@ void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
   if (desc->type() != google::protobuf::FieldDescriptor::TYPE_MESSAGE) {
     return;
   }
-  if (IsRosFrontend() && IsRosIntrinsic(desc)) {
+  if (host.IsRosFrontend() && host.IsRosIntrinsic(desc)) {
     return;
   }
   const std::string& member = field.member_name;
   if (desc->is_map() || desc->is_repeated()) {
-    if (UsesArrayFacade(desc)) {
-      os << "  for (size_t _phaser_i = 0; _phaser_i < " << GetArraySize(desc)
+    if (host.UsesArrayFacade(desc)) {
+      os << "  for (size_t _phaser_i = 0; _phaser_i < " << host.GetArraySize(desc)
          << "; ++_phaser_i) {\n";
       os << "    const auto _phaser_element = " << member << "[_phaser_i];\n";
       os << "    if (_phaser_element.runtime == nullptr) continue;\n";
-      if (IsAny(desc)) {
+      if (host.IsAny(desc)) {
         os << "    if (absl::Status _phaser_status = "
               "::phaser::arrow::CollectAny(_phaser_element, types); "
               "!_phaser_status.ok()) return _phaser_status;\n";
@@ -704,7 +711,7 @@ void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
     }
     os << "  for (int _phaser_i = 0; _phaser_i < static_cast<int>(" << member
        << ".size()); ++_phaser_i) {\n";
-    if (IsAny(desc)) {
+    if (host.IsAny(desc)) {
       os << "    if (absl::Status _phaser_status = ::phaser::arrow::CollectAny("
          << member
          << "[_phaser_i], types); !_phaser_status.ok()) return _phaser_status;\n";
@@ -717,7 +724,7 @@ void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
     return;
   }
   os << "  if (" << member << ".IsPresent()) {\n";
-  if (IsAny(desc)) {
+  if (host.IsAny(desc)) {
     os << "    if (absl::Status _phaser_status = ::phaser::arrow::CollectAny("
        << member << ".Get(), types); !_phaser_status.ok()) return "
           "_phaser_status;\n";
@@ -729,283 +736,5 @@ void MessageGenerator::GenerateArrowCollectField(std::ostream& os,
   os << "  }\n";
 }
 
-void MessageGenerator::GenerateArrow(std::ostream& os, bool decl) {
-  const std::string name = MessageName(message_);
-  if (decl) {
-    os << "  static absl::Status AppendArrowSchema("
-          "::phaser::arrow::SchemaBuilder& builder, std::string_view name, "
-          "bool nullable, const ::phaser::arrow::TypeSet& types);\n";
-    os << "  absl::Status CollectArrowTypes(::phaser::arrow::TypeSet* types) "
-          "const;\n";
-    os << "  absl::Status WriteArrow(::phaser::arrow::FieldWriter writer, "
-          "const ::phaser::arrow::TypeSet& types) const;\n";
-    os << "  absl::Status ReadArrow(::phaser::arrow::FieldReader row);\n";
-    os << "  absl::Status ToArrow(struct ArrowSchema* schema, struct ArrowArray* "
-          "array) const {\n";
-    os << "    const " << name << "* _phaser_self = this;\n";
-    os << "    return ::phaser::arrow::MessagesToArrow<" << name
-       << ">(absl::MakeConstSpan(_phaser_self, 1), schema, array);\n";
-    os << "  }\n";
-    os << "  static absl::Status ToArrow(absl::Span<const " << name
-       << "> messages, struct ArrowSchema* schema, struct ArrowArray* array) {\n";
-    os << "    return ::phaser::arrow::MessagesToArrow(messages, schema, array);\n";
-    os << "  }\n";
-    os << "  static absl::Status FromArrow(const struct ArrowSchema* schema, "
-          "const struct ArrowArray* array, std::vector<"
-       << name << ">* out) {\n";
-    os << "    return ::phaser::arrow::MessagesFromArrow(schema, array, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ToAvro(absl::Span<const " << name
-       << "> messages, std::string* out) {\n";
-    os << "    return ::phaser::avro::WriteMessages(messages, out);\n";
-    os << "  }\n";
-    os << "  absl::Status ToAvro(std::string* out) const {\n";
-    os << "    const " << name << "* _phaser_self = this;\n";
-    os << "    return ToAvro(absl::MakeConstSpan(_phaser_self, 1), out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToAvro(std::string_view bytes, "
-          "std::string* out) {\n";
-    os << "    " << name << " message;\n";
-    os << "    if (!message.ParseFromArray(bytes.data(), bytes.size())) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "    }\n";
-    os << "    return message.ToAvro(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToAvro("
-          "absl::Span<const std::string_view> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (std::string_view item : bytes) {\n";
-    os << "      " << name << " message;\n";
-    os << "      if (!message.ParseFromArray(item.data(), item.size())) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(std::move(message));\n";
-    os << "    }\n";
-    os << "    return ToAvro(messages, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToAvro(absl::Span<const char> bytes, "
-          "std::string* out) {\n";
-    os << "    if (bytes.empty()) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "    }\n";
-    os << "    " << name
-       << " message = CreateReadonly(bytes.data(), bytes.size());\n";
-    os << "    return message.ToAvro(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToAvro("
-          "absl::Span<const absl::Span<const char>> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (absl::Span<const char> item : bytes) {\n";
-    os << "      if (item.empty()) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(CreateReadonly(item.data(), item.size()));\n";
-    os << "    }\n";
-    os << "    return ToAvro(messages, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ToParquet(absl::Span<const " << name
-       << "> messages, std::string* out) {\n";
-    os << "    return ::phaser::parquet::WriteMessages(messages, out);\n";
-    os << "  }\n";
-    os << "  absl::Status ToParquet(std::string* out) const {\n";
-    os << "    const " << name << "* _phaser_self = this;\n";
-    os << "    return ToParquet(absl::MakeConstSpan(_phaser_self, 1), out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToParquet(std::string_view bytes, "
-          "std::string* out) {\n";
-    os << "    " << name << " message;\n";
-    os << "    if (!message.ParseFromArray(bytes.data(), bytes.size())) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "    }\n";
-    os << "    return message.ToParquet(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status ProtobufToParquet("
-          "absl::Span<const std::string_view> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (std::string_view item : bytes) {\n";
-    os << "      " << name << " message;\n";
-    os << "      if (!message.ParseFromArray(item.data(), item.size())) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Protobuf wire bytes are not a valid message\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(std::move(message));\n";
-    os << "    }\n";
-    os << "    return ToParquet(messages, out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToParquet(absl::Span<const char> bytes, "
-          "std::string* out) {\n";
-    os << "    if (bytes.empty()) {\n";
-    os << "      return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "    }\n";
-    os << "    " << name
-       << " message = CreateReadonly(bytes.data(), bytes.size());\n";
-    os << "    return message.ToParquet(out);\n";
-    os << "  }\n";
-    os << "  static absl::Status PhaserToParquet("
-          "absl::Span<const absl::Span<const char>> bytes, std::string* out) {\n";
-    os << "    std::vector<" << name << "> messages;\n";
-    os << "    messages.reserve(bytes.size());\n";
-    os << "    for (absl::Span<const char> item : bytes) {\n";
-    os << "      if (item.empty()) {\n";
-    os << "        return absl::InvalidArgumentError("
-          "\"Native Phaser payload is empty\");\n";
-    os << "      }\n";
-    os << "      messages.push_back(CreateReadonly(item.data(), item.size()));\n";
-    os << "    }\n";
-    os << "    return ToParquet(messages, out);\n";
-    os << "  }\n";
-    return;
-  }
-
-  os << "absl::Status " << name
-     << "::AppendArrowSchema(::phaser::arrow::SchemaBuilder& builder, "
-        "std::string_view name, bool nullable, const ::phaser::arrow::TypeSet& "
-        "types) {\n";
-  os << "  (void)types;\n";
-  os << "  ::phaser::arrow::SchemaBuilder::TypeGuard _phaser_guard(builder, "
-        "FullName());\n";
-  os << "  if (_phaser_guard.cycle()) {\n";
-  os << "    return absl::UnimplementedError(std::string(\"Arrow schema cannot "
-        "represent recursive message \") + std::string(FullName()));\n";
-  os << "  }\n";
-  os << "  builder.BeginStruct(name, nullable);\n";
-  for (const auto& item : fields_in_order_) {
-    if (item->IsUnion()) {
-      const auto& union_field = static_cast<const UnionInfo&>(*item);
-      os << "  builder.BeginStruct("
-         << ArrowQuoted(std::string(union_field.oneof->name())) << ", false);\n";
-      for (const auto& arm : union_field.members) {
-        GenerateArrowSchemaField(os, arm->field,
-                                 ArrowQuoted(std::string(arm->field->name())),
-                                 true);
-      }
-      os << "  builder.EndStruct();\n";
-      continue;
-    }
-    const auto* desc = item->field;
-    if (desc->is_map()) {
-      os << "  builder.BeginMap(" << ArrowQuoted(std::string(desc->name()))
-         << ", false);\n";
-      os << "  if (absl::Status _phaser_status = "
-         << MessageName(desc->message_type(), true)
-         << "::AppendArrowSchema(builder, \"entries\", false, types); "
-            "!_phaser_status.ok()) return _phaser_status;\n";
-      os << "  builder.EndMap();\n";
-      continue;
-    }
-    if (desc->is_repeated()) {
-      if (UsesArrayFacade(desc)) {
-        os << "  builder.BeginFixedList("
-           << ArrowQuoted(std::string(desc->name())) << ", "
-           << GetArraySize(desc) << ");\n";
-        GenerateArrowSchemaField(os, desc, "\"item\"", false);
-        os << "  builder.EndFixedList();\n";
-      } else {
-        os << "  builder.BeginList(" << ArrowQuoted(std::string(desc->name()))
-           << ", false);\n";
-        GenerateArrowSchemaField(os, desc, "\"item\"", false);
-        os << "  builder.EndList();\n";
-      }
-      continue;
-    }
-    GenerateArrowSchemaField(os, desc, ArrowQuoted(std::string(desc->name())),
-                             ArrowFieldNullable(desc));
-  }
-  os << "  builder.EndStruct();\n";
-  os << "  return builder.status();\n";
-  os << "}\n\n";
-
-  os << "absl::Status " << name
-     << "::CollectArrowTypes(::phaser::arrow::TypeSet* types) const {\n";
-  os << "  if (runtime != nullptr && absolute_binary_offset != 0 &&\n";
-  os << "      !types->Visit(runtime->pb, absolute_binary_offset)) {\n";
-  os << "    return absl::OkStatus();\n";
-  os << "  }\n";
-  for (const auto& item : fields_in_order_) {
-    GenerateArrowCollectField(os, *item);
-  }
-  os << "  return absl::OkStatus();\n";
-  os << "}\n\n";
-
-  os << "absl::Status " << name
-     << "::WriteArrow(::phaser::arrow::FieldWriter writer, const "
-        "::phaser::arrow::TypeSet& types) const {\n";
-  os << "  (void)types;\n";
-  int index = 0;
-  for (const auto& item : fields_in_order_) {
-    GenerateArrowWriteField(os, *item, index);
-    ++index;
-  }
-  os << "  return writer.FinishStruct();\n";
-  os << "}\n\n";
-
-  os << "absl::Status " << name
-     << "::ReadArrow(::phaser::arrow::FieldReader row) {\n";
-  os << "  if (absl::Status _phaser_status = row.status(); !_phaser_status.ok()) "
-        "return _phaser_status;\n";
-  index = 0;
-  for (const auto& item : fields_in_order_) {
-    GenerateArrowReadField(os, *item, index);
-    ++index;
-  }
-  os << "  return absl::OkStatus();\n";
-  os << "}\n\n";
-
-  os << "static absl::Status " << name
-     << "AppendArrowSchema(::phaser::arrow::SchemaBuilder* builder, "
-        "std::string_view field_name, bool nullable, const "
-        "::phaser::arrow::TypeSet* types) {\n";
-  os << "  return " << name
-     << "::AppendArrowSchema(*builder, field_name, nullable, *types);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "CollectArrowTypesAtOffset(::phaser::RuntimeHandle runtime, "
-        "::phaser::BufferOffset offset, ::phaser::arrow::TypeSet* types) {\n";
-  os << "  const " << name << " message(runtime, offset);\n";
-  os << "  return message.CollectArrowTypes(types);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "WriteArrowAtOffset(::phaser::RuntimeHandle runtime, "
-        "::phaser::BufferOffset offset, ::phaser::arrow::FieldWriter* writer, "
-        "const ::phaser::arrow::TypeSet* types) {\n";
-  os << "  const " << name << " message(runtime, offset);\n";
-  os << "  return message.WriteArrow(*writer, *types);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "ReadArrowAtOffset(::phaser::RuntimeHandle runtime, "
-        "::phaser::BufferOffset offset, const ::phaser::arrow::FieldReader* "
-        "reader) {\n";
-  os << "  " << name << " message(runtime, offset);\n";
-  os << "  if (!message.InstallMetadata<" << name
-     << ">()) return ::phaser::internal::AllocationFailedError();\n";
-  os << "  return message.ReadArrow(*reader);\n";
-  os << "}\n\n";
-
-  os << "static absl::Status " << name
-     << "ProtobufToAvro(std::string_view bytes, std::string* out) {\n";
-  os << "  return " << name << "::ProtobufToAvro(bytes, out);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "PhaserToAvro(absl::Span<const char> bytes, std::string* out) {\n";
-  os << "  return " << name << "::PhaserToAvro(bytes, out);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "ProtobufToParquet(std::string_view bytes, std::string* out) {\n";
-  os << "  return " << name << "::ProtobufToParquet(bytes, out);\n";
-  os << "}\n\n";
-  os << "static absl::Status " << name
-     << "PhaserToParquet(absl::Span<const char> bytes, std::string* out) {\n";
-  os << "  return " << name << "::PhaserToParquet(bytes, out);\n";
-  os << "}\n\n";
-}
-
+}  // namespace arrow_codegen
 }  // namespace phaser

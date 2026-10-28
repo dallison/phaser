@@ -10,6 +10,7 @@
 
 #include "absl/types/span.h"
 #include "gtest/gtest.h"
+#include "phaser/runtime/message_property.h"
 #include "phaser/runtime/phaser_bank.h"
 #include "phaser/testdata/RosCompile.pb.h"
 #include "phaser/testdata/RosCompile.phaser.h"
@@ -24,18 +25,19 @@ TEST(RosCompileTest, PreservesExplicitRosSourceDefinition) {
 
 TEST(RosCompileTest, PhaserBankExposesRosMetadata) {
   const std::string_view full_name = RosDefinitionMetadata::FullName();
-  absl::StatusOr<std::string_view> data_type =
-      ::phaser::PhaserBankRosDataType(full_name);
+  absl::StatusOr<std::string> data_type = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosDataType, full_name);
   ASSERT_TRUE(data_type.ok());
   EXPECT_EQ(*data_type, RosDefinitionMetadata::RosDataType());
   EXPECT_EQ(*data_type, "example_msgs/RosDefinitionMetadata");
 
-  absl::StatusOr<std::string> md5 = ::phaser::PhaserBankRosMd5(full_name);
+  absl::StatusOr<std::string> md5 = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosMd5, full_name);
   ASSERT_TRUE(md5.ok());
   EXPECT_EQ(*md5, RosDefinitionMetadata::RosMd5());
 
-  absl::StatusOr<std::string_view> definition =
-      ::phaser::PhaserBankRosDefinition(full_name);
+  absl::StatusOr<std::string> definition = ::phaser::CallMessageProperty(
+      ::phaser::kMessagePropertyRosDefinition, full_name);
   ASSERT_TRUE(definition.ok());
   EXPECT_EQ(*definition, RosDefinitionMetadata::RosDefinition());
 }

@@ -1,0 +1,42 @@
+load("@pybind11_bazel//:build_defs.bzl", "pybind_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//phaser:copts.bzl", "PHASER_COPTS", "PHASER_PROTOC_COPTS")
+load("//phaser/plugins:defs.bzl", "PHASER_PLUGIN_COMMON_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "codegen",
+    srcs = [
+        "gen/arrow_message_codegen.cc",
+        "gen/codegen.cc",
+    ],
+    hdrs = ["gen/arrow_message_codegen.h"],
+    alwayslink = True,
+    copts = PHASER_PROTOC_COPTS,
+    deps = ["//phaser/compiler:message_generator"],
+)
+
+pybind_library(
+    name = "pybind",
+    srcs = ["runtime/pybind.cc"],
+    alwayslink = True,
+    copts = PHASER_COPTS,
+    deps = [
+        ":runtime",
+        "//phaser/runtime:plugin_pybind",
+    ],
+)
+
+cc_library(
+    name = "runtime",
+    srcs = ["runtime/arrow.cc"],
+    hdrs = [
+        "runtime/arrow.h",
+        "runtime/arrow_abi.h",
+    ],
+    copts = PHASER_COPTS,
+    include_prefix = "phaser/plugins/arrow",
+    strip_include_prefix = "runtime",
+    deps = ["//phaser/runtime:phaser_runtime"] + PHASER_PLUGIN_COMMON_DEPS,
+)
