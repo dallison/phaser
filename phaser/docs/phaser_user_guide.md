@@ -411,6 +411,12 @@ with `phaser_free`. A null `data` pointer is empty. Bool crosses the ABI as
 `uint8_t`. Strings and bytes are a pointer plus a length, so interior zeros
 survive. Enum arguments and results are `int32_t`.
 
+`_native_payload` copies the native Phaser buffer (`Data()` and
+`ByteSizeLong()`). Free it with `phaser_free`. `_parse_native_payload` copies
+that buffer's fields into the message and returns 0, leaving the message
+unchanged, when the bytes are not a Phaser payload. `_serialize_as_string` and
+`_parse_from_string` are the protobuf transcoding.
+
 `phaser_AnyMessage` is declared in `phaser/runtime/phaser_c.h`. Any fields
 return that type. It has no `_new`; take it from `mutable_any` or `any`, then
 `phaser_AnyMessage_free` the handle. The generated `google.protobuf.Any`
@@ -455,12 +461,24 @@ msg.add_samples(1.5);
 assert_eq!(msg.child().label(), "cam");
 
 msg.set_kind(Kind::CAMERA);
+let payload = msg.native_payload();
+let mut copy = Foo::new(payload.len());
+assert!(copy.parse_native_payload(&payload));
+assert_eq!(copy.name(), "sensor");
+
 let blob = msg.serialize_as_string();
-let mut copy = Foo::new(1024);
 assert!(copy.parse_from_string(&blob));
 assert!(copy.debug_string().contains("cam"));
 copy.clear();
 ```
+
+`native_payload` is a copy of `Data()` / `ByteSizeLong()`: the native Phaser
+buffer, with no protobuf transcoding. Offsets in that image are absolute, so
+two messages with the same fields are not byte-identical. `parse_native_payload`
+copies the fields into this message and leaves it unchanged when the bytes are
+not a Phaser payload. The source buffer does not need to stay alive.
+`serialize_as_string` and `parse_from_string` still speak protobuf.
+`byte_size_long` is the native payload length.
 
 `new` returns a `'static` message. Accessors that return a message tie that
 handle's lifetime to the borrow of the parent, and `Drop` frees the handle.
