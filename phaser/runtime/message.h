@@ -39,8 +39,31 @@ namespace internal {
   std::abort();
 }
 
+// A process-lifetime status. Copying it adjusts a refcount, so failing does
+// not allocate, and message() still returns the text. The first call builds
+// it; message.cc does that before main.
+inline absl::Status PermanentError(absl::StatusCode code,
+                                  absl::string_view /*message*/) {
+  static const absl::NoDestructor<absl::Status> full(
+      absl::Status(absl::StatusCode::kResourceExhausted,
+                   "phaser: payload buffer is full"));
+  static const absl::NoDestructor<absl::Status> too_small(
+      absl::Status(absl::StatusCode::kInvalidArgument,
+                   "phaser: buffer is too small"));
+  if (code == absl::StatusCode::kInvalidArgument) {
+    return *too_small;
+  }
+  return *full;
+}
+
 inline absl::Status AllocationFailedError() {
-  return absl::ResourceExhaustedError("phaser: payload buffer is full");
+  return PermanentError(absl::StatusCode::kResourceExhausted,
+                        "phaser: payload buffer is full");
+}
+
+inline absl::Status BufferTooSmallError() {
+  return PermanentError(absl::StatusCode::kInvalidArgument,
+                        "phaser: buffer is too small");
 }
 }  // namespace internal
 }  // namespace phaser
@@ -1856,7 +1879,7 @@ template <typename Root, typename... Reachable>
 // message's fixed parts.
 inline absl::Status NewFixedBufferError(const void* addr, size_t size) {
   if (!CanHoldFixedBuffer(addr, size)) {
-    return absl::InvalidArgumentError("phaser: buffer is too small");
+    return internal::BufferTooSmallError();
   }
   return internal::AllocationFailedError();
 }

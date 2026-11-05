@@ -15,6 +15,14 @@ namespace phaser {
 namespace {
 // Keeping a bigger image would cost more memory than copying it saves time.
 constexpr size_t kMaxNewBufferImageSize = 64 * 1024;
+
+// Builds the permanent failure statuses before main, so the first buffer
+// that fills up does not allocate.
+const bool kPermanentErrorsReady = [] {
+  (void)internal::AllocationFailedError();
+  (void)internal::BufferTooSmallError();
+  return true;
+}();
 }  // namespace
 
 NewBufferImage::NewBufferImage(Maker make) {
@@ -40,6 +48,7 @@ NewBufferImage::NewBufferImage(Maker make) {
 
 ::phaser::PayloadBuffer* NewBufferImage::CopyTo(void* addr,
                                                 size_t size) const {
+  (void)kPermanentErrorsReady;
   if (addr == nullptr || size_ == 0 || size < size_ ||
       size > std::numeric_limits<uint32_t>::max()) {
     return nullptr;

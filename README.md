@@ -11,6 +11,9 @@ a serialization step** — the bytes in the buffer *are* the message.
 Choose a protobuf-style C++ API, a ROS-style public-field API, or a C API.
 Python and Rust clients use the protobuf-style accessors. All of them share
 the same native payload and the same protobuf and ROS wire conversion backends.
+The C and Rust clients copy that payload with `native_payload` and load it
+with `parse_native_payload`. `serialize_as_string` remains the protobuf
+transcoding.
 
 > 📖 For the full reference, see the **[Phaser User Guide](phaser/docs/phaser_user_guide.md)**.
 

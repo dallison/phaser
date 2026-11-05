@@ -103,7 +103,32 @@ fn getters_setters_and_round_trip() {
 
     assert!(msg.byte_size_long() > 0);
     assert!(msg.debug_string().contains("nested"));
+    let native = msg.native_payload();
+    assert_eq!(native.len(), msg.byte_size_long());
+    assert_eq!(native[0], 0);
+    let mut native_copy = TestMessage::new(native.len());
+    assert!(native_copy.parse_native_payload(&native));
+    assert_eq!(native_copy.s(), "hi");
+    assert_eq!(native_copy.buffer(), b"a\0b");
+    assert_eq!(native_copy.e(), EnumTest::FOO);
+    assert_eq!(native_copy.m().str(), "nested");
+    assert_eq!(native_copy.vm(0).str(), "e1");
+    assert_eq!(native_copy.values(0).key(), "k");
+    assert_eq!(native_copy.any().type_url(), type_url);
+
+    let detached = {
+        let mut temp = TestMessage::new(256);
+        temp.set_s("gone");
+        temp.native_payload()
+    };
+    let mut revived = TestMessage::new(detached.len());
+    assert!(revived.parse_native_payload(&detached));
+    assert_eq!(revived.s(), "gone");
+
     let blob = msg.serialize_as_string();
+    assert_ne!(blob, native);
+    assert!(!native_copy.parse_native_payload(&blob));
+    assert_eq!(native_copy.s(), "hi");
     let mut copy = TestMessage::new(1024);
     assert!(copy.parse_from_string(&blob));
     assert_eq!(copy.s(), "hi");

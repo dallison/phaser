@@ -157,10 +157,33 @@ int main(void) {
   phaser_AnyMessage_free(packed);
 
   CHECK(phaser_foo_bar_TestMessage_byte_size_long(msg) > 0);
+  PhaserBytes native = phaser_foo_bar_TestMessage_native_payload(msg);
+  CHECK(native.data != NULL);
+  CHECK(native.size == phaser_foo_bar_TestMessage_byte_size_long(msg));
+  CHECK(native.data[0] == 0);
+  phaser_foo_bar_TestMessage* native_copy = phaser_foo_bar_TestMessage_new(native.size);
+  CHECK(phaser_foo_bar_TestMessage_parse_native_payload(native_copy, native.data,
+                                                        native.size));
+  s = phaser_foo_bar_TestMessage_s(native_copy);
+  CHECK(bytes_eq(s, (const uint8_t*)"hi", 2));
+  phaser_free(s.data);
+  buffer = phaser_foo_bar_TestMessage_buffer(native_copy);
+  CHECK(bytes_eq(buffer, raw_buf, 3));
+  phaser_free(buffer.data);
+
   PhaserBytes debug = phaser_foo_bar_TestMessage_debug_string(msg);
   CHECK(contains(debug, "nested"));
   phaser_free(debug.data);
   PhaserBytes blob = phaser_foo_bar_TestMessage_serialize_as_string(msg);
+  CHECK(blob.size != native.size ||
+        memcmp(blob.data, native.data, native.size) != 0);
+  CHECK(!phaser_foo_bar_TestMessage_parse_native_payload(native_copy, blob.data,
+                                                         blob.size));
+  s = phaser_foo_bar_TestMessage_s(native_copy);
+  CHECK(bytes_eq(s, (const uint8_t*)"hi", 2));
+  phaser_free(s.data);
+  phaser_free(native.data);
+  phaser_foo_bar_TestMessage_free(native_copy);
   phaser_foo_bar_TestMessage* copy = phaser_foo_bar_TestMessage_new(1024);
   CHECK(phaser_foo_bar_TestMessage_parse_from_string(copy, blob.data, blob.size));
   phaser_free(blob.data);

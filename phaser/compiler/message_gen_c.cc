@@ -677,6 +677,47 @@ void MessageGenerator::GenerateBindings(
            prefix +
            "_parse_from_string(self.ptr, phaser_bytes_ptr(bytes), bytes.len()) })\n"
            "    }\n");
+  // Data()/ByteSizeLong() are the native payload. serialize_as_string is the
+  // protobuf transcoding of that payload, so a receiver that speaks Phaser
+  // uses these two instead.
+  Bind(decl, def, rust_extern_out, rust_body_out,
+       "PhaserBytes " + prefix + "_native_payload(" + const_self + ")",
+       Guard(cpp, true, "return PhaserBytes{nullptr, size_t{0}};") +
+           "  const void* data = h->get()->Data();\n"
+           "  const size_t size = h->get()->ByteSizeLong();\n"
+           "  if (data == nullptr || size == 0) {\n"
+           "    return PhaserBytes{nullptr, size_t{0}};\n"
+           "  }\n"
+           "  return ::phaser::capi::Copy(std::string_view(\n"
+           "      static_cast<const char*>(data), size));\n",
+       prefix + "_native_payload(msg: *const " + raw + ") -> PhaserBytes",
+       "    pub fn native_payload(&self) -> Vec<u8> {\n        copy_bytes(unsafe { " +
+           prefix + "_native_payload(self.ptr) })\n    }\n");
+  Bind(decl, def, rust_extern_out, rust_body_out,
+       "uint8_t " + prefix + "_parse_native_payload(" + mut_self +
+           ", const uint8_t* data, size_t len)",
+       Guard(cpp, false, "return 0;") +
+           "  if (data == nullptr || len == 0 ||\n"
+           "      !::phaser::internal::IsStructurallyValidPhaser(\n"
+           "          absl::MakeConstSpan(reinterpret_cast<const char*>(data),\n"
+           "                              len))) {\n"
+           "    return 0;\n"
+           "  }\n"
+           "  Msg view = Msg::CreateReadonly(data, len);\n"
+           "  h->get()->Clear();\n"
+           "  const absl::Status status = h->get()->CloneFrom(view);\n"
+           "  if (!status.ok() || h->get()->AllocationFailed()) {\n"
+           "    h->get()->Clear();\n"
+           "    return 0;\n"
+           "  }\n"
+           "  return 1;\n",
+       prefix + "_parse_native_payload(msg: *mut " + raw +
+           ", data: *const u8, len: usize) -> u8",
+       "    pub fn parse_native_payload(&mut self, bytes: &[u8]) -> bool {\n"
+       "        flag(unsafe { " +
+           prefix +
+           "_parse_native_payload(self.ptr, phaser_bytes_ptr(bytes), bytes.len()) })\n"
+           "    }\n");
 
   for (const auto& field : fields_) {
     EmitCField(field->field, decl, def, rust_extern_out, rust_body_out,
@@ -722,7 +763,8 @@ void Generator::GenerateBindings(std::ostream& c_header, std::ostream& c_source,
   std::filesystem::path include_path(GeneratedIncludeFilename(
       package_name_, target_name_, std::string(file_->name())));
   include_path.replace_extension(".phaser.c.h");
-  c_source << "\n#include \"phaser/runtime/phaser_c_handle.h\"\n#include \""
+  c_source << "\n#include \"phaser/runtime/phaser_c_handle.h\"\n"
+              "#include \"phaser/runtime/wireformat.h\"\n#include \""
            << include_path.string() << "\"\nextern \"C\" {\n";
   for (int i = 0; i < file_->enum_type_count(); ++i) {
     EmitEnum(file_->enum_type(i), c_header, rust);
