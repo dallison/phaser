@@ -609,6 +609,22 @@ need phaser code too. The library's short header is included as `"foo/foo.phaser
 The plugin runs on the build host, so a cross-compile does not build it; build it for the
 host and pass its path in `PHASER_PLUGIN_EXECUTABLE`.
 
+Generated libraries link `phaser_runtime`, `phaser_bank_protobuf` (and so libprotobuf)
+and the Arrow, Avro and Parquet runtimes, as they do in Bazel. `FRONTEND c` generates the
+C API too, in `"foo/foo.phaser.c.h"`, and links `phaser_c`. `RUST` generates the Rust
+bindings over the C API, and implies `FRONTEND c`. Their source file is in the library's
+`PHASER_RUST_SOURCE` property. It has no crate attributes, so the crate root that includes
+it allows the lints in
+[`phaser/runtime/rust_crate_attributes.rs`](phaser/runtime/rust_crate_attributes.rs).
+With the path passed to Cargo in `FOO_PHASER_RS`, for example:
+
+```rust
+#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+include!(env!("FOO_PHASER_RS"));
+```
+
+The Rust crate links the generated library.
+
 ### Accessor names
 
 A field named `has_<name>` next to a field `<name>` would collide with `<name>`'s presence

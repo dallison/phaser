@@ -376,7 +376,7 @@ _phaser_gen = rule(
 
 def _phaser_rust_crate_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".rs")
-    parts = [ctx.file.support] + ctx.attr.generated[PhaserGenInfo].rust_files
+    parts = [ctx.file.attributes, ctx.file.support] + ctx.attr.generated[PhaserGenInfo].rust_files
     quoted = []
     for part in parts:
         quoted.append("\"%s\"" % part.path)
@@ -392,6 +392,10 @@ def _phaser_rust_crate_impl(ctx):
 _phaser_rust_crate = rule(
     attrs = {
         "generated": attr.label(mandatory = True, providers = [PhaserGenInfo]),
+        "attributes": attr.label(
+            default = Label("//phaser/runtime:rust_crate_attributes.rs"),
+            allow_single_file = True,
+        ),
         "support": attr.label(
             default = Label("//phaser/runtime:rust_support.rs"),
             allow_single_file = True,

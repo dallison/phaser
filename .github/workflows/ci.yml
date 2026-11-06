@@ -44,6 +44,31 @@ jobs:
           bazel test --disk_cache="$HOME/.cache/bazel-disk" $EXTRA_CONFIG \
             -- //... -//phaser:perf_test
 
+  # The CMake build.  The smoke test project generates a library with each
+  # frontend, compiles the Rust bindings and runs a program that links both.
+  # The policy minimum lets CMake 4 configure dependencies that declare an
+  # older one.
+  cmake:
+    name: cmake (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          cmake -S cmake/smoke_test -B build/cmake -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build
+        run: cmake --build build/cmake --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build/cmake --output-on-failure
+
   # AddressSanitizer runs on macOS (Apple Silicon).
   asan:
     name: asan (macOS)
