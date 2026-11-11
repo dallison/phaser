@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cross-build Phaser for 32-bit ARM Linux (armhf) on Linux (CI or native Ubuntu).
 #
-# Requires: g++-arm-linux-gnueabihf, qemu-user-static (Debian/Ubuntu).
+# Requires: g++-arm-linux-gnueabihf, qemu-user-static or qemu-user-binfmt.
 #
 # Usage:
 #   scripts/build-armhf-linux.sh

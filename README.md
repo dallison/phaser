@@ -574,7 +574,7 @@ see [`.bazelrc`](.bazelrc) for the available configurations.
 
 Cross-compile `phaser_runtime` for 32-bit ARM Linux with `--config=linux_arm32`. CI and
 native Ubuntu use [`scripts/build-armhf-linux.sh`](scripts/build-armhf-linux.sh) (requires
-`g++-arm-linux-gnueabihf` and `qemu-user-static`). On macOS, [`scripts/build-armhf-colima.sh`](scripts/build-armhf-colima.sh)
+`g++-arm-linux-gnueabihf` and `qemu-user-static` or `qemu-user-binfmt`). On macOS, [`scripts/build-armhf-colima.sh`](scripts/build-armhf-colima.sh)
 builds the same target inside a Colima Docker image. The `protoc-gen-phaser` plugin is built
 for the host only (not armhf).
 
