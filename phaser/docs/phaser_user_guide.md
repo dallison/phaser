@@ -958,14 +958,14 @@ The memory for the actual message contents is allocated inside the `PayloadBuffe
 In performance mode (the default), two types of allocators are used depending on the size of the
 block being allocated:
 
-1. A bitmap allocator for blocks up to 16, 32, 64 and 128 bytes.
+1. A small-block size-class allocator for requests up to 16, 32, 64 and 128 bytes.
 2. A free-list allocator for all other block sizes
 
-The bitmap allocator is about twice as fast when allocating memory but does use more memory
+The small-block allocator is about twice as fast when allocating memory but does use more memory
 in the buffer.  This is most appropriate when you want the maximum performance out of the
 allocator but are not concerned about the size of the message.  If you are putting your
 messages in shared memory or somewhere where the message size isn't a concern, you can gain
-performance by using the bitmap allocator.
+performance by using the small-block allocator.
 
 However, if you are sending your messages over a network and want to keep them small,
 the size mode might be more appropiate.  It should be noted, though, that if you are concerned
@@ -1995,21 +1995,19 @@ of the requirement that it can't use any virtual addresses (pointers).
 
 There are two types of allocators in the `PayloadBuffer`, the choice of which
 to use being based on the block being allocated.  If the block is small
-a `bitmap allocator` is used to speed up the allocation.  The definition of
-a small block is one whose size is less than 16, 32, 64 or 128 bytes.  There
-are 4 bitmap allocators, one for each of those block sizes.  Bitmap
-allocators are fast but use more memory because they allocate a set of
-fixed size blocks up front and keep track of them using a bit mask.  This uses
-more memory than a simple free-list allocator.
+the small-block size-class allocator is used to speed up the allocation.  There
+are four size classes (16, 32, 64 and 128 bytes).  Each class keeps a LIFO free
+list of returned blocks in the buffer header; when a list is empty, a block is
+carved from the main free list.
 
 The second type of allocator is used for all other block sizes above
-128 bytes and is a simple free-list based allocator.  The bitmap allocator
-prevents heap fragmentation by using fixed size blocks, but with the free-list
-allocator, fragmentation is always possible.
+128 bytes and is a simple free-list based allocator.  The size-class lists
+reduce fragmentation for tiny allocations; the main free-list allocator may
+still fragment for larger blocks.
 
-You can switch the bitmap allocator off when creating the `PayloadBuffer` using
-its constructor.  This parameter is controlled by Phaser's `Tuning` message
-construction argument.
+You can switch the small-block allocator off when creating the `PayloadBuffer`
+using its constructor.  This parameter is controlled by Phaser's `Tuning`
+message construction argument.
 
 
 ### PayloadBuffer header
@@ -2029,7 +2027,7 @@ bytes `00 'P' 'H'` followed by a flags byte:
 | 6 | Allocation failed (`::phaser::kAllocationFailedFlag`). A receiver rejects the buffer; the process that filled it can still read what was stored |
 | 2-5 | Format version (`::phaser::kBufferFormatVersion`, currently 1) |
 | 1 | Movable buffer (`::phaser::kMovableBufferMagic`) rather than fixed (`::phaser::kFixedBufferMagic`) |
-| 0 | Bitmap allocator on (`::phaser::kBitMapFlag`) |
+| 0 | Small-block allocator on (`::phaser::kSmallBlockAllocatorFlag`) |
 
 The magic identifies the buffer as a PayloadBuffer of this format version.
 Because a non-empty protobuf message cannot start with a zero byte, the first
@@ -2071,18 +2069,9 @@ that can be used by a receiver.
 There are functions available in the `::phaser::Message` class to allocate, free and set the
 metadata field as needed.
 
-Finally we have 4 offsets for the 4 bitmap run vectors.  Each offset corresponds to a bitmap run for a
-particular size (16, 32, 64 or 128 bytes).  The bitmap runs are held in a vector of offsets to
-`BitMapRun` structs that grows as needed.  Each `BitMapRun` struct holds a bitmask showing
-which blocks are allocated, meta information about the run and the blocks themselves, each
-of which is prefixed by a 4 byte header.  If a block is allocated in a run, its corresponding bit in the
-bitmask is set to 1.
-
-This is shown in the following diagram, for a 32 byte run.
-
-<div>
-<img src="Bitmap run.png"/>
-</div>
+Finally, `small_block_free_lists[4]` holds the head offset of each size-class
+free list (16, 32, 64 and 128 byte classes).  A freed small block stores the
+next offset in its first four bytes.
 
 The binary version of a message can be seen in the following diagram:
 

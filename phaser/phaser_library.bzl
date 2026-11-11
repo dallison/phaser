@@ -547,6 +547,9 @@ def phaser_library(
     cc_library(
         name = name,
         alwayslink = True,
+        # Static archives keep bank static initializers linked on armhf (QEMU
+        # would not run registrars in un-loaded shared objects).
+        linkstatic = True,
         copts = copts,
         srcs = [srcs],
         hdrs = [hdrs],
@@ -564,6 +567,10 @@ def phaser_library(
             srcs = [":" + crate],
             crate_name = _rust_crate_name(name),
             edition = "2021",
+            target_compatible_with = select({
+                "//platform:linux_arm32_setting": ["@platforms//:incompatible"],
+                "//conditions:default": [],
+            }),
             deps = [":" + name],
         )
 

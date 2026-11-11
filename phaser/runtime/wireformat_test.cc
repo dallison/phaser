@@ -44,7 +44,7 @@ TEST(Wireformat, MagicBytes) {
   EXPECT_EQ(std::string("\x00PH\x84", 4), bytes(phaser::kFixedBufferMagic));
   EXPECT_EQ(std::string("\x00PH\x86", 4), bytes(phaser::kMovableBufferMagic));
   EXPECT_EQ(std::string("\x00PH\x85", 4),
-            bytes(phaser::kFixedBufferMagic | phaser::kBitMapFlag));
+            bytes(phaser::kFixedBufferMagic | phaser::kSmallBlockAllocatorFlag));
 }
 
 TEST(Wireformat, InfersProtobufFromFirstByte) {
@@ -62,10 +62,10 @@ TEST(Wireformat, InfersProtobufFromFirstByte) {
 }
 
 TEST(Wireformat, InfersPhaserFromHeader) {
-  for (bool bitmaps : {false, true}) {
+  for (bool small_block_allocator : {false, true}) {
     alignas(8) char buffer[4096] = {};
     phaser::PayloadBuffer* pb =
-        new (buffer) phaser::PayloadBuffer(sizeof(buffer), bitmaps);
+        new (buffer) phaser::PayloadBuffer(sizeof(buffer), small_block_allocator);
     phaser::PayloadBuffer::AllocateMainMessage(&pb, 32);
     const std::string_view payload(buffer, pb->hwm);
     EXPECT_EQ(MessageWireFormat::kPhaser,

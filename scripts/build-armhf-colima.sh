@@ -31,9 +31,6 @@ docker build -t phaser-arm32-builder -f docker/arm32/Dockerfile docker/arm32
 
 # Cross-compile the runtime for the device. The phaser protoc plugin stays on the
 # host (build without --config=linux_arm32).
-build_targets="//phaser/runtime:phaser_runtime"
-test_targets="//phaser:arm32_platform_test //phaser/runtime:payload_buffer_test //phaser/runtime:md5_test"
-
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   -e HOME=/tmp \
@@ -44,9 +41,10 @@ docker run --rm \
   bash -eo pipefail -c "
     set -euo pipefail
     export PATH=/usr/local/bin:\$PATH
-    bazel build --config=linux_arm32 ${build_targets}
-    readelf -h bazel-bin/phaser/runtime/libphaser_runtime.so | grep -E 'Class:|Machine:'
-    if [[ ${run_tests} -eq 1 ]]; then
-      bazel test --config=linux_arm32 ${test_targets}
+    if [[ ${run_tests} -eq 0 ]]; then
+      bazel build --config=linux_arm32 //phaser/runtime:phaser_runtime
+      readelf -h bazel-bin/phaser/runtime/libphaser_runtime.so | grep -E 'Class:|Machine:'
+    else
+      bash scripts/build-armhf-linux.sh --test
     fi
   "

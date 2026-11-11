@@ -83,7 +83,10 @@ py_test(
     main = "python_test.py",
     # See test:asan in .bazelrc. Valgrind's --suppressions path is relative to
     # the test runfiles directory, so the file has to be a data dependency.
-    tags = ["no-asan"],
+    tags = [
+        "manual",
+        "no-asan",
+    ],
     data = [
         ":test_message_phaser_py",
         "//phaser:valgrind.supp",
@@ -124,7 +127,10 @@ rust_test(
         "@platforms//os:linux": ["-Clink-arg=-lc"],
         "//conditions:default": [],
     }),
-    tags = ["no-asan"],
+    tags = [
+        "manual",
+        "no-asan",
+    ],
     target_compatible_with = select({
         ":asan": ["@platforms//:incompatible"],
         "//conditions:default": [],
@@ -329,6 +335,7 @@ cc_binary(
 
 sh_test(
     name = "ros_intrinsics_wire_compatibility_test",
+    tags = ["manual"],
     srcs = ["ros_intrinsics_wire_compatibility_test.sh"],
     args = [
         "$(rootpath :ros_intrinsics_phaser_wire_tool)",
@@ -343,6 +350,7 @@ sh_test(
 
 sh_test(
     name = "invalid_array_size_test",
+    tags = ["manual"],
     srcs = ["invalid_array_size_test.sh"],
     args = [
         "$(rootpath @com_google_protobuf//:protoc)",
@@ -362,6 +370,7 @@ sh_test(
 
 sh_test(
     name = "invalid_ros_intrinsic_test",
+    tags = ["manual"],
     srcs = ["invalid_ros_intrinsic_test.sh"],
     args = [
         "$(rootpath @com_google_protobuf//:protoc)",

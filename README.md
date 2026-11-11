@@ -108,7 +108,8 @@ payloads. Protobuf and ROS wire formats are unchanged.
 The `PayloadBuffer` (from the [cpp_toolbelt](https://github.com/dallison/cpp_toolbelt)
 library) is a relocatable heap — a malloc/free/realloc allocator that uses only offsets
 (never raw pointers), so the whole buffer can be copied or moved anywhere. It offers a fast
-**bitmap allocator** for small blocks (performance mode, the default) and a **free-list
+**small-block size-class allocator** for blocks up to 128 bytes (performance mode,
+the default) and a **free-list
 allocator** that trades speed for compactness (size mode), selectable via
 `::phaser::Tuning`.
 
@@ -585,6 +586,11 @@ scripts/build-armhf-linux.sh --test
 # macOS (Colima + Docker)
 scripts/build-armhf-colima.sh --test
 ```
+
+Arm32 CI runs the same automated `cc_test` targets as the main Linux job under
+QEMU (`bazel query 'tests(//...)'` minus `perf_test`, `receive_fuzz_test`, and
+host-only Python/Rust/shell tests). LibFuzzer and host `protoc-gen-phaser` tests
+are excluded from the armhf job.
 
 ### Using Phaser without Bazel
 

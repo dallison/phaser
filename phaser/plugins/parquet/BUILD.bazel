@@ -9,6 +9,7 @@ cc_library(
     name = "codegen",
     srcs = ["gen/codegen.cc"],
     alwayslink = True,
+    linkstatic = True,
     copts = PHASER_PROTOC_COPTS,
     deps = ["//phaser/compiler:message_generator"],
 )
@@ -17,6 +18,7 @@ pybind_library(
     name = "pybind",
     srcs = ["runtime/pybind.cc"],
     alwayslink = True,
+    linkstatic = True,
     copts = PHASER_COPTS,
     deps = [
         ":runtime",
@@ -41,6 +43,7 @@ cc_library(
     name = "conversion",
     srcs = ["runtime/parquet_conversion.cc"],
     alwayslink = True,
+    linkstatic = True,
     copts = PHASER_COPTS,
     deps = [
         ":runtime",

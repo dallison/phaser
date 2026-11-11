@@ -238,10 +238,10 @@ TEST(BufferTest, BestCasePerformance) {
     char *buffer = (char *)calloc(1, kSize);
     PayloadBuffer *pb = new (buffer) PayloadBuffer(kSize);
 
-    ASSERT_TRUE(PayloadBuffer::PrimeBitmapAllocator(&pb, 16));
-    ASSERT_TRUE(PayloadBuffer::PrimeBitmapAllocator(&pb, 32));
-    ASSERT_TRUE(PayloadBuffer::PrimeBitmapAllocator(&pb, 64));
-    ASSERT_TRUE(PayloadBuffer::PrimeBitmapAllocator(&pb, 128));
+    ASSERT_TRUE(PayloadBuffer::PrimeSmallBlockAllocator(&pb, 16));
+    ASSERT_TRUE(PayloadBuffer::PrimeSmallBlockAllocator(&pb, 32));
+    ASSERT_TRUE(PayloadBuffer::PrimeSmallBlockAllocator(&pb, 64));
+    ASSERT_TRUE(PayloadBuffer::PrimeSmallBlockAllocator(&pb, 128));
 
     uint64_t small_start = toolbelt::Now();
 
@@ -480,9 +480,10 @@ TEST(BufferTest, CopyStringCopiesExactlyTheBytes) {
 
 TEST(BufferTest, NewStringsOfEveryShortLength) {
   constexpr size_t kMaxLength = 70;
-  for (bool bitmaps : {true, false}) {
+  for (bool small_block_allocator : {true, false}) {
     char *buffer = (char *)calloc(1, 8192);
-    PayloadBuffer *pb = new (buffer) PayloadBuffer(8192, bitmaps);
+    PayloadBuffer *pb =
+        new (buffer) PayloadBuffer(8192, small_block_allocator);
     PayloadBuffer::AllocateMainMessage(&pb,
                                        (kMaxLength + 1) * sizeof(BufferOffset));
     std::string all;
@@ -496,7 +497,7 @@ TEST(BufferTest, NewStringsOfEveryShortLength) {
     for (size_t n = 0; n <= kMaxLength; ++n) {
       EXPECT_EQ(pb->GetString(pb->message + n * sizeof(BufferOffset)),
                 all.substr(0, n))
-          << n << " " << bitmaps;
+          << n << " " << small_block_allocator;
     }
     free(buffer);
   }
@@ -533,9 +534,10 @@ TEST(BufferTest, StringThatDoesNotFitLeavesTheOldValue) {
 }
 
 TEST(BufferTest, NothingIsStoredAfterAFailureEvenWhenSpaceIsFreed) {
-  for (bool bitmaps : {false, true}) {
+  for (bool small_block_allocator : {false, true}) {
     char *buffer = (char *)calloc(1, 4096);
-    PayloadBuffer *pb = new (buffer) PayloadBuffer(4096, bitmaps);
+    PayloadBuffer *pb =
+        new (buffer) PayloadBuffer(4096, small_block_allocator);
     PayloadBuffer::AllocateMainMessage(&pb, 32);
     const BufferOffset offset = pb->message;
     void *block = PayloadBuffer::Allocate(&pb, 64);
@@ -546,13 +548,14 @@ TEST(BufferTest, NothingIsStoredAfterAFailureEvenWhenSpaceIsFreed) {
     EXPECT_TRUE(pb->AllocationFailed());
 
     pb->Free(block);
-    EXPECT_EQ(PayloadBuffer::Allocate(&pb, 16), nullptr) << bitmaps;
+    EXPECT_EQ(PayloadBuffer::Allocate(&pb, 16), nullptr)
+        << small_block_allocator;
     // The string is just below the free space, where it could grow in place.
     EXPECT_EQ(
         PayloadBuffer::SetString(&pb, std::string("a longer string"), offset),
         nullptr)
-        << bitmaps;
-    EXPECT_EQ(pb->GetString(offset), "small") << bitmaps;
+        << small_block_allocator;
+    EXPECT_EQ(pb->GetString(offset), "small") << small_block_allocator;
     EXPECT_TRUE(pb->AllocationFailed());
     free(buffer);
   }
@@ -707,7 +710,7 @@ TEST(BufferTest, VectorPushFillsSmallBlockInPlace) {
     const uint64_t size_word =
         *(pb->ToAddress<uint64_t>(hdr->data) - 1) & 0xffffffff;
     ASSERT_NE(0u, size_word & ::phaser::kSmallBlockFlag);
-    ASSERT_GE(size_word & ::phaser::kBitmapRunSizeMask, i * sizeof(uint32_t));
+    ASSERT_GE(size_word & ::phaser::kSmallBlockEncodedSizeMask, i * sizeof(uint32_t));
   }
 
   PayloadBuffer::VectorPush<uint32_t>(&pb, hdr, 5);

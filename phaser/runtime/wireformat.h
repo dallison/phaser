@@ -65,22 +65,21 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
       offsetof(::phaser::PayloadBuffer, free_list);
   constexpr size_t kMetadataOffset =
       offsetof(::phaser::PayloadBuffer, metadata);
-  constexpr size_t kBitmapsOffset =
-      offsetof(::phaser::PayloadBuffer, bitmaps);
+  constexpr size_t kSmallBlockFreeListsOffset =
+      offsetof(::phaser::PayloadBuffer, small_block_free_lists);
 
   if (data.size() < sizeof(::phaser::PayloadBuffer)) {
     return false;
   }
   const uint32_t magic = LoadWireUint32(data, kMagicOffset);
-  const uint32_t base_magic = magic & ::phaser::kBitMapMask;
+  const uint32_t base_magic = magic & ::phaser::kSmallBlockAllocatorMagicMask;
   const bool movable = base_magic == ::phaser::kMovableBufferMagic;
   if (!movable && base_magic != ::phaser::kFixedBufferMagic) {
     return false;
   }
 
   const size_t minimum_header =
-      sizeof(::phaser::PayloadBuffer) +
-      (movable ? sizeof(::phaser::Resizer*) : 0);
+      ::phaser::AlignedPayloadHeaderSize(movable);
   const uint32_t message = LoadWireUint32(data, kMessageOffset);
   const uint32_t hwm = LoadWireUint32(data, kHwmOffset);
   const uint32_t full_size = LoadWireUint32(data, kFullSizeOffset);
@@ -102,10 +101,11 @@ inline bool IsStructurallyValidPhaser(absl::Span<const char> data) {
       (metadata < minimum_header || metadata >= hwm)) {
     return false;
   }
-  for (size_t i = 0; i < ::phaser::kNumBitmapRuns; ++i) {
-    const uint32_t bitmap =
-        LoadWireUint32(data, kBitmapsOffset + i * sizeof(uint32_t));
-    if (bitmap != 0 && (bitmap < minimum_header || bitmap >= hwm)) {
+  for (size_t i = 0; i < ::phaser::kNumSmallBlockClasses; ++i) {
+    const uint32_t free_list_head = LoadWireUint32(
+        data, kSmallBlockFreeListsOffset + i * sizeof(uint32_t));
+    if (free_list_head != 0 &&
+        (free_list_head < minimum_header || free_list_head >= hwm)) {
       return false;
     }
   }

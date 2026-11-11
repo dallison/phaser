@@ -26,3 +26,8 @@ platform(
         "@platforms//os:linux",
     ],
 )
+
+config_setting(
+    name = "linux_arm32_setting",
+    values = {"platforms": "//platform:linux_arm32"},
+)
