@@ -1312,8 +1312,10 @@ TEST(MessageTest, ReadonlyRuntimeSizeIsNotAResetMark) {
   EXPECT_FALSE(
       readonly.ResetFor(msg.absolute_binary_offset, TestMessage::BinarySize()));
 
-  phaser::MessageRuntime huge(msg.runtime->pb, size_t{1} << 33);
-  EXPECT_EQ(UINT32_MAX, huge.BufferSize());
+  if constexpr (sizeof(size_t) > sizeof(uint32_t)) {
+    phaser::MessageRuntime huge(msg.runtime->pb, size_t{1} << 33);
+    EXPECT_EQ(UINT32_MAX, huge.BufferSize());
+  }
 
   // Without a size the buffer's own is trusted; a size of 0 trusts nothing.
   phaser::MessageRuntime unsized(msg.runtime->pb);

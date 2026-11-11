@@ -24,7 +24,7 @@ namespace phaser {
 // message cannot start with a zero byte, so the first byte tells a payload
 // buffer from protobuf.  The flags byte holds a set top bit, the format version
 // in bits 2-5, the allocation-failed flag in bit 6, the movable flag in bit 1
-// and the bitmap allocator flag in bit 0 (bits 25 and 24 of the magic).
+// and the small-block allocator flag in bit 0 (bits 25 and 24 of the magic).
 constexpr uint32_t kBufferFormatVersion = 1;
 constexpr uint32_t kFixedBufferMagic =
     ((0x80 | (kBufferFormatVersion << 2)) << 24) | (uint32_t{'H'} << 16) |
@@ -32,16 +32,17 @@ constexpr uint32_t kFixedBufferMagic =
 constexpr uint32_t kMovableBufferMagic = kFixedBufferMagic | (1u << 25);
 static_assert((kFixedBufferMagic & 0xff) == 0 && kBufferFormatVersion < 16);
 
-// Set for enabling bitmap allocator.
-constexpr uint32_t kBitMapFlag = 1u << 24;
-constexpr uint32_t kBitMapMask = ~kBitMapFlag;
+// Set when the small-block (size-class) allocator is enabled.
+constexpr uint32_t kSmallBlockAllocatorFlag = 1u << 24;
+constexpr uint32_t kSmallBlockAllocatorMagicMask = ~kSmallBlockAllocatorFlag;
 
 // Set when an allocation failed because a fixed size buffer was full.  The
 // buffer's contents up to that point are unchanged.  In-process reads ignore
 // this bit.  A receiver rejects the buffer, because the bit is not part of a
 // valid magic.
 constexpr uint32_t kAllocationFailedFlag = 1u << 30;
-constexpr uint32_t kMagicFlagsMask = kBitMapFlag | kAllocationFailedFlag;
+constexpr uint32_t kMagicFlagsMask =
+    kSmallBlockAllocatorFlag | kAllocationFailedFlag;
 
 using BufferOffset = uint32_t;
 
@@ -103,8 +104,8 @@ using Resizer =
 // allocation of small blocks, blocks of up to 128 bytes are rounded up to one
 // of a fixed number of size classes.  Each size class has a LIFO free list
 // (like the fastbins in common malloc implementations) whose head offset is
-// held in the PayloadBuffer header ('bitmaps', a name kept for layout
-// compatibility).  A free small block holds the offset of the next free block
+// held in the PayloadBuffer header ('small_block_free_lists').  A free small
+// block holds the offset of the next free block
 // of its class in its first 4 bytes.  When a class's free list is empty a
 // single block is carved from the main free list, so a freshly created buffer
 // is filled by what is effectively bump allocation and no space is reserved
@@ -112,13 +113,13 @@ using Resizer =
 // are not coalesced back into the main free list.
 
 // Number of small block size classes.
-inline constexpr size_t kNumBitmapRuns = 4;
+inline constexpr size_t kNumSmallBlockClasses = 4;
 
-// Block size for each small block class.
-inline constexpr int kBitmapRunSize1 = 16;
-inline constexpr int kBitmapRunSize2 = 32;
-inline constexpr int kBitmapRunSize3 = 64;
-inline constexpr int kBitmapRunSize4 = 128;
+// Maximum request size for each small-block size class.
+inline constexpr int kSmallBlockClassMaxBytes1 = 16;
+inline constexpr int kSmallBlockClassMaxBytes2 = 32;
+inline constexpr int kSmallBlockClassMaxBytes3 = 64;
+inline constexpr int kSmallBlockClassMaxBytes4 = 128;
 
 // The 8 bytes preceding an allocated block hold its size.  To distinguish a
 // small block from a regular block allocated from the free list, a small
@@ -126,7 +127,7 @@ inline constexpr int kBitmapRunSize4 = 128;
 // in bits 7-0.  The requested size always maps back to the block's size class
 // because a block is always taken from the smallest class that fits.
 inline constexpr uint32_t kSmallBlockFlag = 1U << 31;
-inline constexpr uint32_t kBitmapRunSizeMask = 0xff;
+inline constexpr uint32_t kSmallBlockEncodedSizeMask = 0xff;
 
 // This is a buffer that holds the contents of a message.
 // It is located at the first address of the actual buffer with the
@@ -139,16 +140,19 @@ struct PayloadBuffer {
   uint32_t full_size;     // Full size of buffer.
   BufferOffset free_list; // Heap free list.
   BufferOffset metadata;  // Offset to message metadata.
-  BufferOffset
-      bitmaps[kNumBitmapRuns]; // Free list head for each small block class.
+  BufferOffset small_block_free_lists[kNumSmallBlockClasses];
+  // Explicit tail padding so the header is 48 bytes on 32- and 64-bit hosts
+  // (matches 64-bit ABI tail padding) without changing field offsets.
+  uint32_t header_padding[2] = {0, 0};
 
   // Initialize a new PayloadBuffer at this with a message of the
   // given size.  This is a fixed size buffer.
-  PayloadBuffer(uint32_t size, bool bitmap_allocator = true)
-      : magic(kFixedBufferMagic | (bitmap_allocator ? kBitMapFlag : 0)),
+  PayloadBuffer(uint32_t size, bool small_block_allocator = true)
+      : magic(kFixedBufferMagic |
+              (small_block_allocator ? kSmallBlockAllocatorFlag : 0)),
         message(0), hwm(0), full_size(size), metadata(0) {
-    for (size_t i = 0; i < kNumBitmapRuns; i++) {
-      bitmaps[i] = 0;
+    for (size_t i = 0; i < kNumSmallBlockClasses; i++) {
+      small_block_free_lists[i] = 0;
     }
     InitFreeList();
   }
@@ -163,11 +167,13 @@ struct PayloadBuffer {
   // This implies that you need to destruct the payload buffer to avoid
   // a memory leak.  This is only necessary for resizable buffers.  Fixed
   // size buffers don't need to be destructed.
-  PayloadBuffer(uint32_t initial_size, Resizer r, bool bitmap_allocator = true)
-      : magic(kMovableBufferMagic | (bitmap_allocator ? kBitMapFlag : 0)),
+  PayloadBuffer(uint32_t initial_size, Resizer r,
+                bool small_block_allocator = true)
+      : magic(kMovableBufferMagic |
+              (small_block_allocator ? kSmallBlockAllocatorFlag : 0)),
         message(0), hwm(0), full_size(initial_size), metadata(0) {
-    for (size_t i = 0; i < kNumBitmapRuns; i++) {
-      bitmaps[i] = 0;
+    for (size_t i = 0; i < kNumSmallBlockClasses; i++) {
+      small_block_free_lists[i] = 0;
     }
     InitFreeList();
     SetResizer(std::move(r));
@@ -181,7 +187,9 @@ struct PayloadBuffer {
     }
   }
 
-  bool BitmapsEnabled() const { return (magic & kBitMapFlag) != 0; }
+  bool SmallBlockAllocatorEnabled() const {
+    return (magic & kSmallBlockAllocatorFlag) != 0;
+  }
 
   void SetResizer(Resizer r) {
     // Place a pointer to the resizer function in the buffer just after the
@@ -208,7 +216,7 @@ struct PayloadBuffer {
   static void AllocateMetadata(PayloadBuffer **self, void *md, size_t size);
   // The small block allocator has no per-class setup cost so there is nothing
   // to prime.  Always returns true.
-  static bool PrimeBitmapAllocator(PayloadBuffer **self, size_t size);
+  static bool PrimeSmallBlockAllocator(PayloadBuffer **self, size_t size);
 
   // Address and offset conversions without validation, for a buffer this
   // process built and is mutating, whose offsets all came from the buffer.
@@ -268,7 +276,7 @@ struct PayloadBuffer {
     if ((*p & kSmallBlockFlag) == 0) {
       return *p;
     }
-    return *p & kBitmapRunSizeMask;
+    return *p & kSmallBlockEncodedSizeMask;
   }
 
   template <typename MessageType>
@@ -423,10 +431,10 @@ struct PayloadBuffer {
   // Index of the small block class for an allocation of 'n' bytes, or -1 if
   // it is too big for a small block.
   static int SmallBlockIndex(uint32_t n) {
-    return n <= uint32_t(kBitmapRunSize1)   ? 0
-           : n <= uint32_t(kBitmapRunSize2) ? 1
-           : n <= uint32_t(kBitmapRunSize3) ? 2
-           : n <= uint32_t(kBitmapRunSize4) ? 3
+    return n <= uint32_t(kSmallBlockClassMaxBytes1)   ? 0
+           : n <= uint32_t(kSmallBlockClassMaxBytes2) ? 1
+           : n <= uint32_t(kSmallBlockClassMaxBytes3) ? 2
+           : n <= uint32_t(kSmallBlockClassMaxBytes4) ? 3
                                              : -1;
   }
   static uint32_t SmallBlockSize(int index) { return 16U << index; }
@@ -460,7 +468,7 @@ struct PayloadBuffer {
   void MarkAllocationFailed() {
     magic |= kAllocationFailedFlag;
     free_list = 0;
-    for (BufferOffset &head : bitmaps) {
+    for (BufferOffset &head : small_block_free_lists) {
       head = 0;
     }
   }
@@ -499,7 +507,7 @@ struct PayloadBuffer {
   static uint32_t DecodedSize(BufferOffset *addr) {
     BufferOffset *p = addr - 2;
     if (*p & kSmallBlockFlag) {
-      return *p & kBitmapRunSizeMask;
+      return *p & kSmallBlockEncodedSizeMask;
     }
     return *p;
   }
@@ -606,6 +614,19 @@ struct PayloadBuffer {
     }
   }
 };
+
+static_assert(sizeof(PayloadBuffer) == 48,
+              "PayloadBuffer wire layout must match on all platforms");
+
+// Bytes reserved before the heap/free list: fixed 48-byte header plus an
+// optional movable resizer pointer, rounded up to 8-byte alignment.
+inline uint32_t AlignedPayloadHeaderSize(bool movable) {
+  uint32_t n = static_cast<uint32_t>(sizeof(PayloadBuffer));
+  if (movable) {
+    n += static_cast<uint32_t>(sizeof(Resizer *));
+  }
+  return (n + 7u) & ~7u;
+}
 
 // A string to be copied into a buffer.  It can be in that buffer, which
 // allocating can move, so it is found again there by its offset.
@@ -725,17 +746,17 @@ inline void *PayloadBuffer::TryAllocateInPlace(uint32_t n, bool clear,
   uint64_t size_word;
   uint32_t block_size;
   int index = -1;
-  if (enable_small_block && pb->BitmapsEnabled() &&
+  if (enable_small_block && pb->SmallBlockAllocatorEnabled() &&
       (index = SmallBlockIndex(n)) >= 0) {
     block_size = SmallBlockSize(index);
     size_word = kSmallBlockFlag | n;
-    const BufferOffset head = pb->bitmaps[index];
+    const BufferOffset head = pb->small_block_free_lists[index];
     if (head != 0) {
       if (head > pb->full_size - block_size) {
         return nullptr;
       }
       char *addr = base + head;
-      pb->bitmaps[index] = *reinterpret_cast<BufferOffset *>(addr);
+      pb->small_block_free_lists[index] = *reinterpret_cast<BufferOffset *>(addr);
       *(reinterpret_cast<uint64_t *>(addr) - 1) = size_word;
       if (clear) {
         memset(addr, 0, block_size);
@@ -782,10 +803,10 @@ inline void PayloadBuffer::Free(void *p) {
   const uint64_t size_word = *(reinterpret_cast<uint64_t *>(p) - 1);
   if ((size_word & kSmallBlockFlag) != 0) {
     const int index =
-        SmallBlockIndex(static_cast<uint32_t>(size_word & kBitmapRunSizeMask));
+        SmallBlockIndex(static_cast<uint32_t>(size_word & kSmallBlockEncodedSizeMask));
     if (index >= 0) {
-      *reinterpret_cast<BufferOffset *>(p) = bitmaps[index];
-      bitmaps[index] = BufferOffset(reinterpret_cast<char *>(p) -
+      *reinterpret_cast<BufferOffset *>(p) = small_block_free_lists[index];
+      small_block_free_lists[index] = BufferOffset(reinterpret_cast<char *>(p) -
                                     reinterpret_cast<char *>(this));
       return;
     }
@@ -820,9 +841,9 @@ inline bool PayloadBuffer::VectorPush(PayloadBuffer **self, VectorHeader *hdr,
       // A small block can use the rest of its size class.  Its size word must
       // still cover the elements, and stays in the same class because the
       // block came from the smallest class that fit.
-      const int index = SmallBlockIndex(size_word & kBitmapRunSizeMask);
+      const int index = SmallBlockIndex(size_word & kSmallBlockEncodedSizeMask);
       capacity = index >= 0 ? SmallBlockSize(index) : 0;
-      if (needed <= capacity && needed > (size_word & kBitmapRunSizeMask)) {
+      if (needed <= capacity && needed > (size_word & kSmallBlockEncodedSizeMask)) {
         *size_ptr = kSmallBlockFlag | needed;
       }
     }

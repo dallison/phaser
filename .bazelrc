@@ -103,3 +103,19 @@ build:libc++ --action_env=BAZEL_CXXOPTS=-stdlib=libc++
 build:libc++ --action_env=BAZEL_LINKLIBS=-l%:libc++.a:-l%:libc++abi.a
 build:libc++ --action_env=BAZEL_LINKOPTS=-lm:-pthread
 build:libc++ --define force_libcpp=enabled
+
+# Linux ARMv7 hard-float (armhf) cross-compile from a Linux x86_64 or aarch64 host.
+# Install g++-arm-linux-gnueabihf and qemu-user-static (Debian/Ubuntu).
+# Example:
+#   bazel build --config=linux_arm32 //phaser/runtime:phaser_runtime
+# On macOS, use scripts/build-armhf-colima.sh (Colima + docker/arm32).
+build:linux_arm32 --platforms=//platform:linux_arm32
+build:linux_arm32 --extra_toolchains=@linux_arm32_toolchain//:cc_toolchain,@linux_arm32_toolchain//:cc_toolchain_aarch64
+build:linux_arm32 --cpu=armv7
+build:linux_arm32 --features=-external_include_paths
+# Keep static bank registrars when the linker would gc unreferenced sections.
+build:linux_arm32 --linkopt=-Wl,--no-gc-sections
+test:linux_arm32 --run_under=//bazel/toolchains/linux_arm32:qemu
+test:linux_arm32 --test_env=QEMU_LD_PREFIX=/usr/arm-linux-gnueabihf
+run:linux_arm32 --run_under=//bazel/toolchains/linux_arm32:qemu
+run:linux_arm32 --run_env=QEMU_LD_PREFIX=/usr/arm-linux-gnueabihf

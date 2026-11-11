@@ -604,7 +604,7 @@ struct MessageRuntime {
     if (pb == nullptr) {
       return;
     }
-    for (const ::phaser::BufferOffset head : pb->bitmaps) {
+    for (const ::phaser::BufferOffset head : pb->small_block_free_lists) {
       if (head != 0) {
         return;
       }
@@ -682,7 +682,7 @@ struct MessageRuntime {
     block->next = 0;
     pb->free_list = mark;
     pb->hwm = mark + sizeof(::phaser::FreeBlockHeader);
-    for (::phaser::BufferOffset& head : pb->bitmaps) {
+    for (::phaser::BufferOffset& head : pb->small_block_free_lists) {
       head = 0;
     }
     pb->ClearAllocationFailed();
@@ -1249,15 +1249,15 @@ struct InternalDefault {};
 // handle it was made from, so it is valid only while that handle exists.
 struct MutablePart {};
 
-// Tuning parameters for messages.  The kPerformance tuning uses a bitmap
-// allocator for block sizes up to 128 bytes.  This is about twice as fast
-// for small blocks but uses more memory.  If you are sending messages
-// using shared memory where size isn't important, you can use kPerformance.
-// If you are sending messages over a network, then you can sacrifice
-// allocation peformance for size and use kSize.
+// Tuning parameters for messages.  The kPerformance tuning uses the
+// small-block size-class allocator for requests up to 128 bytes.  This is
+// about twice as fast for small blocks but uses more memory.  If you are
+// sending messages using shared memory where size isn't important, you can
+// use kPerformance.  If you are sending messages over a network, then you
+// can sacrifice allocation peformance for size and use kSize.
 enum class Tuning {
-  kPerformance,  // Use a bitmap allocator for small blocks
-  kSize,         // Use a simple allocator for small blocks
+  kPerformance,  // Use the small-block size-class allocator
+  kSize,         // Use only the main free-list allocator for small blocks
 };
 
 // Payload buffers can move. All messages in a message tree must all use the
@@ -1818,10 +1818,10 @@ struct Message {
 // be copied from it.
 class NewBufferImage {
  public:
-  // 'make' makes a new buffer, with the small block allocator if 'bitmaps',
-  // in the 'size' bytes at 'addr', or returns null if it does not fit.
+  // 'make' makes a new buffer, with the small-block allocator if enabled, in
+  // the 'size' bytes at 'addr', or returns null if it does not fit.
   using Maker = ::phaser::PayloadBuffer* (*)(void* addr, size_t size,
-                                             bool bitmaps);
+                                             bool small_block_allocator);
   explicit NewBufferImage(Maker make);
 
   // The new buffer in the 'size' bytes at 'addr', or null if the image does
@@ -1843,12 +1843,12 @@ inline bool CanHoldFixedBuffer(const void* addr, size_t size) {
 
 template <typename Root, typename... Reachable>
 ::phaser::PayloadBuffer* MakeFixedBuffer(void* addr, size_t size,
-                                         bool bitmaps) {
+                                         bool small_block_allocator) {
   if (!CanHoldFixedBuffer(addr, size)) {
     return nullptr;
   }
-  auto* pb = new (addr)
-      ::phaser::PayloadBuffer(static_cast<uint32_t>(size), bitmaps);
+  auto* pb = new (addr)::phaser::PayloadBuffer(static_cast<uint32_t>(size),
+                                               small_block_allocator);
   if (::phaser::PayloadBuffer::AllocateMainMessage(&pb, Root::BinarySize()) ==
           nullptr ||
       !InitializeMetadata<Root, Reachable...>(&pb)) {

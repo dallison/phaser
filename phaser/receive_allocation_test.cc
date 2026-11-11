@@ -248,11 +248,11 @@ ExerciseResult ExerciseWireDeserialization(std::string_view any_wire,
 // A new TestMessage buffer made in place, as CreateMutable makes one when it
 // has no image of one to copy.
 ::phaser::PayloadBuffer* MakeTestMessageBuffer(void* addr, size_t size,
-                                               bool bitmaps) {
+                                               bool small_block_allocator) {
   return ::phaser::MakeFixedBuffer<
       foo::bar::phaser::TestMessage, foo::bar::phaser::InnerMessage,
       ::phaser::AnyMessage, foo::bar::phaser::TestMessage_ValuesEntry>(
-      addr, size, bitmaps);
+      addr, size, small_block_allocator);
 }
 
 // The bytes a new TestMessage buffer uses.
@@ -544,7 +544,7 @@ TEST(OutputAllocationTest, CreateMutableInABufferTooSmallFails) {
       << message.status();
 }
 
-TEST(OutputAllocationTest, CreateMutableTunedForSizeHasNoBitmaps) {
+TEST(OutputAllocationTest, CreateMutableTunedForSizeHasNoSmallBlockAllocator) {
   constexpr size_t kSize = 32768;
   std::vector<char> created(kSize);
   std::vector<char> made(kSize);
@@ -552,7 +552,7 @@ TEST(OutputAllocationTest, CreateMutableTunedForSizeHasNoBitmaps) {
       created.data(), kSize, ::phaser::Tuning::kSize);
   const ::phaser::PayloadBuffer* pb =
       MakeTestMessageBuffer(made.data(), kSize, false);
-  EXPECT_FALSE(message.runtime->pb->BitmapsEnabled());
+  EXPECT_FALSE(message.runtime->pb->SmallBlockAllocatorEnabled());
   ASSERT_EQ(message.runtime->pb->hwm, pb->hwm);
   EXPECT_EQ(std::memcmp(created.data(), made.data(), pb->hwm), 0);
 }

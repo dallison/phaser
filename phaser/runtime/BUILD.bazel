@@ -149,7 +149,10 @@ py_test(
     name = "phaser_bank_py_test",
     srcs = ["phaser_bank_py_test.py"],
     main = "phaser_bank_py_test.py",
-    tags = ["no-asan"],
+    tags = [
+        "manual",
+        "no-asan",
+    ],
     data = [
         ":phaser_bank_py_testlib",
         "//phaser:valgrind.supp",

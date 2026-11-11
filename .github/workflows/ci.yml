@@ -42,6 +42,7 @@ jobs:
       - name: Test (everything except perf_test)
         run: |
           bazel test --disk_cache="$HOME/.cache/bazel-disk" $EXTRA_CONFIG \
+            --test_tag_filters=-linux_arm32 \
             -- //... -//phaser:perf_test
 
   # AddressSanitizer runs on macOS (Apple Silicon).
@@ -63,6 +64,7 @@ jobs:
         run: |
           bazel test --disk_cache="$HOME/.cache/bazel-disk" \
             --config=asan --config=apple_silicon \
+            --test_tag_filters=-linux_arm32 \
             -- //... -//phaser:perf_test
 
   # AddressSanitizer runs on Linux (no apple_silicon config).
@@ -84,6 +86,7 @@ jobs:
         run: |
           bazel test --disk_cache="$HOME/.cache/bazel-disk" \
             --config=asan \
+            --test_tag_filters=-linux_arm32 \
             -- //... -//phaser:perf_test
 
   # Valgrind (memcheck) runs on Linux only.
@@ -109,4 +112,35 @@ jobs:
       - name: Test under Valgrind (everything except perf_test)
         run: |
           bazel test --disk_cache="$HOME/.cache/bazel-disk" --config=valgrind \
+            --test_tag_filters=-linux_arm32 \
             -- //... -//phaser:perf_test
+
+  # Cross-build phaser_runtime for armhf and smoke-test under QEMU user emulation.
+  arm32:
+    name: arm32 (Linux armhf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            g++-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf
+          # ubuntu-24.04: qemu-user-static; ubuntu-latest (26.04): qemu-user-binfmt.
+          sudo apt-get install -y qemu-user-static \
+            || sudo apt-get install -y qemu-user-binfmt
+
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-arm32-linux-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc', '.bazelversion') }}
+          restore-keys: |
+            bazel-disk-arm32-linux-
+
+      - name: Build and test (armhf)
+        run: |
+          chmod +x scripts/build-armhf-linux.sh
+          scripts/build-armhf-linux.sh --test

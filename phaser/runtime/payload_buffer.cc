@@ -4,11 +4,12 @@
 #include <vector>
 
 namespace phaser {
-static constexpr uint32_t small_block_sizes[kNumBitmapRuns] = {
-    kBitmapRunSize1, kBitmapRunSize2, kBitmapRunSize3, kBitmapRunSize4};
+static constexpr uint32_t small_block_sizes[kNumSmallBlockClasses] = {
+    kSmallBlockClassMaxBytes1, kSmallBlockClassMaxBytes2,
+    kSmallBlockClassMaxBytes3, kSmallBlockClassMaxBytes4};
 
-inline int BitmapRunIndex(uint32_t n) {
-  for (size_t i = 0; i < kNumBitmapRuns; i++) {
+inline int SmallBlockClassIndex(uint32_t n) {
+  for (size_t i = 0; i < kNumSmallBlockClasses; i++) {
     if (n <= small_block_sizes[i]) {
       return static_cast<int>(i);
     }
@@ -16,12 +17,13 @@ inline int BitmapRunIndex(uint32_t n) {
   return -1;
 }
 
-inline int BitmapRunIndexFromEncodedSize(uint64_t n) {
+inline int SmallBlockClassIndexFromEncodedSize(uint64_t n) {
   if ((n & kSmallBlockFlag) == 0) {
     // Not a small block since the high bit is not set.
     return -1;
   }
-  return BitmapRunIndex(static_cast<uint32_t>(n & kBitmapRunSizeMask));
+  return SmallBlockClassIndex(
+      static_cast<uint32_t>(n & kSmallBlockEncodedSizeMask));
 }
 
 void *PayloadBuffer::AllocateMainMessage(PayloadBuffer **self, size_t size) {
@@ -282,17 +284,18 @@ void PayloadBuffer::Dump(std::ostream &os) {
   os << "  magic: "
      << (!IsValidMagic() ? "invalid" : (IsMoveable() ? "moveable" : "fixed"))
      << std::endl;
-  os << "  bitmaps: " << ((magic & kBitMapFlag) ? "enabled" : "disabled")
-     << std::endl;
+  os << "  small_block_allocator: "
+     << (SmallBlockAllocatorEnabled() ? "enabled" : "disabled") << std::endl;
   os << "  hwm: " << hwm << " " << ToAddress(hwm) << std::endl;
   os << "  full_size: " << full_size << std::endl;
   os << "  metadata: " << metadata << " " << ToAddress(metadata) << std::endl;
   os << "  free_list: " << free_list << " " << ToAddress(free_list)
      << std::endl;
   os << "  message: " << message << " " << ToAddress(message) << std::endl;
-  for (size_t i = 0; i < kNumBitmapRuns; i++) {
-    os << "  bitmaps[" << i << "]: " << bitmaps[i] << " "
-       << ToAddress(bitmaps[i]) << std::endl;
+  for (size_t i = 0; i < kNumSmallBlockClasses; i++) {
+    os << "  small_block_free_lists[" << i << "]: "
+       << small_block_free_lists[i] << " "
+       << ToAddress(small_block_free_lists[i]) << std::endl;
   }
   DumpFreeList(os);
 }
@@ -320,14 +323,9 @@ void PayloadBuffer::CheckFreeList() {
 }
 
 void PayloadBuffer::InitFreeList() {
-  char *end_of_header = reinterpret_cast<char *>(this + 1);
-  size_t header_size = sizeof(PayloadBuffer);
-  if (IsMoveable()) {
-    end_of_header +=
-        sizeof(Resizer *); // Room for resizer function for movable buffers.
-    header_size += sizeof(Resizer *);
-  }
-  FreeBlockHeader *f = reinterpret_cast<FreeBlockHeader *>(end_of_header);
+  const uint32_t header_size = AlignedPayloadHeaderSize(IsMoveable());
+  char *start_of_free = reinterpret_cast<char *>(this) + header_size;
+  FreeBlockHeader *f = reinterpret_cast<FreeBlockHeader *>(start_of_free);
   f->length = full_size - header_size;
   f->next = 0;
   free_list = ToOffset(f);
@@ -379,8 +377,8 @@ void *PayloadBuffer::AllocateSlow(PayloadBuffer **buffer, uint32_t n,
   if (n == 0 || (*buffer)->AllocationFailed()) {
     return nullptr;
   }
-  if (enable_small_block && (*buffer)->BitmapsEnabled()) {
-    int small_block_index = BitmapRunIndex(n);
+  if (enable_small_block && (*buffer)->SmallBlockAllocatorEnabled()) {
+    int small_block_index = SmallBlockClassIndex(n);
     if (small_block_index >= 0) {
       return AllocateSmallBlock(buffer, n, small_block_index, clear);
     }
@@ -549,7 +547,7 @@ void PayloadBuffer::FreeSlow(void *p) {
   // An allocated block has its length immediately before its address.
   uint64_t alloc_length =
       *(reinterpret_cast<uint64_t *>(p) - 1); // Length of allocated block.
-  int small_block_index = BitmapRunIndexFromEncodedSize(alloc_length);
+  int small_block_index = SmallBlockClassIndexFromEncodedSize(alloc_length);
   if (small_block_index >= 0) {
     FreeSmallBlock(this, p, small_block_index);
     return;
@@ -692,14 +690,14 @@ void *PayloadBuffer::Realloc(PayloadBuffer **buffer, void *p, uint32_t n,
   uint64_t orig_length = *len_ptr;
   // A small block is recognized from its encoded size word even when small
   // blocks are disabled for this call.
-  int small_block_index = BitmapRunIndexFromEncodedSize(orig_length);
+  int small_block_index = SmallBlockClassIndexFromEncodedSize(orig_length);
   if (small_block_index >= 0) {
     uint32_t decoded_length =
-        static_cast<uint32_t>(orig_length & kBitmapRunSizeMask);
+        static_cast<uint32_t>(orig_length & kSmallBlockEncodedSizeMask);
     // If the new size is in the same size class we can just return the
     // original block.
-    if (enable_small_block && (*buffer)->BitmapsEnabled() &&
-        BitmapRunIndex(n) == small_block_index) {
+    if (enable_small_block && (*buffer)->SmallBlockAllocatorEnabled() &&
+        SmallBlockClassIndex(n) == small_block_index) {
       *len_ptr = kSmallBlockFlag | n;
       if (clear && n > decoded_length) {
         memset(reinterpret_cast<char *>(p) + decoded_length, 0,
@@ -803,7 +801,7 @@ void *PayloadBuffer::Realloc(PayloadBuffer **buffer, void *p, uint32_t n,
   (*buffer)->Free(p);
   return newp;
 }
-bool PayloadBuffer::PrimeBitmapAllocator(PayloadBuffer **, size_t) {
+bool PayloadBuffer::PrimeSmallBlockAllocator(PayloadBuffer **, size_t) {
   return true;
 }
 
@@ -811,14 +809,15 @@ void *PayloadBuffer::AllocateSmallBlock(PayloadBuffer **pb, uint32_t size,
                                         int index, bool clear) {
   const uint32_t block_size = small_block_sizes[index];
   char *addr = nullptr;
-  BufferOffset head = (*pb)->bitmaps[index];
+  BufferOffset head = (*pb)->small_block_free_lists[index];
   if (head != 0) {
     // Pop the head of the class's free list.
     addr = (*pb)->ToAddress<char>(head);
     if (addr == nullptr) {
       return nullptr;
     }
-    (*pb)->bitmaps[index] = *reinterpret_cast<BufferOffset *>(addr);
+    (*pb)->small_block_free_lists[index] =
+        *reinterpret_cast<BufferOffset *>(addr);
   } else {
     // Carve a single block from the main free list.
     addr = static_cast<char *>(Allocate(pb, block_size, false, false));
@@ -834,7 +833,7 @@ void *PayloadBuffer::AllocateSmallBlock(PayloadBuffer **pb, uint32_t size,
 }
 
 void PayloadBuffer::FreeSmallBlock(PayloadBuffer *pb, void *p, int index) {
-  *reinterpret_cast<BufferOffset *>(p) = pb->bitmaps[index];
-  pb->bitmaps[index] = pb->ToOffset(p);
+  *reinterpret_cast<BufferOffset *>(p) = pb->small_block_free_lists[index];
+  pb->small_block_free_lists[index] = pb->ToOffset(p);
 }
 } // namespace phaser

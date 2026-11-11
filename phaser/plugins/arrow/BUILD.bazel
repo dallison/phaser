@@ -13,6 +13,7 @@ cc_library(
     ],
     hdrs = ["gen/arrow_message_codegen.h"],
     alwayslink = True,
+    linkstatic = True,
     copts = PHASER_PROTOC_COPTS,
     deps = ["//phaser/compiler:message_generator"],
 )
@@ -21,6 +22,7 @@ pybind_library(
     name = "pybind",
     srcs = ["runtime/pybind.cc"],
     alwayslink = True,
+    linkstatic = True,
     copts = PHASER_COPTS,
     deps = [
         ":runtime",
