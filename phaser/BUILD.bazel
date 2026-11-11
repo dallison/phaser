@@ -37,18 +37,6 @@ cc_library(
     ],
 )
 
-# Built and executed with --config=linux_arm32 (QEMU on CI). Skips on native hosts.
-cc_test(
-    name = "arm32_platform_test",
-    srcs = ["arm32_platform_test.cc"],
-    copts = PHASER_COPTS,
-    tags = ["linux_arm32"],
-    deps = [
-        "//phaser/runtime:phaser_runtime",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
 cc_test(
     name = "columnar_test",
     srcs = ["columnar_test.cc"],

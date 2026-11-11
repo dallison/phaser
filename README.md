@@ -569,23 +569,6 @@ bazelisk test --config=asan //phaser/...
 On Apple Silicon, the `asan` config already pulls in the native `apple_silicon` settings;
 see [`.bazelrc`](.bazelrc) for the available configurations.
 
-### Linux armhf (32-bit ARM)
-
-Cross-compile `phaser_runtime` for 32-bit ARM Linux with `--config=linux_arm32`. CI and
-native Ubuntu use [`scripts/build-armhf-linux.sh`](scripts/build-armhf-linux.sh) (requires
-`g++-arm-linux-gnueabihf` and `qemu-user-static`). On macOS, [`scripts/build-armhf-colima.sh`](scripts/build-armhf-colima.sh)
-builds the same target inside a Colima Docker image. The `protoc-gen-phaser` plugin is built
-for the host only (not armhf).
-
-```bash
-# Linux (or CI)
-scripts/build-armhf-linux.sh
-scripts/build-armhf-linux.sh --test
-
-# macOS (Colima + Docker)
-scripts/build-armhf-colima.sh --test
-```
-
 ### Using Phaser without Bazel
 
 Phaser is a `protoc` plugin, so any build system can drive it as long as the plugin binary
