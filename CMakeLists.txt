@@ -55,7 +55,9 @@ if(NOT TARGET toolbelt)
     FetchContent_MakeAvailable(cpp_toolbelt)
 endif()
 
-if(PHASER_BUILD_COMPILER AND NOT TARGET protobuf::libprotoc)
+# phaser_bank_protobuf links libprotobuf, so a cross-compile needs it too.
+if(NOT TARGET protobuf::libprotobuf OR
+   (PHASER_BUILD_COMPILER AND NOT TARGET protobuf::libprotoc))
     set(protobuf_BUILD_TESTS OFF CACHE INTERNAL "")
     FetchContent_Declare(
         protobuf
@@ -65,16 +67,44 @@ if(PHASER_BUILD_COMPILER AND NOT TARGET protobuf::libprotoc)
     FetchContent_MakeAvailable(protobuf)
 endif()
 
-# --- Runtime library ---
+set(_PHASER_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL "")
+
+# Bazel gives some plugin headers shorter paths with strip_include_prefix and
+# include_prefix.  These forwarding headers provide the same paths.
+set(PHASER_FORWARDING_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/phaser_include")
+foreach(header
+        "arrow/arrow.h=arrow/runtime/arrow.h"
+        "arrow/arrow_abi.h=arrow/runtime/arrow_abi.h"
+        "avro/avro.h=avro/runtime/avro.h"
+        "parquet/parquet.h=parquet/runtime/parquet.h"
+        "ros/ros_codegen_helpers.h=ros/gen/ros_codegen_helpers.h")
+    string(REPLACE "=" ";" paths "${header}")
+    list(GET paths 0 short_path)
+    list(GET paths 1 source_path)
+    file(GENERATE
+        OUTPUT "${PHASER_FORWARDING_INCLUDE_DIR}/phaser/plugins/${short_path}"
+        CONTENT "#pragma once\n#include \"phaser/plugins/${source_path}\"\n")
+endforeach()
+
+# --- Runtime libraries ---
 add_library(phaser_runtime STATIC
     phaser/runtime/md5.cc
     phaser/runtime/message.cc
+    phaser/runtime/message_property.cc
+    phaser/runtime/payload_buffer.cc
     phaser/runtime/phaser_bank.cc
 )
 add_library(phaser::runtime ALIAS phaser_runtime)
-target_include_directories(phaser_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(phaser_runtime PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PHASER_FORWARDING_INCLUDE_DIR}
+)
 target_link_libraries(phaser_runtime PUBLIC
+    absl::core_headers
     absl::flat_hash_map
+    absl::flat_hash_set
+    absl::function_ref
+    absl::no_destructor
     absl::status
     absl::statusor
     absl::strings
@@ -86,6 +116,27 @@ if(PHASER_TRUST_SERIALIZED_SIZE)
     target_compile_definitions(phaser_runtime PUBLIC
         PHASER_TRUST_SERIALIZED_SIZE)
 endif()
+
+# Generated code registers its embedded descriptors here and calls the Arrow,
+# Avro and Parquet conversions, so every generated library links these.
+add_library(phaser_bank_protobuf STATIC phaser/runtime/phaser_bank_protobuf.cc)
+target_link_libraries(phaser_bank_protobuf PUBLIC
+    phaser_runtime
+    protobuf::libprotobuf
+)
+
+add_library(phaser_arrow STATIC phaser/plugins/arrow/runtime/arrow.cc)
+target_link_libraries(phaser_arrow PUBLIC phaser_runtime)
+
+add_library(phaser_avro STATIC phaser/plugins/avro/runtime/avro.cc)
+target_link_libraries(phaser_avro PUBLIC phaser_arrow)
+
+add_library(phaser_parquet STATIC phaser/plugins/parquet/runtime/parquet.cc)
+target_link_libraries(phaser_parquet PUBLIC phaser_arrow)
+
+# The C API under FRONTEND c libraries and the Rust crates built over them.
+add_library(phaser_c STATIC phaser/runtime/phaser_c.cc)
+target_link_libraries(phaser_c PUBLIC phaser_runtime)
 
 # --- protoc plugin ---
 if(PHASER_BUILD_COMPILER)
@@ -115,16 +166,32 @@ if(PHASER_BUILD_COMPILER)
         COMMENT "Generating C++ code from phaser/options.proto"
     )
 
+    # The plugins register their generators from static initializers, so
+    # their sources are compiled into the executable rather than linked from
+    # a static library.
     add_executable(protoc-gen-phaser
         phaser/compiler/enum_gen.cc
         phaser/compiler/gen.cc
+        phaser/compiler/generator_plugin.cc
         phaser/compiler/main.cc
         phaser/compiler/message_gen.cc
+        phaser/compiler/message_gen_c.cc
+        phaser/compiler/message_gen_python.cc
+        phaser/plugins/arrow/gen/arrow_message_codegen.cc
+        phaser/plugins/arrow/gen/codegen.cc
+        phaser/plugins/avro/gen/codegen.cc
+        phaser/plugins/parquet/gen/codegen.cc
+        phaser/plugins/protobuf/gen/codegen.cc
+        phaser/plugins/protobuf/gen/protobuf_wire_codegen.cc
+        phaser/plugins/ros/gen/codegen.cc
+        phaser/plugins/ros/gen/ros_codegen_helpers.cc
+        phaser/plugins/ros/gen/ros_wire_codegen.cc
         ${PHASER_OPTIONS_SRC}
     )
     target_include_directories(protoc-gen-phaser PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}
+        ${PHASER_FORWARDING_INCLUDE_DIR}
     )
     target_link_libraries(protoc-gen-phaser PRIVATE
         absl::flat_hash_map
@@ -144,7 +211,8 @@ endif()
 #     [IMPORTS <proto>...]
 #     [PACKAGE <package>]
 #     [ADD_NAMESPACE <namespace>]
-#     [FRONTEND protobuf|ros]
+#     [FRONTEND protobuf|ros|c]
+#     [RUST]
 #     [PROTOC <protoc>]
 #     [PLUGIN <protoc-gen-phaser>]
 #     [COMPILE_OPTIONS <option>...])
@@ -160,10 +228,18 @@ endif()
 # a short header, so "proto/foo.proto" is included as "proto/foo.phaser.h".
 # PACKAGE defaults to the directory of the first file in PROTOS.
 #
+# FRONTEND c also generates the C API in <proto path>.phaser.c.h, with a short
+# header as for the C++ one.  RUST generates the Rust bindings over the C API
+# and implies FRONTEND c.  The bindings for all the protos are assembled into
+# the file named by the library's PHASER_RUST_SOURCE property.  Unlike the
+# crate the Bazel rule builds, the file has no crate attributes, so a crate
+# root includes it with include!() and allows the lints listed in
+# phaser/runtime/rust_crate_attributes.rs.  The Rust crate links <name>.
+#
 # PROTOC defaults to the protobuf::protoc target.  PLUGIN defaults to the
 # protoc-gen-phaser target, or PHASER_PLUGIN_EXECUTABLE when that is set.
 function(phaser_add_library name)
-    cmake_parse_arguments(ARG ""
+    cmake_parse_arguments(ARG "RUST"
         "PACKAGE;ADD_NAMESPACE;FRONTEND;PROTOC;PLUGIN"
         "PROTOS;IMPORTS;IMPORT_DIRS;COMPILE_OPTIONS"
         ${ARGN})
@@ -176,7 +252,18 @@ function(phaser_add_library name)
         get_filename_component(ARG_PACKAGE "${first_proto}" DIRECTORY)
     endif()
     if(NOT ARG_FRONTEND)
-        set(ARG_FRONTEND protobuf)
+        if(ARG_RUST)
+            set(ARG_FRONTEND c)
+        else()
+            set(ARG_FRONTEND protobuf)
+        endif()
+    endif()
+    if(NOT ARG_FRONTEND MATCHES "^(protobuf|ros|c)$")
+        message(FATAL_ERROR
+            "phaser_add_library(${name}): FRONTEND must be protobuf, ros or c")
+    endif()
+    if(ARG_RUST AND NOT ARG_FRONTEND STREQUAL "c")
+        message(FATAL_ERROR "phaser_add_library(${name}): RUST needs FRONTEND c")
     endif()
 
     set(tool_depends)
@@ -219,10 +306,19 @@ function(phaser_add_library name)
     if(ARG_ADD_NAMESPACE)
         set(options "add_namespace=${ARG_ADD_NAMESPACE},${options}")
     endif()
+    if(ARG_RUST)
+        set(options "${options},rust=true")
+    endif()
+
+    set(header_suffixes .phaser.h)
+    if(ARG_FRONTEND STREQUAL "c")
+        list(APPEND header_suffixes .phaser.c.h)
+    endif()
 
     set(inputs)
     set(outputs)
     set(short_headers)
+    set(rust_sources)
     foreach(proto ${ARG_PROTOS} ${ARG_IMPORTS})
         set(found)
         foreach(dir ${ARG_IMPORT_DIRS})
@@ -237,19 +333,25 @@ function(phaser_add_library name)
         list(APPEND inputs "${found}")
 
         string(REGEX REPLACE "\\.proto$" "" base "${proto}")
-        list(APPEND outputs "${gen_dir}/${base}.phaser.cc" "${gen_dir}/${base}.phaser.h")
-        if(proto IN_LIST ARG_PROTOS)
-            set(short_header "${out_dir}/${base}.phaser.h")
-            file(GENERATE OUTPUT "${short_header}"
-                CONTENT "#pragma once\n#include \"${gen_include}/${base}.phaser.h\"\n")
-            list(APPEND short_headers "${short_header}")
+        list(APPEND outputs "${gen_dir}/${base}.phaser.cc")
+        foreach(suffix ${header_suffixes})
+            list(APPEND outputs "${gen_dir}/${base}${suffix}")
+            if(proto IN_LIST ARG_PROTOS)
+                set(short_header "${out_dir}/${base}${suffix}")
+                file(GENERATE OUTPUT "${short_header}"
+                    CONTENT "#pragma once\n#include \"${gen_include}/${base}${suffix}\"\n")
+                list(APPEND short_headers "${short_header}")
+            endif()
+        endforeach()
+        if(ARG_RUST)
+            list(APPEND rust_sources "${gen_dir}/${base}.rs")
         endif()
     endforeach()
 
     # The protos are named by import path.  An absolute path could map to a
     # second name when one import directory contains another.
     add_custom_command(
-        OUTPUT ${outputs}
+        OUTPUT ${outputs} ${rust_sources}
         COMMAND ${ARG_PROTOC}
         ARGS --plugin=protoc-gen-phaser=${ARG_PLUGIN}
              --phaser_out=${options}:${out_dir}
@@ -261,9 +363,37 @@ function(phaser_add_library name)
         VERBATIM
     )
 
-    add_library(${name} STATIC ${outputs} ${short_headers})
+    set(rust_file)
+    if(ARG_RUST)
+        set(rust_file "${out_dir}/${name}.rs")
+        set(rust_inputs "${_PHASER_DIR}/phaser/runtime/rust_support.rs" ${rust_sources})
+        add_custom_command(
+            OUTPUT "${rust_file}"
+            COMMAND ${CMAKE_COMMAND}
+                "-DOUTPUT=${rust_file}"
+                "-DINPUTS=${rust_inputs}"
+                -P "${_PHASER_DIR}/cmake/concatenate.cmake"
+            DEPENDS ${rust_inputs} "${_PHASER_DIR}/cmake/concatenate.cmake"
+            COMMENT "Assembling the Rust bindings for ${name}"
+            VERBATIM
+        )
+    endif()
+
+    add_library(${name} STATIC ${outputs} ${short_headers} ${rust_file})
     target_include_directories(${name} PUBLIC "${out_dir}")
-    target_link_libraries(${name} PUBLIC phaser_runtime)
+    target_link_libraries(${name} PUBLIC
+        phaser_runtime
+        phaser_bank_protobuf
+        phaser_arrow
+        phaser_avro
+        phaser_parquet
+    )
+    if(ARG_FRONTEND STREQUAL "c")
+        target_link_libraries(${name} PUBLIC phaser_c)
+    endif()
+    if(ARG_RUST)
+        set_target_properties(${name} PROPERTIES PHASER_RUST_SOURCE "${rust_file}")
+    endif()
     if(ARG_COMPILE_OPTIONS)
         target_compile_options(${name} PRIVATE ${ARG_COMPILE_OPTIONS})
     endif()
